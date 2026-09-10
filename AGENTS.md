@@ -67,6 +67,9 @@ Allowlist по умолчанию: `*.mvideoeldorado.ru` + `kc.tech.mvideo.ru` (
 9. **gen-icon.js:** PNG-сигнатура строго `89 50 4E 47 0D 0A 1A 0A` — с битой libvips
    (icon-tool) падает с `VipsForeignLoad: buffer is not in a known format`, браузеры такое прощают.
    Ошибка `7z reported error but extracted files` при сборке NSIS — некритична, если файлы извлеклись.
+10. **electron-vite dev URL:** переменная — `ELECTRON_RENDERER_URL`, НЕ `VITE_DEV_SERVER_URL`
+    (такой нет — dev молча грузит stale-билд из `out/` без HMR и зря дёргает апдейтер).
+    В `index.ts` — константа `devServerUrl`, используется и для loadURL, и для гарда апдейтера.
 
 ## Правила работы
 
