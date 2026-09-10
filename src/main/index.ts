@@ -239,6 +239,10 @@ function createWindow(): void {
     const guest = webContents.fromId(id)
     if (!guest || guest.isDestroyed()) return
     attachedGuests.add(id)
+    // Диагностика навигации гостя: видно каждую загрузку и вердикт allowlist
+    guest.on('did-navigate', (_navEvent, url) => {
+      console.log('[shell] guest nav:', url.slice(0, 200), isAllowedUrl(url) ? '(allowed)' : '(blocked)')
+    })
     guest.on('before-input-event', (event, input) => {
       if (input.type !== 'keyDown') return
       const name = guestShortcutName(input)
@@ -258,7 +262,10 @@ function createWindow(): void {
         void downloadGuestUrl(guest, target)
         return { action: 'deny' }
       }
-      if (!EXTERNAL_SCHEME_RE.test(target)) return { action: 'deny' }
+      if (!EXTERNAL_SCHEME_RE.test(target)) {
+        console.log('[shell] window.open denied (non-external scheme):', target.slice(0, 200))
+        return { action: 'deny' }
+      }
       if (!/^https?:/i.test(target)) {
         void shell.openExternal(target)
         return { action: 'deny' }
@@ -465,6 +472,7 @@ function createWindow(): void {
   }
 
   session.defaultSession.on('will-download', (_event, item) => {
+    console.log('[shell] will-download:', item.getFilename() || item.getURL())
     const id = ++downloadSeq
     const name = item.getFilename() || 'файл'
     const startedAt = new Date().toISOString()
