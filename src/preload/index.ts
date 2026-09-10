@@ -32,6 +32,9 @@ interface DownloadedFileLike {
   state: 'done' | 'error'
   startedAt: string
   finishedAt: string
+  /** Кто скачал (может отсутствовать у старых записей) */
+  fio?: string
+  tabNum?: string
 }
 
 interface StorageUsageLike {

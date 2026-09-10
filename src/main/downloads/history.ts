@@ -11,6 +11,9 @@ export interface DownloadRecord {
   /** ISO-строки: когда началось и когда завершилось */
   startedAt: string
   finishedAt: string
+  /** Кто скачал: из аккаунта автовхода или со страницы SEW (может отсутствовать) */
+  fio?: string
+  tabNum?: string
 }
 
 const MAX_RECORDS = 100
@@ -28,7 +31,9 @@ function isRecord(v: unknown): v is DownloadRecord {
     typeof r.bytes === 'number' &&
     (r.state === 'done' || r.state === 'error') &&
     typeof r.startedAt === 'string' &&
-    typeof r.finishedAt === 'string'
+    typeof r.finishedAt === 'string' &&
+    (r.fio === undefined || typeof r.fio === 'string') &&
+    (r.tabNum === undefined || typeof r.tabNum === 'string')
   )
 }
 

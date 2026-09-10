@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto'
 import { autoUpdater } from 'electron-updater'
 import { getConfig, isDebugMode, saveConfig } from './config'
 import { loadPlugins } from './plugins/loader'
-import { getAccountSecrets, listAccounts, removeAccount, saveAccount } from './credentials/store'
+import { getAccountSecrets, getLastUsedAccountId, listAccounts, removeAccount, saveAccount, setLastUsedAccountId } from './credentials/store'
 import { appendDownloadRecord, clearDownloadHistory, loadDownloadHistory, removeDownloadRecord } from './downloads/history'
 
 let mainWindow: BrowserWindow | null = null
@@ -185,7 +185,10 @@ function createWindow(): void {
   })
   ipcMain.handle('credentials:get', (_event, id: unknown) => {
     if (typeof id !== 'string' || !id) return null
-    return getAccountSecrets(id)
+    const secrets = getAccountSecrets(id)
+    // Аккаунт запросили для автовхода — запоминаем, кто сидит (для атрибуции загрузок)
+    if (secrets) setLastUsedAccountId(id)
+    return secrets
   })
   ipcMain.on('window:min', () => mainWindow?.minimize())
   ipcMain.handle('shell:open-external', (_event, url: unknown) => {
@@ -389,9 +392,44 @@ function createWindow(): void {
   }
   const MAX_GUEST_FILE_BYTES = 200 * 1024 * 1024
 
+  /**
+   * Кто скачивает файл. Приоритет — живая страница (там текущий пользователь
+   * даже при ручном входе): ФИО из window.__sewIdentity (см. features/identity).
+   * Табельный на странице не светится — берём из аккаунта автовхода, но только
+   * если его ФИО совпадает с увиденным на странице (иначе входил другой человек).
+   */
+  async function resolveAttribution(guest?: WebContents | null): Promise<{ fio?: string; tabNum?: string }> {
+    let pageFio = ''
+    if (guest && !guest.isDestroyed()) {
+      try {
+        const ident = (await guest.executeJavaScript('window.__sewIdentity ?? null')) as {
+          fio?: unknown
+        } | null
+        if (ident && typeof ident.fio === 'string' && ident.fio.trim()) {
+          pageFio = ident.fio.trim()
+        }
+      } catch {
+        // гость недоступен — довольствуемся аккаунтом
+      }
+    }
+    const lastId = getLastUsedAccountId()
+    const acc = lastId ? listAccounts().find((a) => a.id === lastId) : undefined
+    if (pageFio) {
+      if (acc && acc.fio.trim() === pageFio && acc.tabNum) {
+        return { fio: pageFio, tabNum: acc.tabNum }
+      }
+      return { fio: pageFio }
+    }
+    if (acc && (acc.fio || acc.tabNum)) {
+      return { ...(acc.fio ? { fio: acc.fio } : {}), ...(acc.tabNum ? { tabNum: acc.tabNum } : {}) }
+    }
+    return {}
+  }
+
   async function downloadGuestUrl(guest: WebContents, url: string): Promise<void> {
     const id = ++downloadSeq
     const startedAt = new Date().toISOString()
+    const who = await resolveAttribution(guest)
     const fail = (message: string): void => {
       console.warn('[shell] guest download failed:', message)
       sendDownloadEvent(id, 'файл', { type: 'done', ok: false, state: 'failed' })
@@ -403,6 +441,7 @@ function createWindow(): void {
         state: 'error',
         startedAt,
         finishedAt: new Date().toISOString(),
+        ...who,
       })
     }
     try {
@@ -465,13 +504,14 @@ function createWindow(): void {
         state: 'done',
         startedAt,
         finishedAt: new Date().toISOString(),
+        ...who,
       })
     } catch (err) {
       fail(String((err as Error)?.message ?? err))
     }
   }
 
-  session.defaultSession.on('will-download', (_event, item) => {
+  session.defaultSession.on('will-download', (_event, item, wc) => {
     console.log('[shell] will-download:', item.getFilename() || item.getURL())
     const id = ++downloadSeq
     const name = item.getFilename() || 'файл'
@@ -508,15 +548,19 @@ function createWindow(): void {
       const ok = state === 'completed'
       // Отмены в историю не пишем — только завершённые и упавшие
       if (state !== 'cancelled') {
-        appendDownloadRecord({
-          id: randomUUID(),
-          name,
-          path: savePath,
-          bytes: item.getTotalBytes(),
-          state: ok ? 'done' : 'error',
-          startedAt,
-          finishedAt: new Date().toISOString(),
-        })
+        void (async () => {
+          const who = await resolveAttribution(wc)
+          appendDownloadRecord({
+            id: randomUUID(),
+            name,
+            path: savePath,
+            bytes: item.getTotalBytes(),
+            state: ok ? 'done' : 'error',
+            startedAt,
+            finishedAt: new Date().toISOString(),
+            ...who,
+          })
+        })()
       }
       send({ type: 'done', ok, path: savePath, state })
     })

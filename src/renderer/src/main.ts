@@ -29,7 +29,9 @@ const setClearOnExit = document.getElementById('set-clear-on-exit') as HTMLSelec
 const downloadsEl = document.getElementById('downloads') as HTMLElement | null
 const downloadsOverlay = document.getElementById('downloads-overlay') as HTMLElement | null
 const downloadsHistory = document.getElementById('downloads-history') as HTMLElement | null
+const downloadsFilter = document.getElementById('downloads-filter') as HTMLSelectElement | null
 let downloadsOpen = false
+let downloadsRecords: DownloadedFile[] = []
 
 let config: ShellConfig | null = null
 let plugins: PluginInfo[] = []
@@ -709,6 +711,7 @@ function wireDownloads(): void {
   document.getElementById('btn-downloads')?.addEventListener('click', () => void openDownloads())
   document.getElementById('downloads-close')?.addEventListener('click', closeDownloads)
   document.getElementById('downloads-clear')?.addEventListener('click', () => void clearDownloadsHistory())
+  downloadsFilter?.addEventListener('change', () => renderDownloadsHistory(downloadsRecords))
   window.shell.onDownload((event) => {
     if (event.type === 'started') {
       downloads.set(event.id, {
@@ -760,16 +763,49 @@ function formatDateTime(iso: string): string {
   })
 }
 
+function whoLabel(rec: DownloadedFile): string {
+  if (!rec.fio) return 'неизвестно'
+  return rec.tabNum ? `${rec.fio} (${rec.tabNum})` : rec.fio
+}
+
+function rebuildDownloadsFilter(): void {
+  if (!downloadsFilter) return
+  const current = downloadsFilter.value
+  const seen = new Set<string>()
+  downloadsFilter.innerHTML = ''
+  const all = document.createElement('option')
+  all.value = ''
+  all.textContent = 'Все сотрудники'
+  downloadsFilter.append(all)
+  for (const rec of downloadsRecords) {
+    const key = rec.fio ?? ''
+    if (seen.has(key)) continue
+    seen.add(key)
+    const opt = document.createElement('option')
+    opt.value = key
+    opt.textContent = rec.fio ? whoLabel(rec) : 'Неизвестно'
+    downloadsFilter.append(opt)
+  }
+  // Выбор переживает обновление, если сотрудник ещё есть в списке
+  downloadsFilter.value = Array.from(downloadsFilter.options).some((o) => o.value === current)
+    ? current
+    : ''
+}
+
 function renderDownloadsHistory(records: DownloadedFile[]): void {
   if (!downloadsHistory) return
+  downloadsRecords = records
+  rebuildDownloadsFilter()
+  const filter = downloadsFilter?.value ?? ''
+  const visible = filter ? records.filter((r) => (r.fio ?? '') === filter) : records
   downloadsHistory.innerHTML = ''
-  if (records.length === 0) {
+  if (visible.length === 0) {
     const empty = document.createElement('span')
-    empty.textContent = 'Пока ничего не скачано'
+    empty.textContent = records.length === 0 ? 'Пока ничего не скачано' : 'Нет записей для этого сотрудника'
     downloadsHistory.append(empty)
     return
   }
-  for (const rec of records) {
+  for (const rec of visible) {
     const row = document.createElement('div')
     row.className = 'download-row'
     const icon = document.createElement('span')
@@ -785,7 +821,8 @@ function renderDownloadsHistory(records: DownloadedFile[]): void {
     const meta = document.createElement('span')
     meta.className = 'download-meta'
     const sizePart = rec.bytes > 0 ? `${formatSize(rec.bytes)} · ` : ''
-    meta.textContent = `${sizePart}${formatDateTime(rec.finishedAt)}${rec.state === 'error' ? ' · ошибка' : ''}`
+    const whoPart = rec.fio ? ` · ${whoLabel(rec)}` : ' · неизвестно'
+    meta.textContent = `${sizePart}${formatDateTime(rec.finishedAt)}${whoPart}${rec.state === 'error' ? ' · ошибка' : ''}`
     info.append(name, meta)
     const show = document.createElement('button')
     show.textContent = '📁'

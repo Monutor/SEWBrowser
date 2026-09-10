@@ -107,7 +107,36 @@ export function removeAccount(id: string): boolean {
   const next = all.filter((a) => a.id !== id)
   if (next.length === all.length) return false
   writeAll(next)
+  if (getLastUsedAccountId() === id) setLastUsedAccountId(null)
   return true
+}
+
+function lastAccountFile(): string {
+  return join(app.getPath('userData'), 'last-account.json')
+}
+
+/**
+ * Кого последним использовали для автовхода (окно «Аккаунты SEW»).
+ * Нужно для атрибуции загрузок: кто скачал файл.
+ */
+export function getLastUsedAccountId(): string | null {
+  try {
+    if (!existsSync(lastAccountFile())) return null
+    const parsed: unknown = JSON.parse(readFileSync(lastAccountFile(), 'utf-8'))
+    const id = (parsed as { accountId?: unknown } | null)?.accountId
+    return typeof id === 'string' && id ? id : null
+  } catch {
+    return null
+  }
+}
+
+export function setLastUsedAccountId(id: string | null): void {
+  try {
+    mkdirSync(dirname(lastAccountFile()), { recursive: true })
+    writeFileSync(lastAccountFile(), JSON.stringify({ accountId: id ?? null }), 'utf-8')
+  } catch (err) {
+    console.warn('[credentials] failed to write last account:', err)
+  }
 }
 
 /** Расшифрованные секреты — выдаются только для автозаполнения формы входа */

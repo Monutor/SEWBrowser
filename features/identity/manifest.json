@@ -1,0 +1,6 @@
+{
+  "name": "identity",
+  "version": "1.0.0",
+  "description": "Кто залогинен в SEW: читает ФИО из шапки страницы в window.__sewIdentity",
+  "renderer": "./main.js"
+}
