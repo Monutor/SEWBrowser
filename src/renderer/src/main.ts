@@ -257,7 +257,6 @@ function openSettings(): void {
   if (setClearOnExit) setClearOnExit.value = config.clearOnExit
   settingsOverlay.hidden = false
   void refreshStoragePanel()
-  void refreshAccountsSettings()
 }
 
 function closeSettings(): void {
@@ -330,7 +329,7 @@ function wireSettings(): void {
     accPassword.type = show ? 'text' : 'password'
     ;(event.target as HTMLElement).innerHTML = show ? '&#128064;' : '&#128065;'
   })
-  document.getElementById('accounts-cancel')?.addEventListener('click', closeAccountPicker)
+  document.getElementById('accounts-cancel')?.addEventListener('click', closeAccounts)
   setStartUrl?.addEventListener('keydown', (event: KeyboardEvent) => {
     if (event.key === 'Enter') void saveSettings()
   })
@@ -430,13 +429,12 @@ async function clearStorageTarget(target: 'cache' | 'cookies'): Promise<void> {
 // ---------- Аккаунты SEW ----------
 
 const accountsOverlay = document.getElementById('accounts-overlay') as HTMLElement | null
-const accountsPickList = document.getElementById('accounts-pick-list') as HTMLElement | null
 const setAccounts = document.getElementById('set-accounts') as HTMLElement | null
 const accForm = document.getElementById('acc-form') as HTMLElement | null
 const accFio = document.getElementById('acc-fio') as HTMLInputElement | null
 const accTabNum = document.getElementById('acc-tabnum') as HTMLInputElement | null
 const accPassword = document.getElementById('acc-password') as HTMLInputElement | null
-let pickerOpen = false
+let accountsOpen = false
 let loginPrompted = false
 let editingAccountId: string | null = null
 
@@ -444,26 +442,32 @@ function accountLabel(a: AccountInfo): string {
   return a.fio ? `${a.fio} · ${a.tabNum}` : a.tabNum
 }
 
-async function refreshAccountsSettings(): Promise<void> {
-  if (!setAccounts) return
-  setAccounts.innerHTML = ''
+/** Список аккаунтов в окне «Аккаунты SEW»: войти / изменить / удалить */
+async function renderAccountsList(): Promise<AccountInfo[]> {
+  if (setAccounts) setAccounts.innerHTML = ''
   let accounts: AccountInfo[] = []
   try {
     accounts = await window.shell.listAccounts()
   } catch (err) {
     console.warn('[shell] list accounts failed:', err)
   }
+  if (!setAccounts) return accounts
   if (accounts.length === 0) {
     const empty = document.createElement('span')
     empty.textContent = 'Нет сохранённых аккаунтов'
     setAccounts.append(empty)
-    return
+    return accounts
   }
   for (const a of accounts) {
     const row = document.createElement('div')
     row.className = 'account-row'
     const info = document.createElement('span')
     info.textContent = accountLabel(a)
+    const login = document.createElement('button')
+    login.textContent = 'Войти'
+    login.className = 'login-btn'
+    login.title = 'Подставить логин и пароль, войти'
+    login.addEventListener('click', () => void fillLogin(a.id))
     const edit = document.createElement('button')
     edit.textContent = '✎'
     edit.title = 'Изменить'
@@ -472,9 +476,10 @@ async function refreshAccountsSettings(): Promise<void> {
     del.textContent = '✕'
     del.title = 'Удалить'
     del.addEventListener('click', () => void deleteAccount(a))
-    row.append(info, edit, del)
+    row.append(info, login, edit, del)
     setAccounts.append(row)
   }
+  return accounts
 }
 
 async function deleteAccount(a: AccountInfo): Promise<void> {
@@ -482,7 +487,7 @@ async function deleteAccount(a: AccountInfo): Promise<void> {
   try {
     await window.shell.removeAccount(a.id)
     if (editingAccountId === a.id) closeAccountForm()
-    await refreshAccountsSettings()
+    await renderAccountsList()
     setStatus('аккаунт удалён')
   } catch (err) {
     console.warn('[shell] remove account failed:', err)
@@ -528,7 +533,7 @@ async function saveAccountForm(): Promise<void> {
       password,
     })
     closeAccountForm()
-    await refreshAccountsSettings()
+    await renderAccountsList()
     setStatus('аккаунт сохранён')
   } catch (err) {
     console.warn('[shell] save account failed:', err)
@@ -536,37 +541,25 @@ async function saveAccountForm(): Promise<void> {
   }
 }
 
-// ---------- Выбор аккаунта и автозаполнение формы входа ----------
+// ---------- Окно «Аккаунты SEW»: выбор для входа + управление ----------
 
-async function openAccountPicker(manual: boolean): Promise<void> {
-  let accounts: AccountInfo[] = []
-  try {
-    accounts = await window.shell.listAccounts()
-  } catch (err) {
-    console.warn('[shell] list accounts failed:', err)
-  }
+async function openAccounts(manual: boolean): Promise<void> {
+  const accounts = await renderAccountsList()
   if (accounts.length === 0) {
-    if (manual) {
-      openSettings()
-      setStatus('добавьте аккаунт SEW в настройках')
-    }
-    return
+    // Авто-обнаружение формы входа: предлагать нечего — молча выходим.
+    // Ручное открытие: сразу показываем форму добавления.
+    if (!manual) return
+    openAccountForm()
+    setStatus('добавьте аккаунт SEW для автовхода')
   }
-  if (!accountsOverlay || !accountsPickList) return
-  accountsPickList.innerHTML = ''
-  for (const a of accounts) {
-    const btn = document.createElement('button')
-    btn.className = 'account-pick'
-    btn.textContent = accountLabel(a)
-    btn.addEventListener('click', () => void fillLogin(a.id))
-    accountsPickList.append(btn)
-  }
+  if (!accountsOverlay) return
   accountsOverlay.hidden = false
-  pickerOpen = true
+  accountsOpen = true
 }
 
-function closeAccountPicker(): void {
-  pickerOpen = false
+function closeAccounts(): void {
+  accountsOpen = false
+  closeAccountForm()
   if (accountsOverlay) accountsOverlay.hidden = true
 }
 
@@ -583,11 +576,11 @@ async function hasLoginForm(): Promise<boolean> {
 }
 
 async function checkLoginForm(manual: boolean): Promise<void> {
-  if (pickerOpen) return
+  if (accountsOpen) return
   if (!manual && loginPrompted) return
   if (!(await hasLoginForm())) return
   loginPrompted = true
-  await openAccountPicker(false)
+  await openAccounts(false)
 }
 
 /**
@@ -596,7 +589,7 @@ async function checkLoginForm(manual: boolean): Promise<void> {
  * иначе React/Vue-формы не заметят программную подстановку.
  */
 async function fillLogin(accountId: string): Promise<void> {
-  closeAccountPicker()
+  closeAccounts()
   let secrets: { tabNum: string; password: string } | null = null
   try {
     secrets = await window.shell.getAccountSecrets(accountId)
@@ -773,7 +766,7 @@ async function handleShortcut(name: string): Promise<void> {
       addressInput?.select()
       break
     case 'accounts':
-      void openAccountPicker(true)
+      void openAccounts(true)
       break
     case 'back':
       webview.goBack()
@@ -812,7 +805,7 @@ async function handleShortcut(name: string): Promise<void> {
       openSettings()
       break
     case 'escape':
-      if (pickerOpen) closeAccountPicker()
+      if (accountsOpen) closeAccounts()
       else if (findActive) closeFind()
       else if (settingsOverlay && !settingsOverlay.hidden) closeSettings()
       else if (document.activeElement === addressInput && addressInput) addressInput.blur()
@@ -870,7 +863,7 @@ function wireToolbar(): void {
   document.getElementById('btn-back')?.addEventListener('click', () => webview.goBack())
   document.getElementById('btn-forward')?.addEventListener('click', () => webview.goForward())
   document.getElementById('btn-reload')?.addEventListener('click', () => webview.reload())
-  document.getElementById('btn-accounts')?.addEventListener('click', () => void openAccountPicker(true))
+  document.getElementById('btn-accounts')?.addEventListener('click', () => void openAccounts(true))
 
   if (addressInput) {
     addressInput.addEventListener('keydown', (event: KeyboardEvent) => {
