@@ -378,32 +378,60 @@ function renderCookies(cookies: CookieInfo[]): void {
   }
 }
 
+function errText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
+/** IPC с таймаутом: зависший вызов превращается в читаемую ошибку, а не вечное «считаем…» */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_resolve, reject) =>
+      setTimeout(() => reject(new Error(`таймаут чтения ${label}`)), ms),
+    ),
+  ])
+}
+
 async function refreshStoragePanel(): Promise<void> {
   if (setStorageUsage) setStorageUsage.textContent = 'считаем…'
   try {
-    const [usage, cookies] = await Promise.all([
-      window.shell.getStorageUsage(),
-      window.shell.listCookies(),
+    // Запросы независимы: показываем то, что прочиталось, и точный текст ошибки того, что нет
+    const [usageRes, cookiesRes] = await Promise.allSettled([
+      withTimeout(window.shell.getStorageUsage(), 10000, 'кэша'),
+      withTimeout(window.shell.listCookies(), 10000, 'куки'),
     ])
-    let sitePart = ''
+    const parts: string[] = []
+    if (usageRes.status === 'fulfilled' && typeof usageRes.value?.cacheBytes === 'number') {
+      parts.push(`HTTP-кэш: ${formatSize(usageRes.value.cacheBytes)}`)
+    } else {
+      const reason = usageRes.status === 'rejected' ? usageRes.reason : new Error('нет данных')
+      console.warn('[shell] storage usage failed:', reason)
+      parts.push(`кэш: ошибка (${errText(reason)})`)
+    }
+    if (cookiesRes.status === 'fulfilled' && Array.isArray(cookiesRes.value)) {
+      parts.push(`куки: ${cookiesRes.value.length} шт`)
+      renderCookies(cookiesRes.value)
+    } else {
+      const reason =
+        cookiesRes.status === 'rejected' ? cookiesRes.reason : new Error('нет данных')
+      console.warn('[shell] cookies list failed:', reason)
+      parts.push(`куки: ошибка (${errText(reason)})`)
+      renderCookies([])
+    }
     try {
       const estimate = (await webview.executeJavaScript(
         'navigator.storage && navigator.storage.estimate ' +
           '? navigator.storage.estimate().then((e) => ({ usage: e.usage ?? 0 })).catch(() => null) ' +
           ': Promise.resolve(null)',
       )) as { usage: number } | null
-      if (estimate) sitePart = ` · данные сайта: ${formatSize(estimate.usage)}`
+      if (estimate) parts.push(`данные сайта: ${formatSize(estimate.usage)}`)
     } catch {
       // страница не готова — показываем без данных сайта
     }
-    if (setStorageUsage) {
-      setStorageUsage.textContent =
-        `HTTP-кэш: ${formatSize(usage.cacheBytes)} · куки: ${cookies.length} шт` + sitePart
-    }
-    renderCookies(cookies)
+    if (setStorageUsage) setStorageUsage.textContent = parts.join(' · ')
   } catch (err) {
     console.warn('[shell] storage panel refresh failed:', err)
-    if (setStorageUsage) setStorageUsage.textContent = 'не удалось прочитать'
+    if (setStorageUsage) setStorageUsage.textContent = `не удалось прочитать: ${errText(err)}`
   }
 }
 
