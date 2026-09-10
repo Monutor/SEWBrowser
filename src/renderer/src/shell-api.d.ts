@@ -70,6 +70,17 @@ interface DownloadEvent {
   state?: string
 }
 
+/** Запись истории загрузок (downloads.json в userData) */
+interface DownloadedFile {
+  id: string
+  name: string
+  path: string
+  bytes: number
+  state: 'done' | 'error'
+  startedAt: string
+  finishedAt: string
+}
+
 interface StorageUsage {
   cacheBytes: number
   cookieCount: number
@@ -141,6 +152,11 @@ interface ShellApi {
   openExternal(url: string): Promise<boolean>
   showItemInFolder(filePath: string): Promise<boolean>
   onDownload(cb: (event: DownloadEvent) => void): void
+  listDownloads(): Promise<DownloadedFile[]>
+  clearDownloads(): Promise<DownloadedFile[]>
+  removeDownload(id: string): Promise<DownloadedFile[]>
+  showDownload(id: string): Promise<boolean>
+  openDownloadFile(id: string): Promise<boolean>
   getStorageUsage(): Promise<StorageUsage>
   clearStorage(target: StorageClearTarget): Promise<boolean>
   listCookies(): Promise<CookieInfo[]>

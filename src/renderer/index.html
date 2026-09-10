@@ -20,6 +20,7 @@
       <button id="btn-reload" title="Перезагрузить">&#8636;</button>
       <input id="address" spellcheck="false" autocomplete="off" />
       <button id="btn-accounts" title="Аккаунты SEW (Ctrl+Shift+L)">&#128273;</button>
+      <button id="btn-downloads" title="Загрузки">&#128229;</button>
       <button id="btn-settings" title="Настройки">&#9881;</button>
       <div id="downloads" hidden title="Загрузки"></div>
       <span id="status"></span>
@@ -123,6 +124,17 @@
           </div>
         </div>
         <button id="accounts-cancel">Закрыть (Esc)</button>
+      </div>
+    </div>
+
+    <div id="downloads-overlay" hidden>
+      <div class="downloads-card">
+        <div class="settings-title">Загрузки</div>
+        <div id="downloads-history" class="downloads-history"></div>
+        <div class="settings-actions">
+          <button id="downloads-clear">Очистить список</button>
+          <button id="downloads-close">Закрыть (Esc)</button>
+        </div>
       </div>
     </div>
 

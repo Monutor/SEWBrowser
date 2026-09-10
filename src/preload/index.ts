@@ -23,6 +23,17 @@ interface DownloadEventLike {
   state?: string
 }
 
+/** Запись истории загрузок (downloads.json в userData) */
+interface DownloadedFileLike {
+  id: string
+  name: string
+  path: string
+  bytes: number
+  state: 'done' | 'error'
+  startedAt: string
+  finishedAt: string
+}
+
 interface StorageUsageLike {
   cacheBytes: number
   cookieCount: number
@@ -81,6 +92,17 @@ const api = {
   onDownload: (cb: (event: DownloadEventLike) => void): void => {
     ipcRenderer.on('download:event', (_event, payload: DownloadEventLike) => cb(payload))
   },
+  /** История загрузок (окно «Загрузки»): новые — в начале */
+  listDownloads: (): Promise<DownloadedFileLike[]> => ipcRenderer.invoke('downloads:list'),
+  /** Очистить всю историю (возвращает пустой список) */
+  clearDownloads: (): Promise<DownloadedFileLike[]> => ipcRenderer.invoke('downloads:clear'),
+  /** Убрать запись из истории (возвращает обновлённый список) */
+  removeDownload: (id: string): Promise<DownloadedFileLike[]> =>
+    ipcRenderer.invoke('downloads:remove', id),
+  /** Показать файл из истории в проводнике */
+  showDownload: (id: string): Promise<boolean> => ipcRenderer.invoke('downloads:show', id),
+  /** Открыть файл из истории приложением по умолчанию */
+  openDownloadFile: (id: string): Promise<boolean> => ipcRenderer.invoke('downloads:open', id),
   /** События автообновления: available | progress | ready | error */
   onUpdater: (cb: (event: UpdaterEventLike) => void): void => {
     ipcRenderer.on('updater:event', (_event, payload: UpdaterEventLike) => cb(payload))

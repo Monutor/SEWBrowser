@@ -80,6 +80,11 @@ Allowlist по умолчанию: `*.mvideoeldorado.ru` + `kc.tech.mvideo.ru` (
 13. **Stale main в dev:** plain `npm run dev` main-процесс НЕ пересобирает —
     renderer через HMR свежий, а main старый → `No handler registered for ...`.
     Всегда `npm run dev:watch`; при такой ошибке — убить процессы и рестарт.
+14. **will-download слеп к `window.open(blob:/data:)`:** сгенерированные страницей
+    файлы через window.open НЕ вызывают will-download и молча режутся
+    setWindowOpenHandler'ом — для `blob:`/`data:` контент вытягиваем через
+    `guest.executeJavaScript(fetch → base64)` и пишем файл вручную из main
+    (`src/main/downloads/history.ts` + `downloadGuestUrl` в `index.ts`).
 
 ## Правила работы
 

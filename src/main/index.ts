@@ -1,10 +1,13 @@
 import { app, BrowserWindow, Notification, globalShortcut, ipcMain, session, webContents, Menu, dialog, shell, clipboard } from 'electron'
-import type { Input, MenuItemConstructorOptions } from 'electron'
+import type { Input, MenuItemConstructorOptions, WebContents } from 'electron'
 import { join } from 'node:path'
+import { existsSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { autoUpdater } from 'electron-updater'
 import { getConfig, isDebugMode, saveConfig } from './config'
 import { loadPlugins } from './plugins/loader'
 import { getAccountSecrets, listAccounts, removeAccount, saveAccount } from './credentials/store'
+import { appendDownloadRecord, clearDownloadHistory, loadDownloadHistory, removeDownloadRecord } from './downloads/history'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -195,6 +198,25 @@ function createWindow(): void {
     shell.showItemInFolder(filePath)
     return true
   })
+  // ---------- История загрузок (окно «Загрузки») ----------
+  ipcMain.handle('downloads:list', () => loadDownloadHistory())
+  ipcMain.handle('downloads:clear', () => clearDownloadHistory())
+  ipcMain.handle('downloads:remove', (_event, id: unknown) => {
+    if (typeof id !== 'string' || !id) return loadDownloadHistory()
+    return removeDownloadRecord(id)
+  })
+  ipcMain.handle('downloads:show', (_event, id: unknown) => {
+    const rec = typeof id === 'string' ? loadDownloadHistory().find((r) => r.id === id) : undefined
+    if (!rec || !rec.path || !existsSync(rec.path)) return false
+    shell.showItemInFolder(rec.path)
+    return true
+  })
+  ipcMain.handle('downloads:open', async (_event, id: unknown) => {
+    const rec = typeof id === 'string' ? loadDownloadHistory().find((r) => r.id === id) : undefined
+    if (!rec || !rec.path || !existsSync(rec.path)) return false
+    await shell.openPath(rec.path)
+    return true
+  })
   ipcMain.on('window:max', () => {
     if (!mainWindow) return
     if (mainWindow.isMaximized()) mainWindow.unmaximize()
@@ -227,8 +249,15 @@ function createWindow(): void {
 
     // Попапы и window.open (тег webview имеет атрибут allowpopups):
     // разрешённое — в том же окне, остальное — в системный браузер.
+    // blob:/data: — сгенерированные страницей файлы («скачать документ» в SPA):
+    // will-download их не видит, скачиваем вручную через downloadGuestUrl.
     guest.setWindowOpenHandler(({ url }) => {
       const target = url.trim()
+      console.log('[shell] window.open:', target.slice(0, 200))
+      if (/^(blob|data):/i.test(target)) {
+        void downloadGuestUrl(guest, target)
+        return { action: 'deny' }
+      }
       if (!EXTERNAL_SCHEME_RE.test(target)) return { action: 'deny' }
       if (!/^https?:/i.test(target)) {
         void shell.openExternal(target)
@@ -328,16 +357,118 @@ function createWindow(): void {
   })
 
   // ---------- Загрузки ----------
-  // will-download срабатывает для любых скачиваний гостевой страницы.
+  // will-download срабатывает для обычных скачиваний (http/https и клики
+  // по ссылкам с download-атрибутом). window.open(blob:/data:) сюда НЕ
+  // попадает — такие файлы забираем вручную через downloadGuestUrl (ниже).
   let downloadSeq = 0
+  const sendDownloadEvent = (id: number, name: string, payload: Record<string, unknown>): void => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('download:event', { id, name, ...payload })
+    }
+  }
+
+  /** Скачивание blob:/data: URL, открытого через window.open (will-download их не видит) */
+  const GUEST_MIME_EXT: Record<string, string> = {
+    'application/pdf': 'pdf',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+    'application/vnd.ms-excel': 'xls',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'application/msword': 'doc',
+    'text/csv': 'csv',
+    'text/plain': 'txt',
+    'application/zip': 'zip',
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+  }
+  const MAX_GUEST_FILE_BYTES = 200 * 1024 * 1024
+
+  async function downloadGuestUrl(guest: WebContents, url: string): Promise<void> {
+    const id = ++downloadSeq
+    const startedAt = new Date().toISOString()
+    const fail = (message: string): void => {
+      console.warn('[shell] guest download failed:', message)
+      sendDownloadEvent(id, 'файл', { type: 'done', ok: false, state: 'failed' })
+      appendDownloadRecord({
+        id: randomUUID(),
+        name: 'файл',
+        path: '',
+        bytes: 0,
+        state: 'error',
+        startedAt,
+        finishedAt: new Date().toISOString(),
+      })
+    }
+    try {
+      let base64 = ''
+      let mime = ''
+      let size = 0
+      if (/^data:/i.test(url)) {
+        // data: разбираем прямо в main — гостевая страница не нужна
+        const m = /^data:([^;,]*)?(;base64)?,([\s\S]*)$/.exec(url)
+        if (!m) {
+          fail('bad data URL')
+          return
+        }
+        mime = (m[1] || '').toLowerCase()
+        base64 = m[2] ? m[3] : Buffer.from(decodeURIComponent(m[3]), 'utf8').toString('base64')
+        size = Buffer.byteLength(base64, 'base64')
+      } else {
+        // blob: живёт в контексте страницы — вытягиваем через fetch в госте
+        if (guest.isDestroyed()) return
+        const res = (await guest.executeJavaScript(
+          `(async () => { const res = await fetch(${JSON.stringify(url)});` +
+            ' const blob = await res.blob(); const buf = new Uint8Array(await blob.arrayBuffer());' +
+            ' let bin = ""; for (let i = 0; i < buf.length; i += 32768)' +
+            ' { bin += String.fromCharCode.apply(null, buf.subarray(i, i + 32768)); }' +
+            ' return { base64: btoa(bin), mime: blob.type || "", size: blob.size }; })()',
+        )) as { base64?: unknown; mime?: unknown; size?: unknown }
+        if (!res || typeof res.base64 !== 'string') {
+          fail('empty blob')
+          return
+        }
+        base64 = res.base64
+        mime = typeof res.mime === 'string' ? res.mime.toLowerCase() : ''
+        size = typeof res.size === 'number' ? res.size : Buffer.byteLength(base64, 'base64')
+      }
+      if (size <= 0 || size > MAX_GUEST_FILE_BYTES) {
+        fail(`bad size: ${size}`)
+        return
+      }
+      const ext = GUEST_MIME_EXT[mime] ?? 'bin'
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
+      const name = `документ-${stamp}.${ext}`
+      if (!mainWindow || mainWindow.isDestroyed()) return
+      sendDownloadEvent(id, name, { type: 'started' })
+      const filePath = dialog.showSaveDialogSync(mainWindow, {
+        title: 'Сохранить файл',
+        defaultPath: join(app.getPath('downloads'), name),
+      })
+      if (!filePath) {
+        sendDownloadEvent(id, name, { type: 'done', ok: false, cancelled: true })
+        return
+      }
+      writeFileSync(filePath, Buffer.from(base64, 'base64'))
+      sendDownloadEvent(id, name, { type: 'progress', received: size, total: size, percent: 100 })
+      sendDownloadEvent(id, name, { type: 'done', ok: true, path: filePath, state: 'completed' })
+      appendDownloadRecord({
+        id: randomUUID(),
+        name,
+        path: filePath,
+        bytes: size,
+        state: 'done',
+        startedAt,
+        finishedAt: new Date().toISOString(),
+      })
+    } catch (err) {
+      fail(String((err as Error)?.message ?? err))
+    }
+  }
+
   session.defaultSession.on('will-download', (_event, item) => {
     const id = ++downloadSeq
     const name = item.getFilename() || 'файл'
-    const send = (payload: Record<string, unknown>): void => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('download:event', { id, name, ...payload })
-      }
-    }
+    const startedAt = new Date().toISOString()
+    const send = (payload: Record<string, unknown>): void => sendDownloadEvent(id, name, payload)
     if (!mainWindow || mainWindow.isDestroyed()) {
       item.cancel()
       return
@@ -365,7 +496,21 @@ function createWindow(): void {
       })
     })
     item.on('done', (_doneEvent, state) => {
-      send({ type: 'done', ok: state === 'completed', path: item.getSavePath(), state })
+      const savePath = item.getSavePath()
+      const ok = state === 'completed'
+      // Отмены в историю не пишем — только завершённые и упавшие
+      if (state !== 'cancelled') {
+        appendDownloadRecord({
+          id: randomUUID(),
+          name,
+          path: savePath,
+          bytes: item.getTotalBytes(),
+          state: ok ? 'done' : 'error',
+          startedAt,
+          finishedAt: new Date().toISOString(),
+        })
+      }
+      send({ type: 'done', ok, path: savePath, state })
     })
   })
 

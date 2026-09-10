@@ -27,6 +27,9 @@ const setClearOnExit = document.getElementById('set-clear-on-exit') as HTMLSelec
 
 // Загрузки
 const downloadsEl = document.getElementById('downloads') as HTMLElement | null
+const downloadsOverlay = document.getElementById('downloads-overlay') as HTMLElement | null
+const downloadsHistory = document.getElementById('downloads-history') as HTMLElement | null
+let downloadsOpen = false
 
 let config: ShellConfig | null = null
 let plugins: PluginInfo[] = []
@@ -703,6 +706,9 @@ function pruneDownloads(): void {
 }
 
 function wireDownloads(): void {
+  document.getElementById('btn-downloads')?.addEventListener('click', () => void openDownloads())
+  document.getElementById('downloads-close')?.addEventListener('click', closeDownloads)
+  document.getElementById('downloads-clear')?.addEventListener('click', () => void clearDownloadsHistory())
   window.shell.onDownload((event) => {
     if (event.type === 'started') {
       downloads.set(event.id, {
@@ -735,7 +741,118 @@ function wireDownloads(): void {
     }
     pruneDownloads()
     renderDownloads()
+    // Окно истории открыто — подтягиваем свежие записи
+    if (downloadsOpen) void refreshDownloadsHistory()
   })
+}
+
+// ---------- Окно «Загрузки»: история файлов ----------
+
+function formatDateTime(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function renderDownloadsHistory(records: DownloadedFile[]): void {
+  if (!downloadsHistory) return
+  downloadsHistory.innerHTML = ''
+  if (records.length === 0) {
+    const empty = document.createElement('span')
+    empty.textContent = 'Пока ничего не скачано'
+    downloadsHistory.append(empty)
+    return
+  }
+  for (const rec of records) {
+    const row = document.createElement('div')
+    row.className = 'download-row'
+    const icon = document.createElement('span')
+    icon.className = 'download-icon'
+    icon.textContent = rec.state === 'done' ? '✓' : '✕'
+    const info = document.createElement('div')
+    info.className = 'download-info'
+    const name = document.createElement('span')
+    name.className = 'download-name'
+    name.textContent = rec.name
+    name.title = rec.path || rec.name
+    name.addEventListener('click', () => void openHistoryFile(rec))
+    const meta = document.createElement('span')
+    meta.className = 'download-meta'
+    const sizePart = rec.bytes > 0 ? `${formatSize(rec.bytes)} · ` : ''
+    meta.textContent = `${sizePart}${formatDateTime(rec.finishedAt)}${rec.state === 'error' ? ' · ошибка' : ''}`
+    info.append(name, meta)
+    const show = document.createElement('button')
+    show.textContent = '📁'
+    show.title = 'Показать в папке'
+    show.addEventListener('click', () => void showHistoryFile(rec))
+    const del = document.createElement('button')
+    del.className = 'dl-remove'
+    del.textContent = '✕'
+    del.title = 'Убрать из списка'
+    del.addEventListener('click', () => void deleteHistoryRecord(rec.id))
+    row.append(icon, info, show, del)
+    downloadsHistory.append(row)
+  }
+}
+
+async function refreshDownloadsHistory(): Promise<void> {
+  try {
+    renderDownloadsHistory(await window.shell.listDownloads())
+  } catch (err) {
+    console.warn('[shell] downloads history failed:', err)
+  }
+}
+
+async function openDownloads(): Promise<void> {
+  if (!downloadsOverlay) return
+  downloadsOverlay.hidden = false
+  downloadsOpen = true
+  await refreshDownloadsHistory()
+}
+
+function closeDownloads(): void {
+  downloadsOpen = false
+  if (downloadsOverlay) downloadsOverlay.hidden = true
+}
+
+async function openHistoryFile(rec: DownloadedFile): Promise<void> {
+  try {
+    const ok = await window.shell.openDownloadFile(rec.id)
+    if (!ok) setStatus('файл не найден (перемещён или удалён)')
+  } catch (err) {
+    console.warn('[shell] open download failed:', err)
+  }
+}
+
+async function showHistoryFile(rec: DownloadedFile): Promise<void> {
+  try {
+    const ok = await window.shell.showDownload(rec.id)
+    if (!ok) setStatus('файл не найден (перемещён или удалён)')
+  } catch (err) {
+    console.warn('[shell] show download failed:', err)
+  }
+}
+
+async function deleteHistoryRecord(id: string): Promise<void> {
+  try {
+    renderDownloadsHistory(await window.shell.removeDownload(id))
+  } catch (err) {
+    console.warn('[shell] remove download failed:', err)
+  }
+}
+
+async function clearDownloadsHistory(): Promise<void> {
+  try {
+    renderDownloadsHistory(await window.shell.clearDownloads())
+  } catch (err) {
+    console.warn('[shell] clear downloads failed:', err)
+  }
 }
 
 // ---------- Внешние протоколы (mailto:, tel:) ----------
@@ -806,6 +923,7 @@ async function handleShortcut(name: string): Promise<void> {
       break
     case 'escape':
       if (accountsOpen) closeAccounts()
+      else if (downloadsOpen) closeDownloads()
       else if (findActive) closeFind()
       else if (settingsOverlay && !settingsOverlay.hidden) closeSettings()
       else if (document.activeElement === addressInput && addressInput) addressInput.blur()
