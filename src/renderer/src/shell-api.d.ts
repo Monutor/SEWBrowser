@@ -77,6 +77,13 @@ interface StorageUsage {
 
 type StorageClearTarget = 'cache' | 'cookies' | 'all'
 
+interface UpdaterEvent {
+  type: 'available' | 'progress' | 'ready' | 'error'
+  version?: string
+  percent?: number
+  message?: string
+}
+
 /** Метаданные куки БЕЗ значения (значения не покидают main-процесс) */
 interface CookieInfo {
   name: string
@@ -122,6 +129,9 @@ interface ShellApi {
   clearStorage(target: StorageClearTarget): Promise<boolean>
   listCookies(): Promise<CookieInfo[]>
   removeCookie(cookie: { name: string; domain: string; path: string; secure: boolean }): Promise<boolean>
+  onUpdater(cb: (event: UpdaterEvent) => void): void
+  downloadUpdate(): Promise<boolean>
+  installUpdate(): void
 }
 
 interface Window {

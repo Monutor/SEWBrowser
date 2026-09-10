@@ -28,6 +28,13 @@ interface StorageUsageLike {
   cookieCount: number
 }
 
+interface UpdaterEventLike {
+  type: 'available' | 'progress' | 'ready' | 'error'
+  version?: string
+  percent?: number
+  message?: string
+}
+
 /** Метаданные куки БЕЗ значения (значения не покидают main-процесс) */
 interface CookieInfoLike {
   name: string
@@ -66,6 +73,14 @@ const api = {
   onDownload: (cb: (event: DownloadEventLike) => void): void => {
     ipcRenderer.on('download:event', (_event, payload: DownloadEventLike) => cb(payload))
   },
+  /** События автообновления: available | progress | ready | error */
+  onUpdater: (cb: (event: UpdaterEventLike) => void): void => {
+    ipcRenderer.on('updater:event', (_event, payload: UpdaterEventLike) => cb(payload))
+  },
+  /** Скачать доступное обновление (по кнопке пользователя) */
+  downloadUpdate: (): Promise<boolean> => ipcRenderer.invoke('updater:download'),
+  /** Перезапустить оболочку и установить скачанное обновление */
+  installUpdate: (): void => ipcRenderer.send('updater:install'),
   /** Размер HTTP-кэша и число куки */
   getStorageUsage: (): Promise<StorageUsageLike> => ipcRenderer.invoke('storage:usage'),
   /** Выборочная очистка: 'cache' | 'cookies' | 'all' */

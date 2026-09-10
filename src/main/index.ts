@@ -385,12 +385,39 @@ function createWindow(): void {
 app.whenReady().then(() => {
   createWindow()
 
-  // Автообновление через GitHub Releases (только в собранном приложении)
+  // Автообновление через GitHub Releases (только в собранном приложении).
+  // Скачивание — только по кнопке пользователя, установка — по кнопке
+  // после скачивания. Прогресс уходит в shell-UI событием 'updater:event'.
   if (!process.env.ELECTRON_RENDERER_URL) {
-    autoUpdater.on('error', (err) => console.log('[updater] error:', err))
-    void autoUpdater.checkForUpdates().then((available) => {
-      console.log(`[updater] update available: ${available}`)
+    autoUpdater.autoDownload = false
+    const sendUpdater = (payload: Record<string, unknown>): void => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('updater:event', payload)
+      }
+    }
+    autoUpdater.on('checking-for-update', () => console.log('[updater] checking'))
+    autoUpdater.on('update-available', (info) => {
+      console.log('[updater] available:', info.version)
+      sendUpdater({ type: 'available', version: info.version })
     })
+    autoUpdater.on('update-not-available', () => console.log('[updater] up to date'))
+    autoUpdater.on('download-progress', (progress) => {
+      sendUpdater({ type: 'progress', percent: Math.round(progress.percent) })
+    })
+    autoUpdater.on('update-downloaded', (info) => {
+      console.log('[updater] downloaded:', info.version)
+      sendUpdater({ type: 'ready', version: info.version })
+    })
+    autoUpdater.on('error', (err) => {
+      console.log('[updater] error:', err)
+      sendUpdater({ type: 'error', message: String(err?.message ?? err) })
+    })
+    ipcMain.handle('updater:download', async () => {
+      await autoUpdater.downloadUpdate()
+      return true
+    })
+    ipcMain.on('updater:install', () => autoUpdater.quitAndInstall(false, true))
+    void autoUpdater.checkForUpdates().catch((err) => console.log('[updater] check failed:', err))
   }
 })
 

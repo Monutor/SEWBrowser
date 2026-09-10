@@ -720,6 +720,75 @@ function startStatusPolling(): void {
   }, 2000)
 }
 
+// ---------- Автообновление (уведомление + кнопка) ----------
+
+const updatebar = document.getElementById('updatebar') as HTMLElement | null
+const updateText = document.getElementById('update-text') as HTMLElement | null
+const updateAction = document.getElementById('update-action') as HTMLButtonElement | null
+
+type UpdaterUiState = 'idle' | 'available' | 'downloading' | 'ready'
+let updaterState: UpdaterUiState = 'idle'
+let updaterVersion = ''
+let updaterPercent = 0
+
+function renderUpdater(): void {
+  if (!updatebar || !updateText || !updateAction) return
+  if (updaterState === 'idle') {
+    updatebar.hidden = true
+    return
+  }
+  updatebar.hidden = false
+  updateAction.disabled = false
+  if (updaterState === 'available') {
+    updateText.textContent = `Доступно обновление ${updaterVersion}`
+    updateAction.textContent = 'Скачать и установить'
+    updateAction.onclick = (): void => {
+      updaterState = 'downloading'
+      updaterPercent = 0
+      renderUpdater()
+      window.shell.downloadUpdate().catch((err) => {
+        console.warn('[shell] download update failed:', err)
+        updaterState = 'available'
+        renderUpdater()
+        setStatus('не удалось скачать обновление')
+      })
+    }
+  } else if (updaterState === 'downloading') {
+    updateText.textContent = `Скачивание обновления… ${updaterPercent}%`
+    updateAction.textContent = 'Скачивается…'
+    updateAction.disabled = true
+    updateAction.onclick = null
+  } else {
+    updateText.textContent = `Обновление ${updaterVersion} готово`
+    updateAction.textContent = 'Перезапустить'
+    updateAction.onclick = (): void => window.shell.installUpdate()
+  }
+}
+
+function wireUpdater(): void {
+  document.getElementById('update-close')?.addEventListener('click', () => {
+    if (updatebar) updatebar.hidden = true
+  })
+  window.shell.onUpdater((event) => {
+    if (event.type === 'available') {
+      updaterState = 'available'
+      updaterVersion = event.version ?? ''
+    } else if (event.type === 'progress') {
+      updaterState = 'downloading'
+      updaterPercent = event.percent ?? 0
+    } else if (event.type === 'ready') {
+      updaterState = 'ready'
+      updaterVersion = event.version ?? updaterVersion
+    } else {
+      // error — показываем только если пользователь уже в процессе
+      if (updaterState === 'idle') return
+      setStatus(`обновление: ${event.message ?? 'ошибка'}`)
+      return
+    }
+    renderUpdater()
+  })
+}
+
 async function init(): Promise<void> {
   config = await window.shell.getConfig()
   plugins = await window.shell.getPlugins()
@@ -730,6 +799,7 @@ async function init(): Promise<void> {
   wireErrorOverlay()
   wireSettings()
   wireDownloads()
+  wireUpdater()
   wireWebviewEvents()
   startStatusPolling()
 
