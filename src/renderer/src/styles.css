@@ -90,6 +90,11 @@ body {
   background: rgba(255, 255, 255, 0.08);
 }
 
+#toolbar button svg {
+  display: block;
+  margin: 0 auto;
+}
+
 #address {
   flex: 1;
   height: 30px;
