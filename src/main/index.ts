@@ -30,6 +30,9 @@ function createWindow(): void {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 
+  console.log('[SEWBrowser] startUrl:', config.startUrl)
+  if (debug) mainWindow.webContents.openDevTools()
+
   // Шорткаты из плагинов (main-процесс)
   for (const plugin of plugins) {
     const hotkeys = plugin.manifest.hotkeys

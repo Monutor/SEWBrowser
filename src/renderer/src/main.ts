@@ -89,8 +89,16 @@ function wireToolbar(): void {
 }
 
 function wireWebviewEvents(): void {
-  webview.on('did-navigate', updateAddressBar)
+  webview.on('did-navigate', (event) => {
+    console.log('[shell] did-navigate:', event.url)
+    updateAddressBar()
+  })
   webview.on('did-finish', () => void injectPlugins())
+  webview.on('did-fail-load', (event) => {
+    if (!event.isMainFrame) return
+    console.error('[shell] did-fail-load:', event.errorCode, event.errorDescription)
+    setStatus(`fail: ${event.errorDescription}`)
+  })
   webview.on('did-start-loading', () => toolbar?.classList.add('loading'))
   webview.on('did-stop-loading', () => toolbar?.classList.remove('loading'))
 
@@ -127,8 +135,12 @@ async function init(): Promise<void> {
   wireWebviewEvents()
   startStatusPolling()
 
+  if (addressInput) addressInput.value = config.startUrl
   webview.src = config.startUrl
   setStatus(config.debug ? 'debug' : '')
 }
 
-void init()
+void init().catch((err) => {
+  console.error('[shell] init failed:', err)
+  setStatus(`init: ${String(err)}`)
+})

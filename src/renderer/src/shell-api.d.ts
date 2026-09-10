@@ -10,7 +10,12 @@ interface SewWebViewElement extends HTMLIFrameElement {
   openDevTools(): void
   on(event: 'will-navigate', listener: (event: { url: string; preventDefault(): void }) => void): void
   on(event: 'new-window', listener: (event: { url: string; preventDefault(): void }) => void): void
-  on(event: 'did-navigate' | 'did-finish' | 'did-start-loading' | 'did-stop-loading', listener: () => void): void
+  on(event: 'did-navigate', listener: (event: { url: string }) => void): void
+  on(event: 'did-finish' | 'did-start-loading' | 'did-stop-loading', listener: () => void): void
+  on(
+    event: 'did-fail-load',
+    listener: (event: { errorCode: number; errorDescription: string; isMainFrame: boolean }) => void,
+  ): void
 }
 
 interface ShellConfig {
