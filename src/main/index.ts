@@ -64,12 +64,16 @@ function createWindow(): void {
   const debug = isDebugMode()
   const plugins = loadPlugins(config)
 
+  // Иконка окна в dev (в сборке иконку exe ставит electron-builder из resources/icon.png)
+  const devIcon = join(__dirname, '..', '..', 'resources', 'icon.png')
+
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 640,
     minHeight: 400,
     frame: false,
+    icon: existsSync(devIcon) ? devIcon : undefined,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
