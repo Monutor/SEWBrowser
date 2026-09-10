@@ -1174,6 +1174,20 @@ function wireUpdater(): void {
   })
 }
 
+// Клик строго по фону оверлея (мимо карточки) закрывает модалку
+function wireOverlayDismiss(): void {
+  const pairs: Array<[HTMLElement | null, () => void]> = [
+    [settingsOverlay, closeSettings],
+    [accountsOverlay, closeAccounts],
+    [downloadsOverlay, closeDownloads],
+  ]
+  for (const [overlay, close] of pairs) {
+    overlay?.addEventListener('click', (event: MouseEvent) => {
+      if (event.target === overlay) close()
+    })
+  }
+}
+
 async function init(): Promise<void> {
   config = await window.shell.getConfig()
   plugins = await window.shell.getPlugins()
@@ -1185,6 +1199,7 @@ async function init(): Promise<void> {
   wireSettings()
   wireDownloads()
   wireUpdater()
+  wireOverlayDismiss()
   wireWebviewEvents()
   startStatusPolling()
 
