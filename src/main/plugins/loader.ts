@@ -28,13 +28,17 @@ export interface LoadedPlugin {
 
 /** features/ в dev — рядом с проектом; в prod — в resources/ (extraResources) */
 export function getFeaturesDir(): string {
-  const res = join(process.resourcesPath, 'features')
-  if (existsSync(res)) return res
-  return join(app.getAppPath(), '..', 'features')
+  if (app.isPackaged) return join(process.resourcesPath, 'features')
+  // dev: __dirname = <proj>/out/main → два уровня вверх = корень проекта
+  return join(__dirname, '..', '..', 'features')
 }
 
 export function loadPlugins(config: SewConfig): LoadedPlugin[] {
   const dir = getFeaturesDir()
+  if (!existsSync(dir)) {
+    console.warn(`[plugins] features dir not found: ${dir}`)
+    return []
+  }
   const result: LoadedPlugin[] = []
 
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
