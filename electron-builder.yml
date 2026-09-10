@@ -1,0 +1,20 @@
+appId: com.sewbrowser.app
+productName: SEWBrowser
+directories:
+  output: release
+files:
+  - "out/**/*"
+extraResources:
+  - from: "features/"
+    to: "features/"
+win:
+  target: nsis
+  icon: resources/icon.png
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+# Publish config — заполните owner/repo после создания репозитория GitHub:
+# publish:
+#   provider: github
+#   owner: "<github-user>"
+#   repository: "SEWBrowser"

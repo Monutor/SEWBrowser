@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <title>SEWBrowser</title>
+  </head>
+  <body>
+    <div id="titlebar">
+      <span class="app-title">SEWBrowser</span>
+      <div class="window-controls">
+        <button id="btn-min" title="Свернуть">&#9472;</button>
+        <button id="btn-max" title="Развернуть/свернуть">&#9633;</button>
+        <button id="btn-close" title="Закрыть">&times;</button>
+      </div>
+    </div>
+
+    <div id="toolbar">
+      <button id="btn-back" title="Назад">&#8592;</button>
+      <button id="btn-forward" title="Вперёд">&#8594;</button>
+      <button id="btn-reload" title="Перезагрузить">&#8636;</button>
+      <input id="address" spellcheck="false" autocomplete="off" />
+      <span id="status"></span>
+    </div>
+
+    <webview id="site"></webview>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,6 @@
+{
+  "name": "overlay-demo",
+  "version": "1.0.0",
+  "description": "Плавающая панель в углу страницы (shadow DOM, переживает SPA-rerender)",
+  "renderer": "./main.js"
+}
