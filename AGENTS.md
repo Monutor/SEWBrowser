@@ -77,6 +77,9 @@ Allowlist по умолчанию: `*.mvideoeldorado.ru` + `kc.tech.mvideo.ru` (
     `server: { host: '127.0.0.1', port: 5173 }` — дефолтный `localhost` резолвится
     в `::1`, а IPv6-loopback на части машин отрезан (EACCES от VPN/файрвола) →
     белый экран + `ERR_CONNECTION_REFUSED` в dev.
+13. **Stale main в dev:** plain `npm run dev` main-процесс НЕ пересобирает —
+    renderer через HMR свежий, а main старый → `No handler registered for ...`.
+    Всегда `npm run dev:watch`; при такой ошибке — убить процессы и рестарт.
 
 ## Правила работы
 
