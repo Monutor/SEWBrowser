@@ -14,7 +14,8 @@ const DEFAULTS: SewConfig = {
   startUrl: 'https://sew.mvideoeldorado.ru/v2/',
   debug: false,
   allowlistEnabled: true,
-  allowlist: ['*.mvideoeldorado.ru'],
+  // kc.tech.mvideo.ru — SSO (Keycloak), без него не пройти логин в SEW
+  allowlist: ['*.mvideoeldorado.ru', 'kc.tech.mvideo.ru'],
   plugins: {},
 }
 

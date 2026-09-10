@@ -104,7 +104,14 @@ function wireWebviewEvents(): void {
       lastAllowedUrl = event.url
       updateAddressBar()
     } else {
-      setStatus('blocked by allowlist')
+      // Показываем заблокированный хост — так проще дополнять allowlist
+      let host = event.url
+      try {
+        host = new URL(event.url).host
+      } catch {
+        // оставляем raw url
+      }
+      setStatus(`blocked: ${host}`)
       void webview.loadURL(lastAllowedUrl).catch((err) => console.warn('[shell] bounce-back failed:', err))
     }
   })
