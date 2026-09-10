@@ -19,6 +19,7 @@
       <button id="btn-forward" title="Вперёд">&#8594;</button>
       <button id="btn-reload" title="Перезагрузить">&#8636;</button>
       <input id="address" spellcheck="false" autocomplete="off" />
+      <button id="btn-accounts" title="Войти через сохранённый аккаунт (Ctrl+Shift+L)">&#128273;</button>
       <button id="btn-settings" title="Настройки">&#9881;</button>
       <div id="downloads" hidden title="Загрузки"></div>
       <span id="status"></span>
@@ -82,6 +83,34 @@
             <option value="all">Очищать всё (кэш и хранилища)</option>
           </select>
         </label>
+        <div class="settings-row">
+          Аккаунты SEW (пароли хранятся в шифрохранилище Windows)
+          <div id="set-accounts" class="accounts-list"></div>
+          <div class="settings-btn-row">
+            <button id="acc-add">+ Добавить аккаунт</button>
+          </div>
+          <div id="acc-form" hidden>
+            <label class="settings-row">
+              ФИО (подпись, чтобы различать аккаунты)
+              <input id="acc-fio" autocomplete="off" />
+            </label>
+            <label class="settings-row">
+              Табельный номер
+              <input id="acc-tabnum" autocomplete="off" />
+            </label>
+            <label class="settings-row">
+              Пароль
+              <span class="password-wrap">
+                <input id="acc-password" type="password" autocomplete="new-password" />
+                <button id="acc-eye" title="Показать/скрыть пароль" type="button">&#128065;</button>
+              </span>
+            </label>
+            <div class="settings-btn-row">
+              <button id="acc-save">Сохранить аккаунт</button>
+              <button id="acc-cancel">Отмена</button>
+            </div>
+          </div>
+        </div>
         <div class="settings-actions">
           <button id="set-save">Сохранить</button>
           <button id="set-cancel">Отмена</button>
@@ -89,6 +118,15 @@
         <div class="settings-danger">
           <button id="set-clear-session">Очистить данные сессии и выйти</button>
         </div>
+      </div>
+    </div>
+
+    <div id="accounts-overlay" hidden>
+      <div class="accounts-card">
+        <div class="settings-title">Войти в SEW</div>
+        <div class="settings-row">Выберите аккаунт:</div>
+        <div id="accounts-pick-list" class="accounts-pick-list"></div>
+        <button id="accounts-cancel">Отмена (Esc)</button>
       </div>
     </div>
 

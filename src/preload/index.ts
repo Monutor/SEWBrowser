@@ -47,6 +47,14 @@ interface CookieInfoLike {
   size: number
 }
 
+/** Публичная часть аккаунта SEW (без пароля) */
+interface AccountInfoLike {
+  id: string
+  fio: string
+  tabNum: string
+  updatedAt: number
+}
+
 const api = {
   getConfig: (): Promise<ShellConfigLike> => ipcRenderer.invoke('config:get'),
   setConfig: (patch: Partial<ShellConfigLike>): Promise<ShellConfigLike> =>
@@ -94,6 +102,19 @@ const api = {
     path: string
     secure: boolean
   }): Promise<boolean> => ipcRenderer.invoke('cookies:remove', cookie),
+  /** Аккаунты SEW: список без паролей */
+  listAccounts: (): Promise<AccountInfoLike[]> => ipcRenderer.invoke('credentials:list'),
+  /** Создать/обновить аккаунт (пустой password при id = не менять) */
+  saveAccount: (input: {
+    id?: string
+    fio: string
+    tabNum: string
+    password: string
+  }): Promise<AccountInfoLike> => ipcRenderer.invoke('credentials:save', input),
+  removeAccount: (id: string): Promise<boolean> => ipcRenderer.invoke('credentials:remove', id),
+  /** Расшифрованные секреты — только для автозаполнения формы входа */
+  getAccountSecrets: (id: string): Promise<{ tabNum: string; password: string } | null> =>
+    ipcRenderer.invoke('credentials:get', id),
 }
 
 contextBridge.exposeInMainWorld('shell', api)

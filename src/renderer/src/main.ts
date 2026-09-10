@@ -257,6 +257,7 @@ function openSettings(): void {
   if (setClearOnExit) setClearOnExit.value = config.clearOnExit
   settingsOverlay.hidden = false
   void refreshStoragePanel()
+  void refreshAccountsSettings()
 }
 
 function closeSettings(): void {
@@ -320,6 +321,16 @@ function wireSettings(): void {
   document
     .getElementById('set-clear-cookies')
     ?.addEventListener('click', () => void clearStorageTarget('cookies'))
+  document.getElementById('acc-add')?.addEventListener('click', () => openAccountForm())
+  document.getElementById('acc-save')?.addEventListener('click', () => void saveAccountForm())
+  document.getElementById('acc-cancel')?.addEventListener('click', closeAccountForm)
+  document.getElementById('acc-eye')?.addEventListener('click', (event) => {
+    if (!accPassword) return
+    const show = accPassword.type === 'password'
+    accPassword.type = show ? 'text' : 'password'
+    ;(event.target as HTMLElement).innerHTML = show ? '&#128064;' : '&#128065;'
+  })
+  document.getElementById('accounts-cancel')?.addEventListener('click', closeAccountPicker)
   setStartUrl?.addEventListener('keydown', (event: KeyboardEvent) => {
     if (event.key === 'Enter') void saveSettings()
   })
@@ -413,6 +424,220 @@ async function clearStorageTarget(target: 'cache' | 'cookies'): Promise<void> {
   } catch (err) {
     console.warn('[shell] clear storage failed:', err)
     setStatus('не удалось очистить')
+  }
+}
+
+// ---------- Аккаунты SEW ----------
+
+const accountsOverlay = document.getElementById('accounts-overlay') as HTMLElement | null
+const accountsPickList = document.getElementById('accounts-pick-list') as HTMLElement | null
+const setAccounts = document.getElementById('set-accounts') as HTMLElement | null
+const accForm = document.getElementById('acc-form') as HTMLElement | null
+const accFio = document.getElementById('acc-fio') as HTMLInputElement | null
+const accTabNum = document.getElementById('acc-tabnum') as HTMLInputElement | null
+const accPassword = document.getElementById('acc-password') as HTMLInputElement | null
+let pickerOpen = false
+let loginPrompted = false
+let editingAccountId: string | null = null
+
+function accountLabel(a: AccountInfo): string {
+  return a.fio ? `${a.fio} · ${a.tabNum}` : a.tabNum
+}
+
+async function refreshAccountsSettings(): Promise<void> {
+  if (!setAccounts) return
+  setAccounts.innerHTML = ''
+  let accounts: AccountInfo[] = []
+  try {
+    accounts = await window.shell.listAccounts()
+  } catch (err) {
+    console.warn('[shell] list accounts failed:', err)
+  }
+  if (accounts.length === 0) {
+    const empty = document.createElement('span')
+    empty.textContent = 'Нет сохранённых аккаунтов'
+    setAccounts.append(empty)
+    return
+  }
+  for (const a of accounts) {
+    const row = document.createElement('div')
+    row.className = 'account-row'
+    const info = document.createElement('span')
+    info.textContent = accountLabel(a)
+    const edit = document.createElement('button')
+    edit.textContent = '✎'
+    edit.title = 'Изменить'
+    edit.addEventListener('click', () => openAccountForm(a))
+    const del = document.createElement('button')
+    del.textContent = '✕'
+    del.title = 'Удалить'
+    del.addEventListener('click', () => void deleteAccount(a))
+    row.append(info, edit, del)
+    setAccounts.append(row)
+  }
+}
+
+async function deleteAccount(a: AccountInfo): Promise<void> {
+  if (!window.confirm(`Удалить аккаунт «${accountLabel(a)}»?`)) return
+  try {
+    await window.shell.removeAccount(a.id)
+    if (editingAccountId === a.id) closeAccountForm()
+    await refreshAccountsSettings()
+    setStatus('аккаунт удалён')
+  } catch (err) {
+    console.warn('[shell] remove account failed:', err)
+  }
+}
+
+function openAccountForm(a?: AccountInfo): void {
+  editingAccountId = a?.id ?? null
+  if (accFio) accFio.value = a?.fio ?? ''
+  if (accTabNum) accTabNum.value = a?.tabNum ?? ''
+  if (accPassword) {
+    accPassword.value = ''
+    accPassword.placeholder = a ? 'Пусто — не менять' : 'Пароль'
+    accPassword.type = 'password'
+  }
+  const eye = document.getElementById('acc-eye')
+  if (eye) eye.innerHTML = '&#128065;'
+  if (accForm) accForm.hidden = false
+  accTabNum?.focus()
+}
+
+function closeAccountForm(): void {
+  editingAccountId = null
+  if (accForm) accForm.hidden = true
+}
+
+async function saveAccountForm(): Promise<void> {
+  const tabNum = accTabNum?.value.trim() ?? ''
+  const password = accPassword?.value ?? ''
+  if (!tabNum) {
+    setStatus('укажите табельный номер')
+    return
+  }
+  if (!editingAccountId && !password) {
+    setStatus('укажите пароль')
+    return
+  }
+  try {
+    await window.shell.saveAccount({
+      id: editingAccountId ?? undefined,
+      fio: accFio?.value ?? '',
+      tabNum,
+      password,
+    })
+    closeAccountForm()
+    await refreshAccountsSettings()
+    setStatus('аккаунт сохранён')
+  } catch (err) {
+    console.warn('[shell] save account failed:', err)
+    setStatus(`не удалось сохранить: ${err instanceof Error ? err.message : err}`)
+  }
+}
+
+// ---------- Выбор аккаунта и автозаполнение формы входа ----------
+
+async function openAccountPicker(manual: boolean): Promise<void> {
+  let accounts: AccountInfo[] = []
+  try {
+    accounts = await window.shell.listAccounts()
+  } catch (err) {
+    console.warn('[shell] list accounts failed:', err)
+  }
+  if (accounts.length === 0) {
+    if (manual) {
+      openSettings()
+      setStatus('добавьте аккаунт SEW в настройках')
+    }
+    return
+  }
+  if (!accountsOverlay || !accountsPickList) return
+  accountsPickList.innerHTML = ''
+  for (const a of accounts) {
+    const btn = document.createElement('button')
+    btn.className = 'account-pick'
+    btn.textContent = accountLabel(a)
+    btn.addEventListener('click', () => void fillLogin(a.id))
+    accountsPickList.append(btn)
+  }
+  accountsOverlay.hidden = false
+  pickerOpen = true
+}
+
+function closeAccountPicker(): void {
+  pickerOpen = false
+  if (accountsOverlay) accountsOverlay.hidden = true
+}
+
+/** Есть ли на странице видимое поле пароля (форма входа)? */
+async function hasLoginForm(): Promise<boolean> {
+  try {
+    const found = await webview.executeJavaScript(
+      '!!document.querySelector(\'input[type="password"]:not([disabled])\')',
+    )
+    return found === true
+  } catch {
+    return false
+  }
+}
+
+async function checkLoginForm(manual: boolean): Promise<void> {
+  if (pickerOpen) return
+  if (!manual && loginPrompted) return
+  if (!(await hasLoginForm())) return
+  loginPrompted = true
+  await openAccountPicker(false)
+}
+
+/**
+ * Подставляет табельный номер + пароль и нажимает «Войти».
+ * Значения задаём через нативный сеттер value + события input/change,
+ * иначе React/Vue-формы не заметят программную подстановку.
+ */
+async function fillLogin(accountId: string): Promise<void> {
+  closeAccountPicker()
+  let secrets: { tabNum: string; password: string } | null = null
+  try {
+    secrets = await window.shell.getAccountSecrets(accountId)
+  } catch (err) {
+    console.warn('[shell] get secrets failed:', err)
+  }
+  if (!secrets) {
+    setStatus('не удалось получить данные аккаунта')
+    return
+  }
+  const payload = JSON.stringify({ tabNum: secrets.tabNum, password: secrets.password })
+  secrets = null
+  const script =
+    '(function(creds){' +
+    'var pass=document.querySelector(\'input[type="password"]:not([disabled])\');' +
+    'if(!pass) return "no-password-field";' +
+    'var inputs=Array.prototype.slice.call(document.querySelectorAll("input")).filter(function(el){' +
+    'return el!==pass&&!el.disabled&&el.type!=="hidden"&&el.type!=="submit"&&el.type!=="checkbox"' +
+    '&&el.type!=="radio"&&el.type!=="password"&&el.offsetParent!==null;});' +
+    'var user=inputs.find(function(el){return /user|login|email|tabnum|account|name/i' +
+    '.test(el.name+" "+el.id+" "+el.placeholder);})||inputs[0];' +
+    'function setVal(el,v){var desc=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el),"value")' +
+    '||Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value");' +
+    'if(desc&&desc.set)desc.set.call(el,v);else el.value=v;' +
+    'el.dispatchEvent(new Event("input",{bubbles:true}));el.dispatchEvent(new Event("change",{bubbles:true}));}' +
+    'if(user)setVal(user,creds.tabNum);' +
+    'setVal(pass,creds.password);' +
+    'var form=pass.form||(user&&user.form);' +
+    'var submit=form?form.querySelector(\'button[type="submit"],input[type="submit"]\')' +
+    ':document.querySelector(\'button[type="submit"]\');' +
+    'setTimeout(function(){if(submit)submit.click();else if(form)' +
+    '{if(form.requestSubmit)form.requestSubmit();else form.submit();}},300);' +
+    'return "ok";})(' +
+    payload +
+    ')'
+  try {
+    await webview.executeJavaScript(script)
+    setStatus('вход…')
+  } catch (err) {
+    console.warn('[shell] autofill failed:', err)
+    setStatus('не удалось заполнить форму')
   }
 }
 
@@ -547,6 +772,9 @@ async function handleShortcut(name: string): Promise<void> {
       addressInput?.focus()
       addressInput?.select()
       break
+    case 'accounts':
+      void openAccountPicker(true)
+      break
     case 'back':
       webview.goBack()
       break
@@ -584,7 +812,8 @@ async function handleShortcut(name: string): Promise<void> {
       openSettings()
       break
     case 'escape':
-      if (findActive) closeFind()
+      if (pickerOpen) closeAccountPicker()
+      else if (findActive) closeFind()
       else if (settingsOverlay && !settingsOverlay.hidden) closeSettings()
       else if (document.activeElement === addressInput && addressInput) addressInput.blur()
       else if (isFullscreen) {
@@ -607,6 +836,7 @@ function shortcutFromEvent(event: KeyboardEvent): ShortcutName | null {
   const { key, code } = event
   if (key === 'F5') return mod ? 'hard-reload' : 'reload'
   if (mod && code === 'KeyR') return 'reload'
+  if (mod && event.shiftKey && code === 'KeyL') return 'accounts'
   if (mod && code === 'KeyL') return 'focus-address'
   if (mod && code === 'KeyF') return 'find'
   if (mod && code === 'KeyP') return 'print'
@@ -640,6 +870,7 @@ function wireToolbar(): void {
   document.getElementById('btn-back')?.addEventListener('click', () => webview.goBack())
   document.getElementById('btn-forward')?.addEventListener('click', () => webview.goForward())
   document.getElementById('btn-reload')?.addEventListener('click', () => webview.reload())
+  document.getElementById('btn-accounts')?.addEventListener('click', () => void openAccountPicker(true))
 
   if (addressInput) {
     addressInput.addEventListener('keydown', (event: KeyboardEvent) => {
@@ -687,7 +918,12 @@ function wireWebviewEvents(): void {
     }
   })
   webview.addEventListener('did-navigate-in-page', updateAddressBar)
-  webview.addEventListener('did-finish-load', () => void injectPlugins())
+  webview.addEventListener('did-finish-load', () => {
+    void injectPlugins()
+    // Появилась форма входа? Предлагаем выбрать аккаунт (с паузой —
+    // SPA достраивает форму уже после события загрузки)
+    setTimeout(() => void checkLoginForm(false), 1200)
+  })
   webview.addEventListener('did-fail-load', (event) => {
     if (!event.isMainFrame) return
     // -3 (ERR_ABORTED) — прерванная загрузка, например откат allowlist; не ошибка
@@ -704,6 +940,7 @@ function wireWebviewEvents(): void {
   })
   webview.addEventListener('did-start-loading', () => {
     hideError()
+    loginPrompted = false
     toolbar?.classList.add('loading')
   })
   webview.addEventListener('did-stop-loading', () => toolbar?.classList.remove('loading'))

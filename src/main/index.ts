@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { autoUpdater } from 'electron-updater'
 import { getConfig, isDebugMode, saveConfig } from './config'
 import { loadPlugins } from './plugins/loader'
+import { getAccountSecrets, listAccounts, removeAccount, saveAccount } from './credentials/store'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -16,6 +17,7 @@ function guestShortcutName(input: Input): string | null {
   const { key, code } = input
   if (key === 'F5') return mod ? 'hard-reload' : 'reload'
   if (mod && code === 'KeyR') return 'reload'
+  if (mod && input.shift && code === 'KeyL') return 'accounts'
   if (mod && code === 'KeyL') return 'focus-address'
   if (mod && code === 'KeyF') return 'find'
   if (mod && code === 'KeyP') return 'print'
@@ -160,6 +162,27 @@ function createWindow(): void {
     const path = typeof c.path === 'string' && c.path.startsWith('/') ? c.path : '/'
     await session.defaultSession.cookies.remove(`${scheme}://${host}${path}`, c.name)
     return true
+  })
+  // ---------- Аккаунты SEW ----------
+  // Пароли лежат в шифрохранилище ОС (см. credentials/store.ts).
+  // Расшифровка выдаётся только для автозаполнения формы входа.
+  ipcMain.handle('credentials:list', () => listAccounts())
+  ipcMain.handle('credentials:save', (_event, input: unknown) => {
+    const v = (input ?? {}) as { id?: unknown; fio?: unknown; tabNum?: unknown; password?: unknown }
+    return saveAccount({
+      id: typeof v.id === 'string' ? v.id : undefined,
+      fio: typeof v.fio === 'string' ? v.fio : '',
+      tabNum: typeof v.tabNum === 'string' ? v.tabNum : '',
+      password: typeof v.password === 'string' ? v.password : '',
+    })
+  })
+  ipcMain.handle('credentials:remove', (_event, id: unknown) => {
+    if (typeof id !== 'string' || !id) return false
+    return removeAccount(id)
+  })
+  ipcMain.handle('credentials:get', (_event, id: unknown) => {
+    if (typeof id !== 'string' || !id) return null
+    return getAccountSecrets(id)
   })
   ipcMain.on('window:min', () => mainWindow?.minimize())
   ipcMain.handle('shell:open-external', (_event, url: unknown) => {

@@ -479,6 +479,155 @@ body {
   border-color: var(--accent);
 }
 
+/* Аккаунты SEW */
+.accounts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.account-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #1a1b1e;
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+.account-row span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  user-select: text;
+}
+
+.account-row button {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.account-row button:hover {
+  color: var(--accent);
+  background: rgba(74, 158, 255, 0.12);
+}
+
+#acc-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #1a1b1e;
+  border-radius: 6px;
+  padding: 10px;
+}
+
+#acc-form[hidden] {
+  display: none;
+}
+
+#acc-form input {
+  background: #101114;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 7px 9px;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  user-select: text;
+}
+
+#acc-form input:focus {
+  border-color: var(--accent);
+}
+
+.password-wrap {
+  display: flex;
+  gap: 6px;
+}
+
+.password-wrap input {
+  flex: 1;
+  min-width: 0;
+}
+
+.password-wrap button {
+  background: rgba(255, 255, 255, 0.08);
+  border: none;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 10px;
+}
+
+/* Пикер аккаунта */
+#accounts-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+#accounts-overlay[hidden] {
+  display: none;
+}
+
+.accounts-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 360px;
+  padding: 24px;
+  background: var(--chrome-bg);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+}
+
+.accounts-pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.account-pick {
+  padding: 10px;
+  background: rgba(74, 158, 255, 0.12);
+  border: 1px solid rgba(74, 158, 255, 0.4);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.account-pick:hover {
+  background: rgba(74, 158, 255, 0.25);
+}
+
+#accounts-cancel {
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border: none;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
 .settings-actions {
   display: flex;
   gap: 8px;

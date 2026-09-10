@@ -96,10 +96,26 @@ interface CookieInfo {
   size: number
 }
 
+/** Публичная часть аккаунта SEW (без пароля) */
+interface AccountInfo {
+  id: string
+  fio: string
+  tabNum: string
+  updatedAt: number
+}
+
+interface SaveAccountInput {
+  id?: string
+  fio: string
+  tabNum: string
+  password: string
+}
+
 type ShortcutName =
   | 'reload'
   | 'hard-reload'
   | 'focus-address'
+  | 'accounts'
   | 'back'
   | 'forward'
   | 'fullscreen'
@@ -129,6 +145,10 @@ interface ShellApi {
   clearStorage(target: StorageClearTarget): Promise<boolean>
   listCookies(): Promise<CookieInfo[]>
   removeCookie(cookie: { name: string; domain: string; path: string; secure: boolean }): Promise<boolean>
+  listAccounts(): Promise<AccountInfo[]>
+  saveAccount(input: SaveAccountInput): Promise<AccountInfo>
+  removeAccount(id: string): Promise<boolean>
+  getAccountSecrets(id: string): Promise<{ tabNum: string; password: string } | null>
   onUpdater(cb: (event: UpdaterEvent) => void): void
   downloadUpdate(): Promise<boolean>
   installUpdate(): void
