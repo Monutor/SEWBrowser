@@ -22,6 +22,9 @@ const setAllowlistEnabled = document.getElementById('set-allowlist-enabled') as 
 const setAllowlist = document.getElementById('set-allowlist') as HTMLTextAreaElement | null
 const setPlugins = document.getElementById('set-plugins') as HTMLElement | null
 
+// Загрузки
+const downloadsEl = document.getElementById('downloads') as HTMLElement | null
+
 let config: ShellConfig | null = null
 let plugins: PluginInfo[] = []
 let isFullscreen = false
@@ -310,6 +313,122 @@ function wireSettings(): void {
   })
 }
 
+// ---------- Загрузки ----------
+
+interface DownloadState {
+  name: string
+  status: 'active' | 'done' | 'error'
+  percent: number
+  received: number
+  path?: string
+}
+
+const downloads = new Map<number, DownloadState>()
+let downloadsHideTimer: ReturnType<typeof setTimeout> | null = null
+
+function formatBytes(n: number): string {
+  if (!n || n < 0) return ''
+  if (n < 1024) return `${n} Б`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} КБ`
+  return `${(n / 1024 / 1024).toFixed(1)} МБ`
+}
+
+function renderDownloads(): void {
+  if (!downloadsEl) return
+  if (downloadsHideTimer) {
+    clearTimeout(downloadsHideTimer)
+    downloadsHideTimer = null
+  }
+  const active = [...downloads.entries()].filter(([, d]) => d.status === 'active')
+  if (active.length > 0) {
+    const [[, current], ...rest] = active
+    const extra = rest.length > 0 ? ` (+${rest.length})` : ''
+    const progress =
+      current.percent >= 0 ? ` — ${current.percent}%` : ` — ${formatBytes(current.received)}`
+    downloadsEl.textContent = `↓ ${current.name}${progress}${extra}`
+    downloadsEl.classList.toggle('done', false)
+    downloadsEl.onclick = null
+    downloadsEl.hidden = false
+    return
+  }
+  const last = [...downloads.values()].pop()
+  if (!last) {
+    downloadsEl.hidden = true
+    downloadsEl.onclick = null
+    return
+  }
+  if (last.status === 'done') {
+    downloadsEl.textContent = `✓ ${last.name}`
+    downloadsEl.classList.toggle('done', true)
+    const path = last.path
+    downloadsEl.onclick = path ? () => void window.shell.showItemInFolder(path) : null
+  } else {
+    downloadsEl.textContent = `✕ ${last.name}`
+    downloadsEl.classList.toggle('done', false)
+    downloadsEl.onclick = null
+  }
+  downloadsEl.hidden = false
+  downloadsHideTimer = setTimeout(() => {
+    if (downloadsEl) downloadsEl.hidden = true
+  }, 6000)
+}
+
+function pruneDownloads(): void {
+  while (downloads.size > 20) {
+    const oldestDone = [...downloads.keys()].find((id) => downloads.get(id)?.status !== 'active')
+    if (oldestDone === undefined) break
+    downloads.delete(oldestDone)
+  }
+}
+
+function wireDownloads(): void {
+  window.shell.onDownload((event) => {
+    if (event.type === 'started') {
+      downloads.set(event.id, {
+        name: event.name,
+        status: 'active',
+        percent: -1,
+        received: 0,
+        path: event.path,
+      })
+    } else if (event.type === 'progress') {
+      const current = downloads.get(event.id)
+      if (current && current.status === 'active') {
+        current.percent = event.percent ?? -1
+        current.received = event.received ?? 0
+      }
+    } else if (event.ok) {
+      const current = downloads.get(event.id)
+      if (current) {
+        current.status = 'done'
+        current.path = event.path
+      } else {
+        downloads.set(event.id, { name: event.name, status: 'done', percent: 100, received: 0, path: event.path })
+      }
+    } else if (event.cancelled) {
+      downloads.delete(event.id)
+    } else {
+      const current = downloads.get(event.id)
+      if (current) current.status = 'error'
+      else downloads.set(event.id, { name: event.name, status: 'error', percent: -1, received: 0 })
+    }
+    pruneDownloads()
+    renderDownloads()
+  })
+}
+
+// ---------- Внешние протоколы (mailto:, tel:) ----------
+
+/** Не http(s) — отдаём внешнему приложению, а не оверлею ошибки */
+function isExternalProtocol(url: string): boolean {
+  try {
+    const protocol = new URL(url).protocol
+    return protocol !== 'http:' && protocol !== 'https:'
+  } catch {
+    return false
+  }
+}
+
 // ---------- Шорткаты ----------
 
 async function handleShortcut(name: string): Promise<void> {
@@ -465,6 +584,12 @@ function wireWebviewEvents(): void {
     if (!event.isMainFrame) return
     // -3 (ERR_ABORTED) — прерванная загрузка, например откат allowlist; не ошибка
     if (event.errorCode === -3) return
+    // Ссылки на внешние приложения (mailto:, tel:) — открываем снаружи
+    if (isExternalProtocol(event.url)) {
+      setStatus('открыто во внешнем приложении')
+      void window.shell.openExternal(event.url)
+      return
+    }
     console.error('[shell] did-fail-load:', event.errorCode, event.errorDescription)
     setStatus(`fail: ${event.errorDescription}`)
     showError(`${event.errorDescription} (код ${event.errorCode})`)
@@ -496,6 +621,7 @@ async function init(): Promise<void> {
   wireFindbar()
   wireErrorOverlay()
   wireSettings()
+  wireDownloads()
   wireWebviewEvents()
   startStatusPolling()
 

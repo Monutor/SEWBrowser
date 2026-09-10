@@ -9,6 +9,19 @@ interface ShellConfigLike {
   zoom: Record<string, number>
 }
 
+interface DownloadEventLike {
+  id: number
+  name: string
+  type: 'started' | 'progress' | 'done'
+  path?: string
+  received?: number
+  total?: number
+  percent?: number
+  ok?: boolean
+  cancelled?: boolean
+  state?: string
+}
+
 const api = {
   getConfig: (): Promise<ShellConfigLike> => ipcRenderer.invoke('config:get'),
   setConfig: (patch: Partial<ShellConfigLike>): Promise<ShellConfigLike> =>
@@ -25,6 +38,15 @@ const api = {
   attachGuest: (webContentsId: number): void => ipcRenderer.send('guest:attach', webContentsId),
   onShortcut: (cb: (name: string) => void): void => {
     ipcRenderer.on('shell:shortcut', (_event, name: string) => cb(name))
+  },
+  /** Открыть URL во внешнем приложении (системный браузер, почтовый клиент…) */
+  openExternal: (url: string): Promise<boolean> => ipcRenderer.invoke('shell:open-external', url),
+  /** Показать скачанный файл в проводнике */
+  showItemInFolder: (filePath: string): Promise<boolean> =>
+    ipcRenderer.invoke('downloads:show-item', filePath),
+  /** События загрузок: started | progress | done */
+  onDownload: (cb: (event: DownloadEventLike) => void): void => {
+    ipcRenderer.on('download:event', (_event, payload: DownloadEventLike) => cb(payload))
   },
 }
 

@@ -4,7 +4,8 @@ declare module '*.css'
  * Подмножество реального API тега <webview> (см. Electron docs, webview-tag).
  * Важно: события — ТОЛЬКО через addEventListener (метода .on нет);
  * навигация — через loadURL()/атрибут src; preventDefault() в will-navigate
- * НЕ работает; события 'new-window' у webview НЕТ.
+ * НЕ работает; попапы — через атрибут allowpopups + setWindowOpenHandler
+ * в main-процессе (события 'new-window' у webview НЕТ).
  */
 interface SewWebViewElement extends HTMLElement {
   loadURL(url: string): Promise<void>
@@ -30,7 +31,7 @@ interface SewWebViewElement extends HTMLElement {
   ): void
   addEventListener(
     event: 'did-fail-load',
-    listener: (event: { errorCode: number; errorDescription: string; isMainFrame: boolean }) => void,
+    listener: (event: { errorCode: number; errorDescription: string; isMainFrame: boolean; url: string }) => void,
   ): void
   addEventListener(
     event: 'found-in-page',
@@ -52,6 +53,19 @@ interface ShellConfig {
 interface PluginInfo {
   name: string
   code: string
+}
+
+interface DownloadEvent {
+  id: number
+  name: string
+  type: 'started' | 'progress' | 'done'
+  path?: string
+  received?: number
+  total?: number
+  percent?: number
+  ok?: boolean
+  cancelled?: boolean
+  state?: string
 }
 
 type ShortcutName =
@@ -79,6 +93,9 @@ interface ShellApi {
   setFullscreen(enable?: boolean): Promise<boolean>
   attachGuest(webContentsId: number): void
   onShortcut(cb: (name: string) => void): void
+  openExternal(url: string): Promise<boolean>
+  showItemInFolder(filePath: string): Promise<boolean>
+  onDownload(cb: (event: DownloadEvent) => void): void
 }
 
 interface Window {
