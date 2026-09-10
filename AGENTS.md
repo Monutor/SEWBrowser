@@ -63,6 +63,10 @@ Allowlist по умолчанию: `*.mvideoeldorado.ru` + `kc.tech.mvideo.ru` (
    (`out/main` → корень проекта), packaged — `resourcesPath/features`; всегда guard через `existsSync`.
 6. Ошибка консоли `-3 (ERR_ABORTED, GUEST_VIEW_MANAGER_CALL)` при SSO-редиректе — безвредна (прерванная загрузка).
 7. `webview` официально в архитектурном churn'е у Electron — кандидат на миграцию: `WebContentsView`.
+8. **electron-builder publish.github:** ключ — `repo`, НЕ `repository` (иначе schema validation падает).
+9. **gen-icon.js:** PNG-сигнатура строго `89 50 4E 47 0D 0A 1A 0A` — с битой libvips
+   (icon-tool) падает с `VipsForeignLoad: buffer is not in a known format`, браузеры такое прощают.
+   Ошибка `7z reported error but extracted files` при сборке NSIS — некритична, если файлы извлеклись.
 
 ## Правила работы
 
