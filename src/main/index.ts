@@ -130,16 +130,28 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
-  createWindow()
+// Одна копия оболочки: повторный запуск фокусирует уже открытое окно,
+// а не плодит зомби-процессы с занятым портом dev-сервера.
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
+  })
 
-  // Автообновление через GitHub Releases (только в собранном приложении)
-  if (!devServerUrl) {
-    autoUpdater.on('error', (err) => console.log('[updater] error:', err))
-    void autoUpdater.checkForUpdates().then((available) => {
-      console.log(`[updater] update available: ${available}`)
-    })
-  }
-})
+  app.whenReady().then(() => {
+    createWindow()
+
+    // Автообновление через GitHub Releases (только в собранном приложении)
+    if (!devServerUrl) {
+      autoUpdater.on('error', (err) => console.log('[updater] error:', err))
+      void autoUpdater.checkForUpdates().then((available) => {
+        console.log(`[updater] update available: ${available}`)
+      })
+    }
+  })
+}
 
 app.on('window-all-closed', () => app.quit())
