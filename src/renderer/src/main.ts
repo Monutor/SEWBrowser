@@ -21,6 +21,9 @@ const setStartUrl = document.getElementById('set-starturl') as HTMLInputElement 
 const setAllowlistEnabled = document.getElementById('set-allowlist-enabled') as HTMLInputElement | null
 const setAllowlist = document.getElementById('set-allowlist') as HTMLTextAreaElement | null
 const setPlugins = document.getElementById('set-plugins') as HTMLElement | null
+const setStorageUsage = document.getElementById('set-storage-usage') as HTMLElement | null
+const setCookies = document.getElementById('set-cookies') as HTMLElement | null
+const setClearOnExit = document.getElementById('set-clear-on-exit') as HTMLSelectElement | null
 
 // Загрузки
 const downloadsEl = document.getElementById('downloads') as HTMLElement | null
@@ -251,7 +254,9 @@ function openSettings(): void {
       setPlugins.append(empty)
     }
   }
+  if (setClearOnExit) setClearOnExit.value = config.clearOnExit
   settingsOverlay.hidden = false
+  void refreshStoragePanel()
 }
 
 function closeSettings(): void {
@@ -274,6 +279,7 @@ async function saveSettings(): Promise<void> {
       .map((line) => line.trim())
       .filter(Boolean),
     plugins: pluginStates,
+    clearOnExit: (setClearOnExit?.value as ShellConfig['clearOnExit']) ?? config.clearOnExit,
   }
   try {
     const oldStartUrl = config.startUrl
@@ -308,9 +314,106 @@ function wireSettings(): void {
   document.getElementById('set-save')?.addEventListener('click', () => void saveSettings())
   document.getElementById('set-cancel')?.addEventListener('click', closeSettings)
   document.getElementById('set-clear-session')?.addEventListener('click', () => void clearSessionAndLogout())
+  document
+    .getElementById('set-clear-cache')
+    ?.addEventListener('click', () => void clearStorageTarget('cache'))
+  document
+    .getElementById('set-clear-cookies')
+    ?.addEventListener('click', () => void clearStorageTarget('cookies'))
   setStartUrl?.addEventListener('keydown', (event: KeyboardEvent) => {
     if (event.key === 'Enter') void saveSettings()
   })
+}
+
+// ---------- Хранилище: использование, куки, выборочная очистка ----------
+
+function formatSize(bytes: number): string {
+  if (!bytes || bytes <= 0) return '0 Б'
+  return formatBytes(bytes)
+}
+
+function renderCookies(cookies: CookieInfo[]): void {
+  if (!setCookies) return
+  setCookies.innerHTML = ''
+  if (cookies.length === 0) {
+    const empty = document.createElement('span')
+    empty.textContent = 'Нет куки'
+    setCookies.append(empty)
+    return
+  }
+  for (const cookie of cookies) {
+    const row = document.createElement('div')
+    row.className = 'cookie-row'
+    const expiry = cookie.session
+      ? 'сессионная'
+      : cookie.expirationDate
+        ? new Date(cookie.expirationDate * 1000).toLocaleDateString('ru-RU')
+        : '—'
+    const info = document.createElement('span')
+    info.textContent =
+      `${cookie.name} @ ${cookie.domain} · ${expiry} · ${formatSize(cookie.size)}` +
+      `${cookie.httpOnly ? ' · httpOnly' : ''}`
+    info.title = `Путь: ${cookie.path}${cookie.secure ? ' · secure' : ''}`
+    const del = document.createElement('button')
+    del.textContent = '✕'
+    del.title = `Удалить куку ${cookie.name}`
+    del.addEventListener('click', () => void removeCookie(cookie))
+    row.append(info, del)
+    setCookies.append(row)
+  }
+}
+
+async function refreshStoragePanel(): Promise<void> {
+  if (setStorageUsage) setStorageUsage.textContent = 'считаем…'
+  try {
+    const [usage, cookies] = await Promise.all([
+      window.shell.getStorageUsage(),
+      window.shell.listCookies(),
+    ])
+    let sitePart = ''
+    try {
+      const estimate = (await webview.executeJavaScript(
+        'navigator.storage && navigator.storage.estimate ' +
+          '? navigator.storage.estimate().then((e) => ({ usage: e.usage ?? 0 })).catch(() => null) ' +
+          ': Promise.resolve(null)',
+      )) as { usage: number } | null
+      if (estimate) sitePart = ` · данные сайта: ${formatSize(estimate.usage)}`
+    } catch {
+      // страница не готова — показываем без данных сайта
+    }
+    if (setStorageUsage) {
+      setStorageUsage.textContent =
+        `HTTP-кэш: ${formatSize(usage.cacheBytes)} · куки: ${cookies.length} шт` + sitePart
+    }
+    renderCookies(cookies)
+  } catch (err) {
+    console.warn('[shell] storage panel refresh failed:', err)
+    if (setStorageUsage) setStorageUsage.textContent = 'не удалось прочитать'
+  }
+}
+
+async function removeCookie(cookie: CookieInfo): Promise<void> {
+  try {
+    await window.shell.removeCookie(cookie)
+    await refreshStoragePanel()
+  } catch (err) {
+    console.warn('[shell] remove cookie failed:', err)
+  }
+}
+
+async function clearStorageTarget(target: 'cache' | 'cookies'): Promise<void> {
+  if (target === 'cookies' && !window.confirm('Очистить все куки? Придётся заново войти в SEW.')) {
+    return
+  }
+  try {
+    await window.shell.clearStorage(target)
+    if (target === 'cookies') webview.reload()
+    await refreshStoragePanel()
+    setStatus(target === 'cache' ? 'кэш очищен' : 'куки очищены')
+  } catch (err) {
+    console.warn('[shell] clear storage failed:', err)
+    setStatus('не удалось очистить')
+  }
 }
 
 // ---------- Загрузки ----------
@@ -436,6 +539,10 @@ async function handleShortcut(name: string): Promise<void> {
     case 'reload':
       webview.reload()
       break
+    case 'hard-reload':
+      webview.reloadIgnoringCache()
+      setStatus('перезагрузка мимо кэша')
+      break
     case 'focus-address':
       addressInput?.focus()
       addressInput?.select()
@@ -498,7 +605,8 @@ async function handleShortcut(name: string): Promise<void> {
 function shortcutFromEvent(event: KeyboardEvent): ShortcutName | null {
   const mod = event.ctrlKey || event.metaKey
   const { key, code } = event
-  if (key === 'F5' || (mod && code === 'KeyR')) return 'reload'
+  if (key === 'F5') return mod ? 'hard-reload' : 'reload'
+  if (mod && code === 'KeyR') return 'reload'
   if (mod && code === 'KeyL') return 'focus-address'
   if (mod && code === 'KeyF') return 'find'
   if (mod && code === 'KeyP') return 'print'

@@ -1,0 +1,38 @@
+
+> sew-browser@0.1.0 dev
+> electron-vite dev
+
+[36mvite v7.3.6 [32mbuilding ssr environment for development...[36m[39m
+transforming...
+[32m✓[39m 3 modules transformed.
+rendering chunks...
+[2mout/main/[22m[36mindex.js  [39m[1m[2m7.56 kB[22m[1m[22m
+[32m✓ built in 56ms[39m
+[32m
+electron main process built successfully[39m
+[90m
+-----
+[39m
+[36mvite v7.3.6 [32mbuilding ssr environment for development...[36m[39m
+transforming...
+[32m✓[39m 1 modules transformed.
+rendering chunks...
+[2mout/preload/[22m[36mindex.js  [39m[1m[2m1.11 kB[22m[1m[22m
+[32m✓ built in 7ms[39m
+[32m
+electron preload scripts built successfully[39m
+[90m
+-----
+[39m
+[32mdev server running for the electron renderer process at:
+[39m
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m5173[22m/[39m
+[2m  [32m➜[39m  [1mNetwork[22m[2m: use [22m[1m--host[22m[2m to expose[22m
+[32m
+starting electron app...
+[39m
+
+[SEWBrowser] startUrl: https://sew.mvideoeldorado.ru/v2/
+(node:8164) electron: Failed to load URL: http://localhost:5173/ with error: ERR_CONNECTION_REFUSED
+(Use `electron --trace-warnings ...` to show where the warning was created)
+[2m20:23:40[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2mindex.html[22m

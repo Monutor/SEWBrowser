@@ -59,6 +59,23 @@
           Плагины (переключение применится при следующей загрузке страницы)
           <div id="set-plugins"></div>
         </div>
+        <div class="settings-row">
+          Хранилище
+          <div id="set-storage-usage" class="storage-usage">…</div>
+          <div class="settings-btn-row">
+            <button id="set-clear-cache">Очистить кэш</button>
+            <button id="set-clear-cookies">Очистить куки</button>
+          </div>
+          <div id="set-cookies" class="cookies-list"></div>
+        </div>
+        <label class="settings-row">
+          При выходе из оболочки
+          <select id="set-clear-on-exit">
+            <option value="none">Ничего не очищать</option>
+            <option value="cache">Очищать HTTP-кэш</option>
+            <option value="all">Очищать всё (кэш и хранилища)</option>
+          </select>
+        </label>
         <div class="settings-actions">
           <button id="set-save">Сохранить</button>
           <button id="set-cancel">Отмена</button>

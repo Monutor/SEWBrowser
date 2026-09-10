@@ -7,6 +7,7 @@ interface ShellConfigLike {
   allowlist: string[]
   plugins: Record<string, boolean>
   zoom: Record<string, number>
+  clearOnExit: 'none' | 'cache' | 'all'
 }
 
 interface DownloadEventLike {
@@ -20,6 +21,23 @@ interface DownloadEventLike {
   ok?: boolean
   cancelled?: boolean
   state?: string
+}
+
+interface StorageUsageLike {
+  cacheBytes: number
+  cookieCount: number
+}
+
+/** Метаданные куки БЕЗ значения (значения не покидают main-процесс) */
+interface CookieInfoLike {
+  name: string
+  domain: string
+  path: string
+  secure: boolean
+  httpOnly: boolean
+  session: boolean
+  expirationDate?: number
+  size: number
 }
 
 const api = {
@@ -48,6 +66,19 @@ const api = {
   onDownload: (cb: (event: DownloadEventLike) => void): void => {
     ipcRenderer.on('download:event', (_event, payload: DownloadEventLike) => cb(payload))
   },
+  /** Размер HTTP-кэша и число куки */
+  getStorageUsage: (): Promise<StorageUsageLike> => ipcRenderer.invoke('storage:usage'),
+  /** Выборочная очистка: 'cache' | 'cookies' | 'all' */
+  clearStorage: (target: 'cache' | 'cookies' | 'all'): Promise<boolean> =>
+    ipcRenderer.invoke('storage:clear', target),
+  /** Список куки без значений */
+  listCookies: (): Promise<CookieInfoLike[]> => ipcRenderer.invoke('cookies:list'),
+  removeCookie: (cookie: {
+    name: string
+    domain: string
+    path: string
+    secure: boolean
+  }): Promise<boolean> => ipcRenderer.invoke('cookies:remove', cookie),
 }
 
 contextBridge.exposeInMainWorld('shell', api)

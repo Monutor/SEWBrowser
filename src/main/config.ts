@@ -10,6 +10,8 @@ export interface SewConfig {
   plugins: Record<string, boolean>
   /** Запомненный зум страниц: host -> zoom factor (1 = 100%) */
   zoom: Record<string, number>
+  /** Автоочистка при выходе: 'none' | 'cache' (только HTTP-кэш) | 'all' (кэш + все хранилища) */
+  clearOnExit: 'none' | 'cache' | 'all'
 }
 
 const DEFAULTS: SewConfig = {
@@ -20,6 +22,7 @@ const DEFAULTS: SewConfig = {
   allowlist: ['*.mvideoeldorado.ru', 'kc.tech.mvideo.ru'],
   plugins: {},
   zoom: {},
+  clearOnExit: 'none',
 }
 
 function configFile(): string {

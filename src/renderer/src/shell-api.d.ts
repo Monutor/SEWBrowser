@@ -13,6 +13,7 @@ interface SewWebViewElement extends HTMLElement {
   goBack(): void
   goForward(): void
   reload(): void
+  reloadIgnoringCache(): void
   executeJavaScript(code: string): Promise<unknown>
   openDevTools(): void
   getWebContentsId(): number
@@ -48,6 +49,7 @@ interface ShellConfig {
   allowlist: string[]
   plugins: Record<string, boolean>
   zoom: Record<string, number>
+  clearOnExit: 'none' | 'cache' | 'all'
 }
 
 interface PluginInfo {
@@ -68,8 +70,28 @@ interface DownloadEvent {
   state?: string
 }
 
+interface StorageUsage {
+  cacheBytes: number
+  cookieCount: number
+}
+
+type StorageClearTarget = 'cache' | 'cookies' | 'all'
+
+/** Метаданные куки БЕЗ значения (значения не покидают main-процесс) */
+interface CookieInfo {
+  name: string
+  domain: string
+  path: string
+  secure: boolean
+  httpOnly: boolean
+  session: boolean
+  expirationDate?: number
+  size: number
+}
+
 type ShortcutName =
   | 'reload'
+  | 'hard-reload'
   | 'focus-address'
   | 'back'
   | 'forward'
@@ -96,6 +118,10 @@ interface ShellApi {
   openExternal(url: string): Promise<boolean>
   showItemInFolder(filePath: string): Promise<boolean>
   onDownload(cb: (event: DownloadEvent) => void): void
+  getStorageUsage(): Promise<StorageUsage>
+  clearStorage(target: StorageClearTarget): Promise<boolean>
+  listCookies(): Promise<CookieInfo[]>
+  removeCookie(cookie: { name: string; domain: string; path: string; secure: boolean }): Promise<boolean>
 }
 
 interface Window {

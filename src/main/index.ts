@@ -14,7 +14,8 @@ let mainWindow: BrowserWindow | null = null
 function guestShortcutName(input: Input): string | null {
   const mod = input.control || input.meta
   const { key, code } = input
-  if (key === 'F5' || (mod && code === 'KeyR')) return 'reload'
+  if (key === 'F5') return mod ? 'hard-reload' : 'reload'
+  if (mod && code === 'KeyR') return 'reload'
   if (mod && code === 'KeyL') return 'focus-address'
   if (mod && code === 'KeyF') return 'find'
   if (mod && code === 'KeyP') return 'print'
@@ -80,7 +81,13 @@ function createWindow(): void {
   }
 
   console.log('[SEWBrowser] startUrl:', config.startUrl)
-  if (debug) mainWindow.webContents.openDevTools()
+  if (debug) {
+    mainWindow.webContents.openDevTools()
+    // В debug-режиме HTTP-кэш чистим на старте, чтобы разработка шла
+    // на свежих файлах. Инжектируемый код плагинов и так всегда свежий —
+    // он читается с диска при каждой загрузке страницы.
+    session.defaultSession.clearCache().catch((err) => console.warn('[SEWBrowser] clearCache failed:', err))
+  }
 
   // Шорткаты из плагинов (main-процесс)
   for (const plugin of plugins) {
@@ -103,8 +110,55 @@ function createWindow(): void {
   ipcMain.handle('config:set', (_event, patch) => saveConfig((patch ?? {}) as Parameters<typeof saveConfig>[0]))
   ipcMain.handle('plugins:list', () => plugins.map((p) => ({ name: p.name, code: p.code ?? '' })))
   ipcMain.handle('session:clear', async () => {
+    await session.defaultSession.clearCache()
     await session.defaultSession.clearStorageData()
     console.log('[SEWBrowser] session storage cleared')
+    return true
+  })
+  // ---------- Хранилища: кэш, куки ----------
+  // HTTP-кэш НЕ входит в clearStorageData — для него отдельный clearCache().
+  ipcMain.handle('storage:usage', async () => {
+    const ses = session.defaultSession
+    const [cacheBytes, cookies] = await Promise.all([ses.getCacheSize(), ses.cookies.get({})])
+    return { cacheBytes, cookieCount: cookies.length }
+  })
+  ipcMain.handle('storage:clear', async (_event, target: unknown) => {
+    const ses = session.defaultSession
+    if (target === 'cache') {
+      await ses.clearCache()
+    } else if (target === 'cookies') {
+      await ses.clearStorageData({ storages: ['cookies'] })
+    } else {
+      await ses.clearCache()
+      await ses.clearStorageData()
+    }
+    console.log('[SEWBrowser] storage cleared:', target)
+    return true
+  })
+  // Значения куки НЕ отдаём в renderer — там только имена/домены/метаданные
+  ipcMain.handle('cookies:list', async () => {
+    const all = await session.defaultSession.cookies.get({})
+    return all
+      .map((c) => ({
+        name: c.name,
+        domain: c.domain ?? '',
+        path: c.path ?? '/',
+        secure: c.secure ?? false,
+        httpOnly: c.httpOnly ?? false,
+        session: c.session ?? false,
+        expirationDate: c.expirationDate,
+        size: c.name.length + (c.value ?? '').length,
+      }))
+      .sort((a, b) => `${a.domain}${a.name}`.localeCompare(`${b.domain}${b.name}`))
+  })
+  ipcMain.handle('cookies:remove', async (_event, cookie: unknown) => {
+    const c = (cookie ?? {}) as { name?: unknown; domain?: unknown; path?: unknown; secure?: unknown }
+    if (typeof c.name !== 'string' || !c.name) return false
+    const host = typeof c.domain === 'string' ? c.domain.replace(/^\./, '') : ''
+    if (!host) return false
+    const scheme = c.secure === true ? 'https' : 'http'
+    const path = typeof c.path === 'string' && c.path.startsWith('/') ? c.path : '/'
+    await session.defaultSession.cookies.remove(`${scheme}://${host}${path}`, c.name)
     return true
   })
   ipcMain.on('window:min', () => mainWindow?.minimize())
@@ -340,4 +394,19 @@ app.whenReady().then(() => {
   }
 })
 
-app.on('window-all-closed', () => app.quit())
+app.on('window-all-closed', () => {
+  void (async () => {
+    const mode = getConfig().clearOnExit
+    try {
+      if (mode === 'cache') {
+        await session.defaultSession.clearCache()
+      } else if (mode === 'all') {
+        await session.defaultSession.clearCache()
+        await session.defaultSession.clearStorageData()
+      }
+    } catch (err) {
+      console.warn('[SEWBrowser] clear-on-exit failed:', err)
+    }
+    app.quit()
+  })()
+})
