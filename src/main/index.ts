@@ -8,6 +8,13 @@ import { loadPlugins } from './plugins/loader'
 let mainWindow: BrowserWindow | null = null
 
 /**
+ * electron-vite в dev-режиме кладёт URL dev-сервера сюда
+ * (НЕ VITE_DEV_SERVER_URL — такой переменной нет, dev молча
+ * грузил бы stale-билд из out/ и дёргал апдейтер).
+ */
+const devServerUrl = process.env.ELECTRON_RENDERER_URL
+
+/**
  * Маппинг клавиш гостевой страницы в имена шорткатов оболочки.
  * Буквы — по input.code (не зависит от раскладки: Ctrl+Ф = Ctrl+A и т.п.).
  */
@@ -47,8 +54,8 @@ function createWindow(): void {
     },
   })
 
-  if (process.env.VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
+  if (devServerUrl) {
+    mainWindow.loadURL(devServerUrl)
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
@@ -113,14 +120,21 @@ function createWindow(): void {
     })
   })
 
-  if (debug) console.log('[SEWBrowser] debug mode enabled')
+  // В debug-режиме логируем неуспешные сетевые запросы (URL + код),
+  // чтобы было видно виновника вроде ERR_SSL_PROTOCOL_ERROR (-107).
+  if (debug) {
+    session.defaultSession.webRequest.onErrorOccurred((details) => {
+      console.warn(`[net] request failed: ${details.url} (${details.error})`)
+    })
+    console.log('[SEWBrowser] debug mode enabled')
+  }
 }
 
 app.whenReady().then(() => {
   createWindow()
 
   // Автообновление через GitHub Releases (только в собранном приложении)
-  if (!process.env.VITE_DEV_SERVER_URL) {
+  if (!devServerUrl) {
     autoUpdater.on('error', (err) => console.log('[updater] error:', err))
     void autoUpdater.checkForUpdates().then((available) => {
       console.log(`[updater] update available: ${available}`)
