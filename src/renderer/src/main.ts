@@ -51,14 +51,18 @@ async function injectPlugins(): Promise<void> {
 
 function updateAddressBar(): void {
   if (!addressInput) return
-  addressInput.value = webview.getCurrentURL() ?? ''
+  addressInput.value = webview.getURL() ?? ''
 }
 
 async function navigate(url: string): Promise<void> {
   const target = normalizeUrl(url)
   if (!target) return
   if (isAllowed(target)) {
-    webview.src = target
+    try {
+      await webview.loadURL(target)
+    } catch (err) {
+      console.warn('[shell] loadURL failed:', err)
+    }
   } else {
     setStatus('blocked by allowlist')
   }
@@ -88,32 +92,31 @@ function wireToolbar(): void {
   })
 }
 
+// Последний разрешённый URL — точка возврата при срабатывании allowlist.
+// (preventDefault() в will-navigate у webview не работает, поэтому запрещённую
+// навигацию откатываем обратно через loadURL.)
+let lastAllowedUrl = ''
+
 function wireWebviewEvents(): void {
-  webview.on('did-navigate', (event) => {
+  webview.addEventListener('did-navigate', (event) => {
     console.log('[shell] did-navigate:', event.url)
-    updateAddressBar()
+    if (isAllowed(event.url)) {
+      lastAllowedUrl = event.url
+      updateAddressBar()
+    } else {
+      setStatus('blocked by allowlist')
+      void webview.loadURL(lastAllowedUrl).catch((err) => console.warn('[shell] bounce-back failed:', err))
+    }
   })
-  webview.on('did-finish', () => void injectPlugins())
-  webview.on('did-fail-load', (event) => {
+  webview.addEventListener('did-navigate-in-page', updateAddressBar)
+  webview.addEventListener('did-finish-load', () => void injectPlugins())
+  webview.addEventListener('did-fail-load', (event) => {
     if (!event.isMainFrame) return
     console.error('[shell] did-fail-load:', event.errorCode, event.errorDescription)
     setStatus(`fail: ${event.errorDescription}`)
   })
-  webview.on('did-start-loading', () => toolbar?.classList.add('loading'))
-  webview.on('did-stop-loading', () => toolbar?.classList.remove('loading'))
-
-  webview.on('will-navigate', (event) => {
-    if (!isAllowed(event.url)) {
-      event.preventDefault()
-      setStatus('blocked by allowlist')
-    }
-  })
-
-  webview.on('new-window', (event) => {
-    // новые окна открываем в том же webview, либо блокируем по allowlist
-    event.preventDefault()
-    if (isAllowed(event.url)) webview.src = event.url
-  })
+  webview.addEventListener('did-start-loading', () => toolbar?.classList.add('loading'))
+  webview.addEventListener('did-stop-loading', () => toolbar?.classList.remove('loading'))
 }
 
 function startStatusPolling(): void {
@@ -136,7 +139,9 @@ async function init(): Promise<void> {
   startStatusPolling()
 
   if (addressInput) addressInput.value = config.startUrl
-  webview.src = config.startUrl
+  lastAllowedUrl = config.startUrl
+  // Стартовую навигацию задаём атрибутом src — срабатывает даже до attach webview
+  webview.setAttribute('src', config.startUrl)
   setStatus(config.debug ? 'debug' : '')
 }
 

@@ -1,18 +1,28 @@
 declare module '*.css'
 
-interface SewWebViewElement extends HTMLIFrameElement {
-  src: string
-  getCurrentURL(): string
+/**
+ * Подмножество реального API тега <webview> (см. Electron docs, webview-tag).
+ * Важно: события — ТОЛЬКО через addEventListener (метода .on нет);
+ * навигация — через loadURL()/атрибут src; preventDefault() в will-navigate
+ * НЕ работает; события 'new-window' у webview НЕТ.
+ */
+interface SewWebViewElement extends HTMLElement {
+  loadURL(url: string): Promise<void>
+  getURL(): string
   goBack(): void
   goForward(): void
   reload(): void
   executeJavaScript(code: string): Promise<unknown>
   openDevTools(): void
-  on(event: 'will-navigate', listener: (event: { url: string; preventDefault(): void }) => void): void
-  on(event: 'new-window', listener: (event: { url: string; preventDefault(): void }) => void): void
-  on(event: 'did-navigate', listener: (event: { url: string }) => void): void
-  on(event: 'did-finish' | 'did-start-loading' | 'did-stop-loading', listener: () => void): void
-  on(
+  addEventListener(
+    event: 'did-navigate' | 'did-navigate-in-page',
+    listener: (event: { url: string }) => void,
+  ): void
+  addEventListener(
+    event: 'did-finish-load' | 'did-start-loading' | 'did-stop-loading',
+    listener: () => void,
+  ): void
+  addEventListener(
     event: 'did-fail-load',
     listener: (event: { errorCode: number; errorDescription: string; isMainFrame: boolean }) => void,
   ): void
