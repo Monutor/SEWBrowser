@@ -4,3 +4,26 @@ release/
 *.log
 .DS_Store
 *.tsbuildinfo
+
+# AI assistants — локальные конфиги, сессии, кэш (общий AGENTS.md остаётся в гите!)
+.opencode/
+.claude/
+.cursor/
+.windsurf/
+.codeium/
+.aider*
+.openai/
+.gemini/
+*.code-workspace
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+Thumbs.db
+
+# Local env
+.env
+.env.local
