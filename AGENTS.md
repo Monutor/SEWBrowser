@@ -70,6 +70,9 @@ Allowlist по умолчанию: `*.mvideoeldorado.ru` + `kc.tech.mvideo.ru` (
 10. **electron-vite dev URL:** переменная — `ELECTRON_RENDERER_URL`, НЕ `VITE_DEV_SERVER_URL`
     (такой нет — dev молча грузит stale-билд из `out/` без HMR и зря дёргает апдейтер).
     В `index.ts` — константа `devServerUrl`, используется и для loadURL, и для гарда апдейтера.
+11. **HTTP-кэш ≠ clearStorageData:** `session.clearStorageData()` кэш НЕ чистит —
+    для него отдельный `session.clearCache()` (а размер — `getCacheSize()`).
+    Значения куки нельзя отдавать в renderer (`cookies:list` возвращает метаданные без `value`).
 
 ## Правила работы
 
