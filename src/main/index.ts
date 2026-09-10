@@ -71,8 +71,10 @@ function createWindow(): void {
     },
   })
 
-  if (process.env.VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
+  // Dev-URL выставляет electron-vite (см. AGENTS.md, ловушка 10)
+  const devServerUrl = process.env.ELECTRON_RENDERER_URL
+  if (devServerUrl) {
+    mainWindow.loadURL(devServerUrl)
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
@@ -330,7 +332,7 @@ app.whenReady().then(() => {
   createWindow()
 
   // Автообновление через GitHub Releases (только в собранном приложении)
-  if (!process.env.VITE_DEV_SERVER_URL) {
+  if (!process.env.ELECTRON_RENDERER_URL) {
     autoUpdater.on('error', (err) => console.log('[updater] error:', err))
     void autoUpdater.checkForUpdates().then((available) => {
       console.log(`[updater] update available: ${available}`)
