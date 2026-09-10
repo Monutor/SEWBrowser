@@ -16,4 +16,4 @@ nsis:
 publish:
   provider: github
   owner: "Monutor"
-  repository: "SEWBrowser"
+  repo: "SEWBrowser"
