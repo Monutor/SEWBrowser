@@ -13,8 +13,7 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
-# Publish config — заполните owner/repo после создания репозитория GitHub:
-# publish:
-#   provider: github
-#   owner: "<github-user>"
-#   repository: "SEWBrowser"
+publish:
+  provider: github
+  owner: "Monutor"
+  repository: "SEWBrowser"
