@@ -73,6 +73,10 @@ Allowlist по умолчанию: `*.mvideoeldorado.ru` + `kc.tech.mvideo.ru` (
 11. **HTTP-кэш ≠ clearStorageData:** `session.clearStorageData()` кэш НЕ чистит —
     для него отдельный `session.clearCache()` (а размер — `getCacheSize()`).
     Значения куки нельзя отдавать в renderer (`cookies:list` возвращает метаданные без `value`).
+12. **Vite dev только на IPv4:** в `electron.vite.config.ts` у renderer задан
+    `server: { host: '127.0.0.1', port: 5173 }` — дефолтный `localhost` резолвится
+    в `::1`, а IPv6-loopback на части машин отрезан (EACCES от VPN/файрвола) →
+    белый экран + `ERR_CONNECTION_REFUSED` в dev.
 
 ## Правила работы
 
