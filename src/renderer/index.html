@@ -19,7 +19,53 @@
       <button id="btn-forward" title="Вперёд">&#8594;</button>
       <button id="btn-reload" title="Перезагрузить">&#8636;</button>
       <input id="address" spellcheck="false" autocomplete="off" />
+      <button id="btn-settings" title="Настройки">&#9881;</button>
       <span id="status"></span>
+    </div>
+
+    <div id="findbar" hidden>
+      <input id="find-input" placeholder="Найти на странице" autocomplete="off" />
+      <span id="find-count"></span>
+      <button id="find-prev" title="Предыдущее">&#8593;</button>
+      <button id="find-next" title="Следующее">&#8595;</button>
+      <button id="find-close" title="Закрыть">&times;</button>
+    </div>
+
+    <div id="error-overlay" hidden>
+      <div class="error-card">
+        <div class="error-title">Не удалось открыть страницу</div>
+        <div id="error-text" class="error-text"></div>
+        <button id="error-retry">Повторить</button>
+      </div>
+    </div>
+
+    <div id="settings-overlay" hidden>
+      <div class="settings-card">
+        <div class="settings-title">Настройки</div>
+        <label class="settings-row">
+          Стартовый URL
+          <input id="set-starturl" spellcheck="false" autocomplete="off" />
+        </label>
+        <label class="settings-row settings-check">
+          <input id="set-allowlist-enabled" type="checkbox" />
+          Проверять allowlist
+        </label>
+        <label class="settings-row">
+          Allowlist (по одному шаблону на строку)
+          <textarea id="set-allowlist" rows="4" spellcheck="false"></textarea>
+        </label>
+        <div class="settings-row">
+          Плагины (переключение применится при следующей загрузке страницы)
+          <div id="set-plugins"></div>
+        </div>
+        <div class="settings-actions">
+          <button id="set-save">Сохранить</button>
+          <button id="set-cancel">Отмена</button>
+        </div>
+        <div class="settings-danger">
+          <button id="set-clear-session">Очистить данные сессии и выйти</button>
+        </div>
+      </div>
     </div>
 
     <webview id="site"></webview>

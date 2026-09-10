@@ -4,6 +4,7 @@
   --accent: #4a9eff;
   --text: #e5e5e5;
   --text-dim: rgba(229, 229, 229, 0.6);
+  --danger: #e5534b;
 }
 
 * {
@@ -109,6 +110,248 @@ body {
   font-size: 12px;
   color: var(--text-dim);
   white-space: nowrap;
+}
+
+/* Панель поиска по странице */
+#findbar {
+  position: absolute;
+  top: 84px;
+  right: 12px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--chrome-bg);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+#findbar[hidden] {
+  display: none;
+}
+
+#find-input {
+  width: 200px;
+  height: 28px;
+  background: #1a1b1e;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0 8px;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  user-select: text;
+}
+
+#find-input:focus {
+  border-color: var(--accent);
+}
+
+#find-count {
+  min-width: 44px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+#findbar button {
+  width: 28px;
+  height: 28px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+#findbar button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Оверлей ошибки сети */
+#error-overlay {
+  position: absolute;
+  top: 80px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+
+#error-overlay[hidden] {
+  display: none;
+}
+
+.error-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: 480px;
+  padding: 32px;
+  text-align: center;
+}
+
+.error-title {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.error-text {
+  font-size: 13px;
+  color: var(--text-dim);
+  word-break: break-all;
+}
+
+.error-card button {
+  padding: 8px 24px;
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.error-card button:hover {
+  filter: brightness(1.1);
+}
+
+/* Окно настроек */
+#settings-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+#settings-overlay[hidden] {
+  display: none;
+}
+
+.settings-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 440px;
+  max-height: 85%;
+  overflow-y: auto;
+  padding: 24px;
+  background: var(--chrome-bg);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+}
+
+.settings-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.settings-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.settings-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.settings-row input[type='text'],
+.settings-row input:not([type]),
+#set-starturl,
+#set-allowlist {
+  background: #1a1b1e;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  user-select: text;
+  resize: vertical;
+}
+
+#set-starturl:focus,
+#set-allowlist:focus {
+  border-color: var(--accent);
+}
+
+#set-plugins {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#set-plugins label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.settings-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.settings-actions button {
+  padding: 8px 20px;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#set-save {
+  background: var(--accent);
+  color: #fff;
+}
+
+#set-cancel {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+
+.settings-danger {
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding-top: 12px;
+}
+
+#set-clear-session {
+  width: 100%;
+  padding: 8px;
+  background: none;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  color: var(--danger);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#set-clear-session:hover {
+  background: rgba(229, 83, 75, 0.12);
 }
 
 webview {

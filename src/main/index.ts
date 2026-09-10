@@ -1,10 +1,33 @@
-import { app, BrowserWindow, Notification, globalShortcut, ipcMain } from 'electron'
+import { app, BrowserWindow, Notification, globalShortcut, ipcMain, session, webContents } from 'electron'
+import type { Input } from 'electron'
 import { join } from 'node:path'
 import { autoUpdater } from 'electron-updater'
-import { getConfig, isDebugMode } from './config'
+import { getConfig, isDebugMode, saveConfig } from './config'
 import { loadPlugins } from './plugins/loader'
 
 let mainWindow: BrowserWindow | null = null
+
+/**
+ * Маппинг клавиш гостевой страницы в имена шорткатов оболочки.
+ * Буквы — по input.code (не зависит от раскладки: Ctrl+Ф = Ctrl+A и т.п.).
+ */
+function guestShortcutName(input: Input): string | null {
+  const mod = input.control || input.meta
+  const { key, code } = input
+  if (key === 'F5' || (mod && code === 'KeyR')) return 'reload'
+  if (mod && code === 'KeyL') return 'focus-address'
+  if (mod && code === 'KeyF') return 'find'
+  if (mod && code === 'KeyP') return 'print'
+  if (mod && (key === '=' || key === '+' || key === 'Add' || key === 'numadd')) return 'zoom-in'
+  if (mod && (key === '-' || key === '_' || key === 'Subtract' || key === 'numsub')) return 'zoom-out'
+  if (mod && key === '0') return 'zoom-reset'
+  if (mod && code === 'Comma') return 'settings'
+  if (input.alt && (key === 'Left' || key === 'ArrowLeft')) return 'back'
+  if (input.alt && (key === 'Right' || key === 'ArrowRight')) return 'forward'
+  if (key === 'F11') return 'fullscreen'
+  if (key === 'Escape' || key === 'Esc') return 'escape'
+  return null
+}
 
 function createWindow(): void {
   const config = getConfig()
@@ -51,7 +74,13 @@ function createWindow(): void {
 
   // IPC для shell-UI
   ipcMain.handle('config:get', () => ({ ...getConfig(), debug }))
+  ipcMain.handle('config:set', (_event, patch) => saveConfig((patch ?? {}) as Parameters<typeof saveConfig>[0]))
   ipcMain.handle('plugins:list', () => plugins.map((p) => ({ name: p.name, code: p.code ?? '' })))
+  ipcMain.handle('session:clear', async () => {
+    await session.defaultSession.clearStorageData()
+    console.log('[SEWBrowser] session storage cleared')
+    return true
+  })
   ipcMain.on('window:min', () => mainWindow?.minimize())
   ipcMain.on('window:max', () => {
     if (!mainWindow) return
@@ -59,6 +88,30 @@ function createWindow(): void {
     else mainWindow.maximize()
   })
   ipcMain.on('window:close', () => mainWindow?.close())
+  ipcMain.handle('window:fullscreen', (_event, enable?: boolean) => {
+    if (!mainWindow) return false
+    const next = typeof enable === 'boolean' ? enable : !mainWindow.isFullScreen()
+    mainWindow.setFullScreen(next)
+    return mainWindow.isFullScreen()
+  })
+
+  // Хоткеи внутри гостевой страницы: фокус находится в webview,
+  // shell-UI их не видит — перехватываем через before-input-event
+  // и пересылаем в renderer, где живёт единый обработчик.
+  const attachedGuests = new Set<number>()
+  ipcMain.on('guest:attach', (_event, id: number) => {
+    if (typeof id !== 'number' || attachedGuests.has(id)) return
+    const guest = webContents.fromId(id)
+    if (!guest || guest.isDestroyed()) return
+    attachedGuests.add(id)
+    guest.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown') return
+      const name = guestShortcutName(input)
+      if (!name) return
+      event.preventDefault()
+      mainWindow?.webContents.send('shell:shortcut', name)
+    })
+  })
 
   if (debug) console.log('[SEWBrowser] debug mode enabled')
 }
