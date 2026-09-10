@@ -37,9 +37,17 @@ body {
 }
 
 .app-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding-left: 12px;
   font-size: 12px;
   color: var(--text-dim);
+}
+
+.app-icon {
+  width: 16px;
+  height: 16px;
 }
 
 .window-controls {
