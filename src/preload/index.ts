@@ -159,3 +159,6 @@ const api = {
 }
 
 contextBridge.exposeInMainWorld('shell', api)
+
+// Диагностика (расследование stale-preload): какой файл загрузился и есть ли метод
+console.log('[preload] file:', __filename, '| getAllPluginData:', typeof api.pluginDataGetAll)
