@@ -79,8 +79,12 @@ function setStatus(text: string): void {
 
 /**
  * Минимальный window.chrome для перенесённых content-скриптов Chrome-расширений.
- * storage.local — через window.shell (файлы плагинов в main-процессе, см. plugins/store.ts),
- * сообщения от оболочки — через window.__chromeShimReceive (fan-out по onMessage-подписчикам).
+ * storage.local — из снапшота window.__shellPluginStores, который оболочка пушит
+ * в страницу при инжекте и обновляет при изменениях: у <webview> НЕТ preload,
+ * поэтому window.shell в гостевой странице отсутствует и IPC оттуда недоступен
+ * (данные плагинов — шаблоны и т.п., несекретные; credentials/куки/конфиг таким
+ * путём не отдаются вообще). Запись — в снапшот + оппортунистически в IPC.
+ * Сообщения от оболочки — через window.__chromeShimReceive (fan-out по onMessage).
  * Имя текущего плагина loader кладёт в window.__shellPluginName перед его кодом.
  */
 const CHROME_SHIM = `
@@ -123,23 +127,61 @@ if (!window.__shellChromeShim) {
       return promise;
     }
     function pluginName() { return window.__shellPluginName || 'default'; }
+    function snapshotOf(plugin) {
+      var s = window.__shellPluginStores;
+      if (!s || typeof s !== 'object') return {};
+      var d = s[plugin];
+      return d && typeof d === 'object' ? d : {};
+    }
+    function hasBridge() {
+      return !!(window.shell && typeof window.shell.pluginDataGet === 'function');
+    }
+    function storeGet(plugin, keys) {
+      var k = normKeys(keys);
+      if (hasBridge()) {
+        return window.shell.pluginDataGet(plugin, k || undefined).then(function (all) { return pick(all, k); });
+      }
+      return Promise.resolve(pick(snapshotOf(plugin), k));
+    }
+    function storeSet(plugin, obj) {
+      var data = obj && typeof obj === 'object' ? obj : {};
+      try {
+        var stores = window.__shellPluginStores;
+        if (!stores || typeof stores !== 'object') { stores = {}; window.__shellPluginStores = stores; }
+        stores[plugin] = Object.assign({}, stores[plugin], data);
+      } catch (e) {}
+      if (window.shell && typeof window.shell.pluginDataSet === 'function') {
+        return window.shell.pluginDataSet(plugin, data);
+      }
+      return Promise.resolve(true);
+    }
+    function storeRemove(plugin, keys) {
+      var list = normKeys(keys) || [];
+      try {
+        var stores = window.__shellPluginStores;
+        if (!stores || typeof stores !== 'object') { stores = {}; window.__shellPluginStores = stores; }
+        var cur = snapshotOf(plugin);
+        list.forEach(function (k) { delete cur[k]; });
+        stores[plugin] = cur;
+      } catch (e) {}
+      if (window.shell && typeof window.shell.pluginDataRemove === 'function') {
+        return window.shell.pluginDataRemove(plugin, list);
+      }
+      return Promise.resolve(true);
+    }
+    // getPlugin — thunk: глобальный стор резолвит имя лениво (как раньше),
+    // фабрика __shellChromeFor — привязывает имя плагина замыканием.
+    function makeLocal(getPlugin) {
+      function name() { return typeof getPlugin === 'function' ? getPlugin() : getPlugin; }
+      return {
+        get: function (keys, cb) { return withCallback(storeGet(name(), keys), cb); },
+        set: function (obj, cb) { return withCallback(storeSet(name(), obj), cb); },
+        remove: function (keys, cb) { return withCallback(storeRemove(name(), keys), cb); },
+      };
+    }
     window.chrome = window.chrome || {};
     window.chrome.storage = window.chrome.storage || {};
-    window.chrome.storage.local = {
-      get: function (keys, cb) {
-        var k = normKeys(keys);
-        return withCallback(
-          window.shell.pluginDataGet(pluginName(), k || undefined).then(function (all) { return pick(all, k); }),
-          cb,
-        );
-      },
-      set: function (obj, cb) {
-        return withCallback(window.shell.pluginDataSet(pluginName(), obj || {}), cb);
-      },
-      remove: function (keys, cb) {
-        return withCallback(window.shell.pluginDataRemove(pluginName(), normKeys(keys) || []), cb);
-      },
-    };
+    window.chrome.storage.local = makeLocal(pluginName);
     window.chrome.storage.onChanged = window.chrome.storage.onChanged || {
       addListener: function () {},
       removeListener: function () {},
@@ -155,21 +197,7 @@ if (!window.__shellChromeShim) {
       var plugin = typeof name === 'string' && name ? name : 'default';
       return {
         storage: {
-          local: {
-            get: function (keys, cb) {
-              var k = normKeys(keys);
-              return withCallback(
-                window.shell.pluginDataGet(plugin, k || undefined).then(function (all) { return pick(all, k); }),
-                cb,
-              );
-            },
-            set: function (obj, cb) {
-              return withCallback(window.shell.pluginDataSet(plugin, obj || {}), cb);
-            },
-            remove: function (keys, cb) {
-              return withCallback(window.shell.pluginDataRemove(plugin, normKeys(keys) || []), cb);
-            },
-          },
+          local: makeLocal(function () { return plugin; }),
           onChanged: window.chrome.storage.onChanged,
         },
         runtime: window.chrome.runtime,
@@ -188,6 +216,9 @@ if (!window.__shellChromeShim) {
 `
 
 async function injectPlugins(): Promise<void> {
+  // Снапшот данных плагинов в страницу (читает шим вместо IPC — см. комментарий
+  // к CHROME_SHIM). Пушим до кода плагинов, чтобы первые чтения видели данные.
+  await pushPluginStores()
   for (const plugin of plugins) {
     try {
       if (plugin.styles) {
@@ -226,6 +257,21 @@ async function injectPlugins(): Promise<void> {
     await webview.executeJavaScript('window.__shellPluginName = null;')
   } catch {
     // страница могла уже уйти — игнорируем
+  }
+}
+
+/** Забрать снапшот данных всех плагинов из main и положить в гостевую страницу */
+async function pushPluginStores(): Promise<void> {
+  let snapshot: Record<string, Record<string, unknown>> = {}
+  try {
+    snapshot = await window.shell.getAllPluginData()
+  } catch (err) {
+    console.warn('[shell] getAllPluginData failed:', err)
+  }
+  try {
+    await webview.executeJavaScript('window.__shellPluginStores = ' + JSON.stringify(snapshot) + ';')
+  } catch {
+    // страница не готова — игнорируем
   }
 }
 
@@ -1587,6 +1633,8 @@ async function init(): Promise<void> {
   wireOverlayDismiss()
   wireWebviewEvents()
   startStatusPolling()
+  // Данные плагинов меняются из оверлеев оболочки — перепушиваем снапшот в страницу
+  window.shell.onPluginDataChanged(() => void pushPluginStores())
 
   if (addressInput) addressInput.value = config.startUrl
   lastAllowedUrl = config.startUrl

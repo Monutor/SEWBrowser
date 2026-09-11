@@ -154,6 +154,13 @@ function createWindow(): void {
     if (ok) mainWindow?.webContents.send('plugin-data:changed', { plugin })
     return ok
   })
+  // Полный снапшот данных всех плагинов — оболочка пушит его в гостевую страницу,
+  // т.к. у <webview> нет preload и window.shell в странице SEW отсутствует
+  ipcMain.handle('plugin-data:get-all', () => {
+    const out: Record<string, Record<string, unknown>> = {}
+    for (const p of plugins) out[p.name] = getPluginData(p.name)
+    return out
+  })
   // HTTP-кэш НЕ входит в clearStorageData — для него отдельный clearCache().
   ipcMain.handle('storage:usage', async () => {
     const ses = session.defaultSession
