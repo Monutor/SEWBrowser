@@ -159,8 +159,3 @@ const api = {
 }
 
 contextBridge.exposeInMainWorld('shell', api)
-
-// Маркер версии preload в консоли оболочки. NB: preload выполняется в песочнице,
-// где нет __filename/__dirname — только статическая строка.
-console.log('[preload] shell bridge ready')
-console.log('[preload] exposed keys:', Object.keys(api).sort().join(','))

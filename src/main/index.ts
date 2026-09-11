@@ -69,10 +69,6 @@ function createWindow(): void {
   // Иконка окна в dev (в сборке иконку exe ставит electron-builder из resources/icon.png)
   const devIcon = join(__dirname, '..', '..', 'resources', 'icon.png')
 
-  // Диагностика (расследование stale-preload): какой файл preload реально грузится
-  const preloadPath = join(__dirname, '../preload/index.js')
-  console.log('[SEWBrowser] preload path:', preloadPath, 'exists:', existsSync(preloadPath))
-
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -81,7 +77,9 @@ function createWindow(): void {
     frame: false,
     icon: existsSync(devIcon) ? devIcon : undefined,
     webPreferences: {
-      preload: preloadPath,
+      // NB: preload выполняется в песочнице — node-глобалов
+      // (__filename, __dirname) внутри него нет.
+      preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       webviewTag: true,
     },
