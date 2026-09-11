@@ -160,5 +160,6 @@ const api = {
 
 contextBridge.exposeInMainWorld('shell', api)
 
-// Диагностика (расследование stale-preload): какой файл загрузился и есть ли метод
-console.log('[preload] file:', __filename, '| getAllPluginData:', typeof api.pluginDataGetAll)
+// Маркер версии preload в консоли оболочки. NB: preload выполняется в песочнице,
+// где нет __filename/__dirname — только статическая строка.
+console.log('[preload] shell bridge ready')
