@@ -148,6 +148,33 @@ if (!window.__shellChromeShim) {
     if (typeof window.chrome.runtime.getURL !== 'function') {
       window.chrome.runtime.getURL = function (path) { return path || ''; };
     }
+    // Фабрика chrome-объекта, привязанного к хранилищу конкретного плагина.
+    // Нужна, т.к. window.__shellPluginName сбрасывается сразу после инжекта,
+    // а отложенные вызовы (MutationObserver, обработчики событий) читали бы чужой стор.
+    window.__shellChromeFor = function (name) {
+      var plugin = typeof name === 'string' && name ? name : 'default';
+      return {
+        storage: {
+          local: {
+            get: function (keys, cb) {
+              var k = normKeys(keys);
+              return withCallback(
+                window.shell.pluginDataGet(plugin, k || undefined).then(function (all) { return pick(all, k); }),
+                cb,
+              );
+            },
+            set: function (obj, cb) {
+              return withCallback(window.shell.pluginDataSet(plugin, obj || {}), cb);
+            },
+            remove: function (keys, cb) {
+              return withCallback(window.shell.pluginDataRemove(plugin, normKeys(keys) || []), cb);
+            },
+          },
+          onChanged: window.chrome.storage.onChanged,
+        },
+        runtime: window.chrome.runtime,
+      };
+    };
     if (!window.chrome.runtime.onMessage || typeof window.chrome.runtime.onMessage.addListener !== 'function') {
       window.chrome.runtime.onMessage = {
         addListener: function (fn) { window.__shellMsgListeners.push(fn); },
@@ -178,7 +205,10 @@ async function injectPlugins(): Promise<void> {
         `window.__shellPluginName = ${key};` +
           `window.__shellPlugins = window.__shellPlugins || {};` +
           `if (!window.__shellPlugins[${key}]) {` +
-          `window.__shellPlugins[${key}] = 1;\n${plugin.code}\n}`,
+          // Код выполняется в IIFE с собственным `chrome`, привязанным к стору
+          // этого плагина: отложенные вызовы (наблюдатели, обработчики) видят
+          // свои данные, а не 'default' (имя в __shellPluginName уже сброшено).
+          `window.__shellPlugins[${key}] = 1;\n(() => {\nconst chrome = window.__shellChromeFor(${key});\n${plugin.code}\n})();}`,
       )
       if (plugin.init) {
         try {
