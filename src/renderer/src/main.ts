@@ -1170,7 +1170,8 @@ function wireToolbar(): void {
   document.getElementById('btn-forward')?.addEventListener('click', () => webview.goForward())
   document.getElementById('btn-reload')?.addEventListener('click', () => webview.reload())
   document.getElementById('btn-accounts')?.addEventListener('click', () => void openAccounts(true))
-  document.getElementById('btn-templates')?.addEventListener('click', () => void openTemplates())
+  // NB: btn-templates подписывается в wireTemplates() — дубль здесь давал
+  // двойной openTemplates() и задвоенный список шаблонов.
 
   if (addressInput) {
     addressInput.addEventListener('keydown', (event: KeyboardEvent) => {
@@ -1405,10 +1406,16 @@ function makeShellChrome(pluginName: string): unknown {
   }
 }
 
+let templatesRefreshCall = 0
+
 async function refreshTemplatesList(): Promise<void> {
   if (!templatesList) return
+  const myCall = ++templatesRefreshCall
   templatesList.innerHTML = ''
   const templates = await loadTemplateItems()
+  // Пока грузили, мог прийти более свежий вызов (двойной клик, хоткей + кнопка) —
+  // устаревший результат не рисуем, иначе строки задвоятся.
+  if (myCall !== templatesRefreshCall) return
   if (templates.length === 0) {
     const empty = document.createElement('div')
     empty.className = 'settings-row'
