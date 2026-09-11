@@ -58,12 +58,19 @@ body {
 .window-controls button {
   width: 46px;
   height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: none;
   color: var(--text);
   font-size: 13px;
   cursor: pointer;
   -webkit-app-region: no-drag;
+}
+
+.window-controls button svg {
+  display: block;
 }
 
 .window-controls button:hover {
