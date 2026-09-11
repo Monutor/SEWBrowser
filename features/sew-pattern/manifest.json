@@ -4,6 +4,5 @@
   "description": "Порт Chrome-расширения SEW-Pattern: автозаполнение форм SEW шаблонами (ТрН). Исходники расширения — дословно в content.js/styles.css/options.js, обновления переносить оттуда.",
   "renderer": "./content.js",
   "styles": "./styles.css",
-  "options": "./options.js",
-  "init": "if (document.readyState !== 'loading' && typeof injectFAB === 'function') { try { injectFAB(); updateFABVisibility(); } catch (e) {} }"
+  "options": "./options.js"
 }
