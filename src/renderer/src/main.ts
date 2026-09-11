@@ -1483,13 +1483,34 @@ function wireTemplates(): void {
   document.getElementById('templates-close')?.addEventListener('click', closeTemplates)
   document.getElementById('manageCloseBtn')?.addEventListener('click', closeTemplatesManage)
   // options.js расширения — дословно, с shell-прослойкой вместо chrome.*
+  // Нюанс: options.js ждёт DOMContentLoaded, но документ оболочки к этому
+  // моменту давно загружен — подписку перехватываем и вызываем колбэк сразу.
   const pattern = plugins.find((p) => p.name === TEMPLATES_PLUGIN)
   if (pattern?.options) {
+    const pendingDcl: Array<(event: Event) => void> = []
+    const origAddEventListener = document.addEventListener.bind(document)
+    function patchedAddEventListener(type: string, listener: unknown, options?: unknown): void {
+      if (type === 'DOMContentLoaded' && typeof listener === 'function' && document.readyState !== 'loading') {
+        pendingDcl.push(listener as (event: Event) => void)
+        return
+      }
+      ;(origAddEventListener as (...args: unknown[]) => void)(type, listener, options)
+    }
+    document.addEventListener = patchedAddEventListener as typeof document.addEventListener
     try {
       const runOptions = new Function('chrome', pattern.options) as (chrome: unknown) => void
       runOptions(makeShellChrome(TEMPLATES_PLUGIN))
     } catch (err) {
       console.warn('[templates] options init failed:', err)
+    } finally {
+      document.addEventListener = origAddEventListener
+    }
+    for (const cb of pendingDcl) {
+      try {
+        cb(new Event('DOMContentLoaded'))
+      } catch (err) {
+        console.warn('[templates] options DCL callback failed:', err)
+      }
     }
   }
   // Список применения — живой: обновляем при изменении шаблонов
