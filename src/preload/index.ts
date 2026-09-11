@@ -73,7 +73,9 @@ const api = {
   getConfig: (): Promise<ShellConfigLike> => ipcRenderer.invoke('config:get'),
   setConfig: (patch: Partial<ShellConfigLike>): Promise<ShellConfigLike> =>
     ipcRenderer.invoke('config:set', patch),
-  getPlugins: (): Promise<{ name: string; code: string }[]> => ipcRenderer.invoke('plugins:list'),
+  getPlugins: (): Promise<
+    { name: string; code: string; styles: string; init: string; options: string }[]
+  > => ipcRenderer.invoke('plugins:list'),
   clearSession: (): Promise<boolean> => ipcRenderer.invoke('session:clear'),
   windowMin: (): void => ipcRenderer.send('window:min'),
   windowMax: (): void => ipcRenderer.send('window:max'),
@@ -140,6 +142,17 @@ const api = {
   /** Расшифрованные секреты — только для автозаполнения формы входа */
   getAccountSecrets: (id: string): Promise<{ tabNum: string; password: string } | null> =>
     ipcRenderer.invoke('credentials:get', id),
+  /** Хранилище данных плагина (замена chrome.storage.local) */
+  pluginDataGet: (plugin: string, keys?: string[]): Promise<Record<string, unknown>> =>
+    ipcRenderer.invoke('plugin-data:get', plugin, keys),
+  pluginDataSet: (plugin: string, obj: Record<string, unknown>): Promise<boolean> =>
+    ipcRenderer.invoke('plugin-data:set', plugin, obj),
+  pluginDataRemove: (plugin: string, keys: string[]): Promise<boolean> =>
+    ipcRenderer.invoke('plugin-data:remove', plugin, keys),
+  /** Уведомление об изменении данных плагина (для chrome.storage.onChanged) */
+  onPluginDataChanged: (cb: (event: { plugin: string }) => void): void => {
+    ipcRenderer.on('plugin-data:changed', (_event, payload: { plugin: string }) => cb(payload))
+  },
 }
 
 contextBridge.exposeInMainWorld('shell', api)

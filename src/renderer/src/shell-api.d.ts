@@ -14,6 +14,7 @@ interface SewWebViewElement extends HTMLElement {
   goForward(): void
   reload(): void
   reloadIgnoringCache(): void
+  insertCSS(css: string): Promise<string>
   executeJavaScript(code: string): Promise<unknown>
   openDevTools(): void
   getWebContentsId(): number
@@ -55,6 +56,10 @@ interface ShellConfig {
 interface PluginInfo {
   name: string
   code: string
+  styles: string
+  init: string
+  /** Исходник options-страницы расширения (выполняется в shell-окне с прослойкой) */
+  options: string
 }
 
 interface DownloadEvent {
@@ -130,6 +135,7 @@ type ShortcutName =
   | 'hard-reload'
   | 'focus-address'
   | 'accounts'
+  | 'templates'
   | 'back'
   | 'forward'
   | 'fullscreen'
@@ -168,6 +174,10 @@ interface ShellApi {
   saveAccount(input: SaveAccountInput): Promise<AccountInfo>
   removeAccount(id: string): Promise<boolean>
   getAccountSecrets(id: string): Promise<{ tabNum: string; password: string } | null>
+  pluginDataGet(plugin: string, keys?: string[]): Promise<Record<string, unknown>>
+  pluginDataSet(plugin: string, obj: Record<string, unknown>): Promise<boolean>
+  pluginDataRemove(plugin: string, keys: string[]): Promise<boolean>
+  onPluginDataChanged(cb: (event: { plugin: string }) => void): void
   onUpdater(cb: (event: UpdaterEvent) => void): void
   downloadUpdate(): Promise<boolean>
   installUpdate(): void

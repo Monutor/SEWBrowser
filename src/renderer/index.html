@@ -21,6 +21,7 @@
       <input id="address" spellcheck="false" autocomplete="off" />
       <button id="btn-accounts" title="Аккаунты SEW (Ctrl+Shift+L)">&#128273;</button>
       <button id="btn-downloads" title="Загрузки">&#128229;</button>
+      <button id="btn-templates" title="Шаблоны SEW (Ctrl+Shift+T)">&#128196;</button>
       <button id="btn-settings" title="Настройки">&#9881;</button>
       <div id="downloads" hidden title="Загрузки"></div>
       <span id="status"></span>
@@ -140,6 +141,144 @@
         <div class="settings-actions">
           <button id="downloads-clear">Очистить список</button>
           <button id="downloads-close">Закрыть (Esc)</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="templates-overlay" hidden>
+      <div class="templates-card">
+        <div class="settings-title">Шаблоны SEW</div>
+        <div class="settings-row">Нажмите на шаблон, чтобы заполнить открытую форму в SEW:</div>
+        <div id="templates-list" class="templates-list"></div>
+        <div class="settings-actions">
+          <button id="templates-manage">Управление шаблонами</button>
+          <button id="templates-close">Закрыть (Esc)</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="templates-manage-overlay" hidden>
+      <div id="templates-manage-card">
+        <div class="top-bar">
+          <span class="top-bar-title">Управление шаблонами</span>
+          <div class="topbar-actions">
+            <button type="button" class="btn-outlined topbar-btn" id="importBtn" title="Импорт шаблонов">Импорт</button>
+            <button type="button" class="btn-outlined topbar-btn" id="exportBtn" title="Экспорт шаблонов">Экспорт</button>
+            <input type="file" id="importFileInput" accept=".json,application/json" hidden>
+            <button type="button" class="fab-btn" id="createTemplateBtn" aria-label="Создать шаблон">
+              <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z"/></svg>
+              <span>Шаблон</span>
+            </button>
+            <button type="button" class="btn-outlined topbar-btn" id="manageCloseBtn" title="Закрыть">Закрыть</button>
+          </div>
+        </div>
+        <div id="template-list" class="template-card-list"></div>
+        <div class="modal-overlay" id="templateModal">
+          <div class="modal-container">
+            <div class="modal-header">
+              <span class="modal-title" id="modalTitle">Создать шаблон</span>
+              <button class="modal-close-btn" id="closeModalBtn" aria-label="Закрыть">
+                <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+              </button>
+            </div>
+            <form id="templateForm">
+              <input type="hidden" id="templateId">
+              <div class="modal-body">
+                <div style="margin-bottom:16px">
+                  <label for="templateName" style="display:block;font-size:0.75rem;color:var(--md-sys-color-on-surface-variant);margin-bottom:4px">Название шаблона *</label>
+                  <input type="text" maxlength="50" id="templateName" name="templateName" class="outlined-input" required style="width:100%">
+                  <span class="char-counter" id="nameCounter">0/50</span>
+                </div>
+                <div class="preset-selector">
+                  <div class="preset-options">
+                    <div class="preset-option active" data-preset="trn">ТрН</div>
+                  </div>
+                </div>
+                <div id="preset-fields-trn" class="preset-fields-container">
+                  <div class="field-group-title">Сотрудник, разрешивший отпуск товара</div>
+                  <div class="field-grid">
+                    <div style="display:flex;flex-direction:column;gap:4px;">
+                      <label for="approvedEmployeeName" style="font-size:0.75rem;color:var(--md-sys-color-on-surface-variant);">Ф.И.О.</label>
+                      <input type="text" id="approvedEmployeeName" name="approvedEmployeeName" data-field="approvedEmployeeName" placeholder="Ф.И.О." class="outlined-input" style="width:100%">
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:4px;">
+                      <label for="approvedEmployeePosition" style="font-size:0.75rem;color:var(--md-sys-color-on-surface-variant);">Должность</label>
+                      <input type="text" id="approvedEmployeePosition" name="approvedEmployeePosition" data-field="approvedEmployeePosition" placeholder="Должность" class="outlined-input" style="width:100%">
+                    </div>
+                  </div>
+                  <div class="field-group-title">Сотрудник, производящий отпуск товара</div>
+                  <div class="field-grid">
+                    <div style="display:flex;flex-direction:column;gap:4px;">
+                      <label for="performEmployeeName" style="font-size:0.75rem;color:var(--md-sys-color-on-surface-variant);">Ф.И.О.</label>
+                      <input type="text" id="performEmployeeName" name="performEmployeeName" data-field="performEmployeeName" placeholder="Ф.И.О." class="outlined-input" style="width:100%">
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:4px;">
+                      <label for="performEmployeePosition" style="font-size:0.75rem;color:var(--md-sys-color-on-surface-variant);">Должность</label>
+                      <input type="text" id="performEmployeePosition" name="performEmployeePosition" data-field="performEmployeePosition" placeholder="Должность" class="outlined-input" style="width:100%">
+                    </div>
+                  </div>
+                  <div class="field-group-title">Сотрудник, осуществляющий транспортировку товара</div>
+                  <div class="field-grid">
+                    <div style="display:flex;flex-direction:column;gap:4px;">
+                      <label for="agentFullName" style="font-size:0.75rem;color:var(--md-sys-color-on-surface-variant);">Ф.И.О.</label>
+                      <input type="text" id="agentFullName" name="agentFullName" data-field="agentFullName" placeholder="Ф.И.О." class="outlined-input" style="width:100%">
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:4px;">
+                      <label for="agentPosition" style="font-size:0.75rem;color:var(--md-sys-color-on-surface-variant);">Должность</label>
+                      <input type="text" id="agentPosition" name="agentPosition" data-field="agentPosition" placeholder="Должность" class="outlined-input" style="width:100%">
+                    </div>
+                  </div>
+                  <div class="field-group-title">Удостоверительные документы</div>
+                  <div class="field-grid">
+                    <div style="display:flex;flex-direction:column;gap:4px;">
+                      <label for="agentLicense" style="font-size:0.75rem;color:var(--md-sys-color-on-surface-variant);">Удостоверение</label>
+                      <input type="text" id="agentLicense" name="agentLicense" data-field="agentLicense" placeholder="Удостоверение" class="outlined-input" style="width:100%">
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:4px;">
+                      <label for="attorneyPowerNumber" style="font-size:0.75rem;color:var(--md-sys-color-on-surface-variant);">Номер доверенности</label>
+                      <input type="text" id="attorneyPowerNumber" name="attorneyPowerNumber" data-field="attorneyPowerNumber" placeholder="Номер доверенности" class="outlined-input" style="width:100%">
+                    </div>
+                  </div>
+                  <div class="field-grid">
+                    <div style="display:flex;flex-direction:column;gap:4px;">
+                      <label for="attorneyPowerGaveOut" style="font-size:0.75rem;color:var(--md-sys-color-on-surface-variant);">Кем выдана</label>
+                      <input type="text" id="attorneyPowerGaveOut" name="attorneyPowerGaveOut" data-field="attorneyPowerGaveOut" placeholder="Кем выдана" class="outlined-input" style="width:100%">
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:4px;">
+                      <label for="attorneyPowerDate" style="font-size:0.75rem;color:var(--md-sys-color-on-surface-variant);">Дата выдачи</label>
+                      <input type="date" id="attorneyPowerDate" name="attorneyPowerDate" data-field="attorneyPowerDate" class="outlined-input" style="width:100%">
+                    </div>
+                  </div>
+                  <div class="field-group-title">Транспортное средство</div>
+                  <div class="field-grid">
+                    <div style="display:flex;flex-direction:column;gap:4px;">
+                      <label for="carModel" style="font-size:0.75rem;color:var(--md-sys-color-on-surface-variant);">Марка ТС</label>
+                      <input type="text" id="carModel" name="carModel" data-field="carModel" placeholder="Марка ТС" class="outlined-input" style="width:100%">
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="modal-actions">
+                <button type="button" class="btn-outlined" id="cancelBtn">Отмена</button>
+                <button type="submit" class="btn-filled">Сохранить</button>
+              </div>
+            </form>
+          </div>
+        </div>
+        <div class="modal-overlay" id="confirmModal">
+          <div class="modal-container confirm-modal">
+            <div class="modal-header">
+              <span class="modal-title" id="confirmTitle">Удалить шаблон</span>
+              <button class="modal-close-btn" id="confirmCloseBtn" aria-label="Закрыть">
+                <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+              </button>
+            </div>
+            <div class="confirm-text" id="confirmText">Вы уверены, что хотите удалить этот шаблон?</div>
+            <div class="modal-actions confirm-actions">
+              <button type="button" class="btn-outlined" id="confirmCancelBtn">Отмена</button>
+              <button type="button" class="btn-danger" id="confirmDeleteBtn">Удалить</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>

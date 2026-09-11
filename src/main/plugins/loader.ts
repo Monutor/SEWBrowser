@@ -15,6 +15,13 @@ export interface PluginManifest {
   description?: string
   /** Путь к JS-файлу, исполняемому в контексте страницы (относительно папки плагина) */
   renderer?: string
+  /** Путь к CSS-файлу плагина (вставляется в страницу через webview.insertCSS) */
+  styles?: string
+  /** JS-сниппет, выполняемый после кода плагина, если документ уже загружен
+   * (например, ручной вызов инициализации, пропущенной из-за DOMContentLoaded) */
+  init?: string
+  /** Путь к JS options-страницы расширения (выполняется в shell-окне, не в странице) */
+  options?: string
   /** Шорткаты main-процесса: комбинация -> действие */
   hotkeys?: Record<string, HotkeyAction>
   enabled?: boolean
@@ -24,6 +31,8 @@ export interface LoadedPlugin {
   name: string
   manifest: PluginManifest
   code?: string
+  styles?: string
+  options?: string
 }
 
 /** features/ в dev — рядом с проектом; в prod — в resources/ (extraResources) */
@@ -64,6 +73,20 @@ export function loadPlugins(config: SewConfig): LoadedPlugin[] {
         plugin.code = readFileSync(join(pluginDir, manifest.renderer), 'utf-8')
       } catch (err) {
         console.warn(`[plugins] failed to read renderer for ${manifest.name}:`, err)
+      }
+    }
+    if (manifest.styles) {
+      try {
+        plugin.styles = readFileSync(join(pluginDir, manifest.styles), 'utf-8')
+      } catch (err) {
+        console.warn(`[plugins] failed to read styles for ${manifest.name}:`, err)
+      }
+    }
+    if (manifest.options) {
+      try {
+        plugin.options = readFileSync(join(pluginDir, manifest.options), 'utf-8')
+      } catch (err) {
+        console.warn(`[plugins] failed to read options for ${manifest.name}:`, err)
       }
     }
     result.push(plugin)

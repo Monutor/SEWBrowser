@@ -1,0 +1,297 @@
+/* SEW Templates Extension Styles */
+
+/* M3 Design Tokens */
+:root {
+  --md-sys-color-primary: #0061a4;
+  --md-sys-color-on-primary: #ffffff;
+  --md-sys-color-primary-container: #d3e5ff;
+  --md-sys-color-on-primary-container: #001d35;
+  --md-sys-color-secondary: #526070;
+  --md-sys-color-on-secondary: #ffffff;
+  --md-sys-color-secondary-container: #d6e4f2;
+  --md-sys-color-on-secondary-container: #0e1d2a;
+  --md-sys-color-surface: #fafafa;
+  --md-sys-color-on-surface: #212121;
+  --md-sys-color-surface-variant: #e1e2ec;
+  --md-sys-color-on-surface-variant: #44474f;
+  --md-sys-color-outline: #74777f;
+  --md-sys-color-primary-dark: #00479b;
+  --md-sys-color-hover: rgba(0,0,0,0.08);
+  --md-sys-color-focus: rgba(0,0,0,0.12);
+  --md-sys-shape-corner-small: 8px;
+  --md-sys-shape-corner-medium: 12px;
+  --md-sys-shape-corner-large: 16px;
+}
+
+.template-selector {
+    background: var(--md-sys-color-secondary-container, #e8f0fe);
+    border: 1px solid var(--md-sys-color-on-secondary-container, #001d35);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin: 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.template-selector-label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--md-sys-color-on-secondary-container, #001d35);
+    white-space: nowrap;
+}
+
+.template-dropdown {
+    flex: 1;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    background: white;
+    cursor: pointer;
+}
+
+.template-dropdown:focus {
+    border-color: var(--md-sys-color-primary, #0061a4);
+    box-shadow: 0 0 0 3px rgba(0, 97, 164, 0.1);
+}
+
+.template-dropdown:focus:not(:focus-visible) {
+    box-shadow: none;
+}
+
+/* Styles for form inputs when being filled */
+input.filled-field,
+textarea.filled-field,
+select.filled-field {
+    border-color: #28a745 !important;
+    background-color: #f0fff4 !important;
+}
+
+/* Floating Action Button (FAB) */
+.sew-fab {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 2147483647;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background-color: var(--md-sys-color-primary, #0061a4);
+    color: white;
+    border: none;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    cursor: pointer;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+
+.sew-fab:hover {
+    background-color: var(--md-sys-color-primary-dark, #00479b);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+    transform: scale(1.05);
+}
+
+.sew-fab:active {
+    transform: scale(0.95);
+}
+
+/* FAB Panel */
+.sew-fab-panel-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483646;
+    background: rgba(0, 0, 0, 0.3);
+}
+
+.sew-fab-panel {
+    position: fixed;
+    bottom: 5.625rem;
+    right: 1.5rem;
+    z-index: 2147483647;
+    width: 16.25rem;
+    max-height: 22.5rem;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.sew-fab-panel-header {
+    padding: 0.75rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #2c3e50;
+    border-bottom: 1px solid #e8e8e8;
+}
+
+.sew-fab-panel-list {
+    overflow-y: auto;
+    flex: 1;
+}
+
+.sew-fab-panel-item {
+    padding: 0.625rem 1rem;
+    font-size: 0.8125rem;
+    color: #333;
+    cursor: pointer;
+    border-bottom: 1px solid #f0f0f0;
+    transition: background-color 0.15s;
+}
+
+.sew-fab-panel-item:hover {
+    background-color: var(--md-sys-color-hover, rgba(0,0,0,0.08));
+    color: var(--md-sys-color-primary, #0061a4);
+}
+
+.sew-fab-panel-empty {
+    padding: 1rem;
+    font-size: 0.75rem;
+    color: #7f8c8d;
+    text-align: center;
+}
+
+/* Modal */
+.modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 2147483647;
+    background: rgba(0, 0, 0, 0.5);
+    align-items: center;
+    justify-content: center;
+}
+.modal-overlay.open {
+    display: flex;
+}
+.modal-container {
+    background: white;
+    border-radius: var(--md-sys-shape-corner-large, 16px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    width: 520px;
+    max-width: 90vw;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.modal-header {
+    display: flex;
+    align-items: center;
+    padding: 1rem 1.5rem 0.75rem;
+    border-bottom: 1px solid #e8e8e8;
+    gap: 0.75rem;
+}
+.modal-title {
+    flex: 1;
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--md-sys-color-on-surface, #212121);
+}
+.modal-close-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 50%;
+    color: var(--md-sys-color-on-surface-variant, #44474f);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.modal-close-btn:hover {
+    background: var(--md-sys-color-hover, rgba(0,0,0,0.08));
+}
+.modal-body {
+    padding: 1rem 1.5rem;
+    overflow-y: auto;
+    flex: 1;
+}
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    padding: 0.75rem 1.5rem 1rem;
+    border-top: 1px solid #e8e8e8;
+}
+
+/* Outlined input */
+.outlined-input {
+    width: 100%;
+    padding: 0.75rem 0.875rem;
+    border: 1px solid var(--md-sys-color-outline, #74777f);
+    border-radius: var(--md-sys-shape-corner-small, 8px);
+    font-size: 0.875rem;
+    color: var(--md-sys-color-on-surface, #212121);
+    background: white;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    box-sizing: border-box;
+}
+.outlined-input:focus {
+    border-color: var(--md-sys-color-primary, #0061a4);
+    box-shadow: 0 0 0 3px rgba(0, 97, 164, 0.1);
+}
+.outlined-input:focus:not(:focus-visible) {
+    box-shadow: none;
+}
+.outlined-input::placeholder {
+    color: var(--md-sys-color-on-surface-variant, #44474f);
+}
+
+/* Buttons */
+.btn-filled {
+    padding: 0 1rem;
+    height: 2.25rem;
+    border-radius: 1.25rem;
+    border: none;
+    background: var(--md-sys-color-primary, #0061a4);
+    color: white;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s, box-shadow 0.2s;
+}
+.btn-filled:hover {
+    background: var(--md-sys-color-primary-dark, #00479b);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+.btn-outlined {
+    padding: 0 1rem;
+    height: 2.25rem;
+    border-radius: 1.25rem;
+    border: 1px solid var(--md-sys-color-outline, #74777f);
+    background: transparent;
+    color: var(--md-sys-color-primary, #0061a4);
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+.btn-outlined:hover {
+    background: var(--md-sys-color-hover, rgba(0,0,0,0.08));
+}
+
+/* ── prefers-reduced-motion ─────────────── */
+@media (prefers-reduced-motion: reduce) {
+    .sew-fab,
+    .sew-fab-panel-overlay,
+    .sew-fab-panel,
+    .template-selector,
+    .icon-btn,
+    .btn-filled,
+    .btn-outlined,
+    .preset-option,
+    .fab-btn,
+    .toast {
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+    }
+
+    .sew-fab:hover { transform: none; }
+}

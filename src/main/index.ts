@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto'
 import { autoUpdater } from 'electron-updater'
 import { getConfig, isDebugMode, saveConfig } from './config'
 import { loadPlugins } from './plugins/loader'
+import { getPluginData, removePluginData, setPluginData } from './plugins/store'
 import { getAccountSecrets, getLastUsedAccountId, listAccounts, removeAccount, saveAccount, setLastUsedAccountId } from './credentials/store'
 import { appendDownloadRecord, clearDownloadHistory, loadDownloadHistory, removeDownloadRecord } from './downloads/history'
 
@@ -21,6 +22,7 @@ function guestShortcutName(input: Input): string | null {
   if (key === 'F5') return mod ? 'hard-reload' : 'reload'
   if (mod && code === 'KeyR') return 'reload'
   if (mod && input.shift && code === 'KeyL') return 'accounts'
+  if (mod && input.shift && code === 'KeyT') return 'templates'
   if (mod && code === 'KeyL') return 'focus-address'
   if (mod && code === 'KeyF') return 'find'
   if (mod && code === 'KeyP') return 'print'
@@ -117,14 +119,41 @@ function createWindow(): void {
   // IPC для shell-UI
   ipcMain.handle('config:get', () => ({ ...getConfig(), debug }))
   ipcMain.handle('config:set', (_event, patch) => saveConfig((patch ?? {}) as Parameters<typeof saveConfig>[0]))
-  ipcMain.handle('plugins:list', () => plugins.map((p) => ({ name: p.name, code: p.code ?? '' })))
+  ipcMain.handle('plugins:list', () =>
+    plugins.map((p) => ({
+      name: p.name,
+      code: p.code ?? '',
+      styles: p.styles ?? '',
+      init: p.manifest.init ?? '',
+      options: p.options ?? '',
+    })),
+  )
   ipcMain.handle('session:clear', async () => {
     await session.defaultSession.clearCache()
     await session.defaultSession.clearStorageData()
     console.log('[SEWBrowser] session storage cleared')
     return true
   })
-  // ---------- Хранилища: кэш, куки ----------
+  // ---------- Хранилище данных плагинов (замена chrome.storage.local) ----------
+  ipcMain.handle('plugin-data:get', (_event, plugin: unknown, keys: unknown) => {
+    if (typeof plugin !== 'string') return {}
+    const list = Array.isArray(keys)
+      ? keys.filter((k): k is string => typeof k === 'string')
+      : undefined
+    return getPluginData(plugin, list)
+  })
+  ipcMain.handle('plugin-data:set', (_event, plugin: unknown, obj: unknown) => {
+    if (typeof plugin !== 'string' || !obj || typeof obj !== 'object') return false
+    const ok = setPluginData(plugin, obj as Record<string, unknown>)
+    if (ok) mainWindow?.webContents.send('plugin-data:changed', { plugin })
+    return ok
+  })
+  ipcMain.handle('plugin-data:remove', (_event, plugin: unknown, keys: unknown) => {
+    if (typeof plugin !== 'string' || !Array.isArray(keys)) return false
+    const ok = removePluginData(plugin, keys.filter((k): k is string => typeof k === 'string'))
+    if (ok) mainWindow?.webContents.send('plugin-data:changed', { plugin })
+    return ok
+  })
   // HTTP-кэш НЕ входит в clearStorageData — для него отдельный clearCache().
   ipcMain.handle('storage:usage', async () => {
     const ses = session.defaultSession

@@ -33,6 +33,12 @@ const downloadsFilter = document.getElementById('downloads-filter') as HTMLSelec
 let downloadsOpen = false
 let downloadsRecords: DownloadedFile[] = []
 
+const templatesOverlay = document.getElementById('templates-overlay') as HTMLElement | null
+const templatesList = document.getElementById('templates-list') as HTMLElement | null
+const templatesManageOverlay = document.getElementById('templates-manage-overlay') as HTMLElement | null
+let templatesOpen = false
+let templatesManageOpen = false
+
 let config: ShellConfig | null = null
 let plugins: PluginInfo[] = []
 let isFullscreen = false
@@ -71,14 +77,125 @@ function setStatus(text: string): void {
   if (statusEl) statusEl.textContent = text
 }
 
+/**
+ * Минимальный window.chrome для перенесённых content-скриптов Chrome-расширений.
+ * storage.local — через window.shell (файлы плагинов в main-процессе, см. plugins/store.ts),
+ * сообщения от оболочки — через window.__chromeShimReceive (fan-out по onMessage-подписчикам).
+ * Имя текущего плагина loader кладёт в window.__shellPluginName перед его кодом.
+ */
+const CHROME_SHIM = `
+if (!window.__shellChromeShim) {
+  window.__shellChromeShim = true;
+  window.__shellMsgListeners = [];
+  window.__chromeShimReceive = function (message) {
+    (window.__shellMsgListeners || []).forEach(function (fn) {
+      try { fn(message || {}, {}, function () {}); } catch (e) {}
+    });
+  };
+  (function () {
+    function normKeys(keys) {
+      if (keys === undefined || keys === null) return null;
+      if (typeof keys === 'string') return [keys];
+      if (Array.isArray(keys)) return keys;
+      if (typeof keys === 'object') return Object.keys(keys);
+      return null;
+    }
+    function pick(all, keys) {
+      var out = {};
+      var src = all || {};
+      if (keys === null) {
+        Object.keys(src).forEach(function (k) { out[k] = src[k]; });
+        return out;
+      }
+      keys.forEach(function (k) {
+        if (Object.prototype.hasOwnProperty.call(src, k)) out[k] = src[k];
+      });
+      return out;
+    }
+    function withCallback(promise, cb) {
+      if (typeof cb === 'function') {
+        promise.then(
+          function (v) { try { cb(v); } catch (e) {} },
+          function () { try { cb(); } catch (e) {} },
+        );
+        return;
+      }
+      return promise;
+    }
+    function pluginName() { return window.__shellPluginName || 'default'; }
+    window.chrome = window.chrome || {};
+    window.chrome.storage = window.chrome.storage || {};
+    window.chrome.storage.local = {
+      get: function (keys, cb) {
+        var k = normKeys(keys);
+        return withCallback(
+          window.shell.pluginDataGet(pluginName(), k || undefined).then(function (all) { return pick(all, k); }),
+          cb,
+        );
+      },
+      set: function (obj, cb) {
+        return withCallback(window.shell.pluginDataSet(pluginName(), obj || {}), cb);
+      },
+      remove: function (keys, cb) {
+        return withCallback(window.shell.pluginDataRemove(pluginName(), normKeys(keys) || []), cb);
+      },
+    };
+    window.chrome.storage.onChanged = window.chrome.storage.onChanged || {
+      addListener: function () {},
+      removeListener: function () {},
+    };
+    window.chrome.runtime = window.chrome.runtime || {};
+    if (typeof window.chrome.runtime.getURL !== 'function') {
+      window.chrome.runtime.getURL = function (path) { return path || ''; };
+    }
+    if (!window.chrome.runtime.onMessage || typeof window.chrome.runtime.onMessage.addListener !== 'function') {
+      window.chrome.runtime.onMessage = {
+        addListener: function (fn) { window.__shellMsgListeners.push(fn); },
+        removeListener: function (fn) {
+          window.__shellMsgListeners = window.__shellMsgListeners.filter(function (f) { return f !== fn; });
+        },
+      };
+    }
+  })();
+}
+`
+
 async function injectPlugins(): Promise<void> {
   for (const plugin of plugins) {
-    if (!plugin.code) continue
     try {
-      await webview.executeJavaScript(plugin.code)
+      if (plugin.styles) {
+        try {
+          await webview.insertCSS(plugin.styles)
+        } catch (err) {
+          console.warn(`[plugins:${plugin.name}] insertCSS failed:`, err)
+        }
+      }
+      // chrome-шим страницы (один на документ) + имя плагина для его хранилища
+      await webview.executeJavaScript(CHROME_SHIM)
+      if (!plugin.code) continue
+      const key = JSON.stringify(plugin.name)
+      await webview.executeJavaScript(
+        `window.__shellPluginName = ${key};` +
+          `window.__shellPlugins = window.__shellPlugins || {};` +
+          `if (!window.__shellPlugins[${key}]) {` +
+          `window.__shellPlugins[${key}] = 1;\n${plugin.code}\n}`,
+      )
+      if (plugin.init) {
+        try {
+          await webview.executeJavaScript(plugin.init)
+        } catch (err) {
+          console.warn(`[plugins:${plugin.name}] init failed:`, err)
+        }
+      }
     } catch (err) {
       console.warn(`[plugins:${plugin.name}] injection failed:`, err)
     }
+  }
+  // Сбрасываем имя плагина, чтобы чужой код не писал в чужое хранилище
+  try {
+    await webview.executeJavaScript('window.__shellPluginName = null;')
+  } catch {
+    // страница могла уже уйти — игнорируем
   }
 }
 
@@ -950,6 +1067,9 @@ async function handleShortcut(name: string): Promise<void> {
     case 'accounts':
       void openAccounts(true)
       break
+    case 'templates':
+      void openTemplates()
+      break
     case 'back':
       webview.goBack()
       break
@@ -987,7 +1107,9 @@ async function handleShortcut(name: string): Promise<void> {
       openSettings()
       break
     case 'escape':
-      if (accountsOpen) closeAccounts()
+      if (templatesManageOpen) closeTemplatesManage()
+      else if (templatesOpen) closeTemplates()
+      else if (accountsOpen) closeAccounts()
       else if (downloadsOpen) closeDownloads()
       else if (findActive) closeFind()
       else if (settingsOverlay && !settingsOverlay.hidden) closeSettings()
@@ -1013,6 +1135,7 @@ function shortcutFromEvent(event: KeyboardEvent): ShortcutName | null {
   if (key === 'F5') return mod ? 'hard-reload' : 'reload'
   if (mod && code === 'KeyR') return 'reload'
   if (mod && event.shiftKey && code === 'KeyL') return 'accounts'
+  if (mod && event.shiftKey && code === 'KeyT') return 'templates'
   if (mod && code === 'KeyL') return 'focus-address'
   if (mod && code === 'KeyF') return 'find'
   if (mod && code === 'KeyP') return 'print'
@@ -1047,6 +1170,7 @@ function wireToolbar(): void {
   document.getElementById('btn-forward')?.addEventListener('click', () => webview.goForward())
   document.getElementById('btn-reload')?.addEventListener('click', () => webview.reload())
   document.getElementById('btn-accounts')?.addEventListener('click', () => void openAccounts(true))
+  document.getElementById('btn-templates')?.addEventListener('click', () => void openTemplates())
 
   if (addressInput) {
     addressInput.addEventListener('keydown', (event: KeyboardEvent) => {
@@ -1202,12 +1326,186 @@ function wireUpdater(): void {
   })
 }
 
+// ---------- Шаблоны SEW (порт расширения SEW-Pattern) ----------
+const TEMPLATES_PLUGIN = 'sew-pattern'
+
+interface TemplateItem {
+  id: string
+  name?: string
+  preset?: string
+  fields?: Record<string, string>
+}
+
+async function loadTemplateItems(): Promise<TemplateItem[]> {
+  try {
+    const data = await window.shell.pluginDataGet(TEMPLATES_PLUGIN, ['sew_templates'])
+    return Array.isArray(data.sew_templates) ? (data.sew_templates as TemplateItem[]) : []
+  } catch (err) {
+    console.warn('[templates] load failed:', err)
+    return []
+  }
+}
+
+/** chrome-совместимая прослойка для options.js расширения (выполняется в shell-окне) */
+function makeShellChrome(pluginName: string): unknown {
+  const pickGet = (
+    keys: unknown,
+    cb?: (res: Record<string, unknown>) => void,
+  ): Promise<Record<string, unknown>> | undefined => {
+    const list = Array.isArray(keys) ? keys.filter((k): k is string => typeof k === 'string') : undefined
+    const p = window.shell.pluginDataGet(pluginName, list).then((all) => {
+      if (keys === undefined || keys === null) return all
+      if (typeof keys === 'string') return all[keys] !== undefined ? { [keys]: all[keys] } : {}
+      const out: Record<string, unknown> = {}
+      for (const k of list ?? []) out[k] = all[k]
+      return out
+    })
+    if (typeof cb === 'function') {
+      p.then(cb)
+      return undefined
+    }
+    return p
+  }
+  return {
+    storage: {
+      local: {
+        get: pickGet,
+        set: (obj: Record<string, unknown>, cb?: () => void): Promise<boolean> | undefined => {
+          const p = window.shell.pluginDataSet(pluginName, obj)
+          if (typeof cb === 'function') {
+            p.then(() => cb())
+            return undefined
+          }
+          return p
+        },
+        remove: (keys: string[], cb?: () => void): Promise<boolean> | undefined => {
+          const p = window.shell.pluginDataRemove(pluginName, keys)
+          if (typeof cb === 'function') {
+            p.then(() => cb())
+            return undefined
+          }
+          return p
+        },
+      },
+      onChanged: {
+        addListener: (fn: (changes: Record<string, { newValue: unknown }>, area: string) => void): void => {
+          window.shell.onPluginDataChanged(({ plugin }) => {
+            if (plugin !== pluginName) return
+            try {
+              fn({ sew_templates: { newValue: true } }, 'local')
+            } catch {
+              // игнорируем
+            }
+          })
+        },
+        removeListener: (): void => {},
+      },
+    },
+    runtime: { lastError: undefined as undefined },
+  }
+}
+
+async function refreshTemplatesList(): Promise<void> {
+  if (!templatesList) return
+  templatesList.innerHTML = ''
+  const templates = await loadTemplateItems()
+  if (templates.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'settings-row'
+    empty.textContent = 'Нет шаблонов. Откройте «Управление шаблонами» и создайте первый.'
+    templatesList.append(empty)
+    return
+  }
+  for (const tpl of templates) {
+    const fieldCount = tpl.fields ? Object.keys(tpl.fields).length : 0
+    const presetName = tpl.preset === 'trn' ? 'ТрН' : tpl.preset || 'ТрН'
+    const row = document.createElement('div')
+    row.className = 'templates-row'
+    const name = document.createElement('span')
+    name.className = 'tpl-name'
+    name.textContent = tpl.name || 'Без имени'
+    const meta = document.createElement('span')
+    meta.className = 'tpl-meta'
+    meta.textContent = `${presetName} · ${fieldCount} полей`
+    row.append(name, meta)
+    row.addEventListener('click', () => void applyTemplateFromShell(tpl.id))
+    templatesList.append(row)
+  }
+}
+
+async function openTemplates(): Promise<void> {
+  if (!templatesOverlay) return
+  await refreshTemplatesList()
+  templatesOverlay.hidden = false
+  templatesOpen = true
+}
+
+function closeTemplates(): void {
+  if (!templatesOverlay) return
+  templatesOverlay.hidden = true
+  templatesOpen = false
+}
+
+/** Применить шаблон к открытой форме SEW — через onMessage-подписку content-скрипта */
+async function applyTemplateFromShell(id: string): Promise<void> {
+  try {
+    const delivered = (await webview.executeJavaScript(
+      `typeof window.__chromeShimReceive === 'function'` +
+        ` ? (window.__chromeShimReceive({action:'applyTemplate',templateId:${JSON.stringify(id)}}), true)` +
+        ` : false`,
+    )) as boolean
+    closeTemplates()
+    setStatus(delivered ? 'шаблон применён' : 'откройте форму в SEW и повторите')
+  } catch (err) {
+    console.warn('[templates] apply failed:', err)
+    setStatus('не удалось применить шаблон')
+  }
+}
+
+function openTemplatesManage(): void {
+  if (!templatesManageOverlay) return
+  templatesManageOverlay.hidden = false
+  templatesManageOpen = true
+}
+
+function closeTemplatesManage(): void {
+  if (!templatesManageOverlay) return
+  templatesManageOverlay.hidden = true
+  templatesManageOpen = false
+}
+
+function wireTemplates(): void {
+  document.getElementById('btn-templates')?.addEventListener('click', () => void openTemplates())
+  document.getElementById('templates-manage')?.addEventListener('click', () => {
+    closeTemplates()
+    openTemplatesManage()
+  })
+  document.getElementById('templates-close')?.addEventListener('click', closeTemplates)
+  document.getElementById('manageCloseBtn')?.addEventListener('click', closeTemplatesManage)
+  // options.js расширения — дословно, с shell-прослойкой вместо chrome.*
+  const pattern = plugins.find((p) => p.name === TEMPLATES_PLUGIN)
+  if (pattern?.options) {
+    try {
+      const runOptions = new Function('chrome', pattern.options) as (chrome: unknown) => void
+      runOptions(makeShellChrome(TEMPLATES_PLUGIN))
+    } catch (err) {
+      console.warn('[templates] options init failed:', err)
+    }
+  }
+  // Список применения — живой: обновляем при изменении шаблонов
+  window.shell.onPluginDataChanged(({ plugin }) => {
+    if (plugin === TEMPLATES_PLUGIN && templatesOpen) void refreshTemplatesList()
+  })
+}
+
 // Клик строго по фону оверлея (мимо карточки) закрывает модалку
 function wireOverlayDismiss(): void {
   const pairs: Array<[HTMLElement | null, () => void]> = [
     [settingsOverlay, closeSettings],
     [accountsOverlay, closeAccounts],
     [downloadsOverlay, closeDownloads],
+    [templatesOverlay, closeTemplates],
+    [templatesManageOverlay, closeTemplatesManage],
   ]
   for (const [overlay, close] of pairs) {
     overlay?.addEventListener('click', (event: MouseEvent) => {
@@ -1226,6 +1524,7 @@ async function init(): Promise<void> {
   wireErrorOverlay()
   wireSettings()
   wireDownloads()
+  wireTemplates()
   wireUpdater()
   wireOverlayDismiss()
   wireWebviewEvents()
