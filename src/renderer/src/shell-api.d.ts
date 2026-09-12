@@ -10,6 +10,8 @@ declare module '*.css'
 interface SewWebViewElement extends HTMLElement {
   loadURL(url: string): Promise<void>
   getURL(): string
+  isLoading(): boolean
+  isCrashed(): boolean
   goBack(): void
   goForward(): void
   reload(): void

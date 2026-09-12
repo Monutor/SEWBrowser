@@ -317,6 +317,7 @@ async function guestJS<T>(label: string, code: string): Promise<T> {
 }
 
 let sewHelperBridgeStarted = false
+let bffTakeDiagged = false
 function startSewHelperBridge(): void {
   if (sewHelperBridgeStarted) return
   sewHelperBridgeStarted = true
@@ -336,7 +337,22 @@ async function pumpSewHelperBff(): Promise<void> {
       'bff-take',
       '(function(){try{var q=window.__sewHelperBffReq;if(!Array.isArray(q))return "[]";' +
         'try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})',
-    )
+    ).catch((err) => {
+      // take возвращает строку во всех ветках — клон здесь ни при чём.
+      // Фиксируем состояние ГЕСТА (синхронные хост-вызовы, без клона),
+      // чтобы понять, в какой момент падает invoke. Однократно.
+      if (!bffTakeDiagged) {
+        bffTakeDiagged = true
+        try {
+          console.warn(
+            `[guestjs:bff-take] guest state: url=${webview.getURL()} loading=${webview.isLoading()} crashed=${webview.isCrashed()}`,
+          )
+        } catch {
+          // ignore
+        }
+      }
+      throw err
+    })
     let reqs: Array<{ id: string; url: string }> = []
     try {
       const parsed: unknown = JSON.parse(typeof rawTake === 'string' ? rawTake : '[]')
