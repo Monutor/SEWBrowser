@@ -333,11 +333,11 @@ async function pumpSewHelperBff(): Promise<void> {
     // в принципе. Возвращаем JSON-строку, а не массив: structured clone
     // результата иногда падает ("An object could not be cloned"), строка —
     // всегда клонируема; форму проверяем ниже.
-    const rawTake = await guestJS<string>(
-      'bff-take',
-      '(function(){try{var q=window.__sewHelperBffReq;if(!Array.isArray(q))return "[]";' +
-        'try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})',
-    ).catch((err) => {
+    // DIAG-ЭКСПЕРИМЕНТ (откатить после ответа пользователя): вместо чтения
+    // очереди возвращаем константу. Дренаж и так мёртв (take падает на клоне),
+    // поведение не меняется. Константа ПРОЙДЁТ — виновато вычисление take;
+    // УПАДЁТ так же — сломан сам канал invoke для этого геста (systemic).
+    const rawTake = await guestJS<string>('bff-take', '"[]"').catch((err) => {
       // take возвращает строку во всех ветках — клон здесь ни при чём.
       // Фиксируем состояние ГЕСТА (синхронные хост-вызовы, без клона),
       // чтобы понять, в какой момент падает invoke. Однократно.
