@@ -229,14 +229,15 @@ async function injectPlugins(): Promise<void> {
         }
       }
       // chrome-шим страницы (один на документ) + имя плагина для его хранилища
-      await webview.executeJavaScript(CHROME_SHIM)
+      await guestJS<void>('shim', CHROME_SHIM)
       if (!plugin.code) continue
       const key = JSON.stringify(plugin.name)
       // Код плагина выполняется в гостевом try/catch: синхронный throw складываем
       // в window.__shellPluginError[name] и читаем обратно в консоль оболочки.
       // Иначе Electron пишет лишь безликое "GUEST_VIEW_MANAGER_CALL: Script
       // failed to execute" без имени плагина и текста ошибки.
-      await webview.executeJavaScript(
+      await guestJS<void>(
+        `inject:${plugin.name}`,
         `window.__shellPluginName = ${key};` +
           `window.__shellPlugins = window.__shellPlugins || {};` +
           `window.__shellPluginError = window.__shellPluginError || {};` +
@@ -247,7 +248,8 @@ async function injectPlugins(): Promise<void> {
           `window.__shellPlugins[${key}] = 1;\n(() => {\nconst chrome = window.__shellChromeFor(${key});\ntry {\n${plugin.code}\n} catch (e) {\nwindow.__shellPluginError[${key}] = String((e && e.stack) || e);\nconsole.error('[shell-plugin:' + ${key} + ']', e);\n}\n})();}`,
       )
       try {
-        const pluginErr = (await webview.executeJavaScript(
+        const pluginErr = (await guestJS<unknown>(
+          `plugin-error:${plugin.name}`,
           `(window.__shellPluginError || {})[${key}] ?? null`,
         )) as unknown
         if (typeof pluginErr === 'string' && pluginErr) {
@@ -258,7 +260,7 @@ async function injectPlugins(): Promise<void> {
       }
       if (plugin.init) {
         try {
-          await webview.executeJavaScript(plugin.init)
+          await guestJS<unknown>(`init:${plugin.name}`, plugin.init)
         } catch (err) {
           console.warn(`[plugins:${plugin.name}] init failed:`, err)
         }
@@ -269,7 +271,7 @@ async function injectPlugins(): Promise<void> {
   }
   // Сбрасываем имя плагина, чтобы чужой код не писал в чужое хранилище
   try {
-    await webview.executeJavaScript('window.__shellPluginName = null;')
+    await guestJS<void>('name-reset', 'window.__shellPluginName = null;')
   } catch {
     // страница могла уже уйти — игнорируем
   }
@@ -284,7 +286,7 @@ async function pushPluginStores(): Promise<void> {
     console.warn('[shell] getAllPluginData failed:', err)
   }
   try {
-    await webview.executeJavaScript('window.__shellPluginStores = ' + JSON.stringify(snapshot) + ';')
+    await guestJS<void>('push-stores', 'window.__shellPluginStores = ' + JSON.stringify(snapshot) + ';')
   } catch {
     // страница не готова — игнорируем
   }
@@ -297,6 +299,23 @@ async function pushPluginStores(): Promise<void> {
  * ответы в window.__sewHelperBffRes[id]. Опрос каждые 500 мс, только если
  * плагин загружен.
  */
+/** Именованный вызов гостя: при reject пишет КАКОЙ вызов упал и с чем.
+ *  Без этого безликий "GUEST_VIEW_MANAGER_CALL: ..." не даёт понять виновника.
+ *  Повторы с тем же текстом глушим (дедуп по label), исключение пробрасываем. */
+const lastGuestErr: Record<string, string> = {}
+async function guestJS<T>(label: string, code: string): Promise<T> {
+  try {
+    return (await webview.executeJavaScript(code)) as T
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (lastGuestErr[label] !== msg) {
+      lastGuestErr[label] = msg
+      console.warn(`[guestjs:${label}] failed:`, msg)
+    }
+    throw err
+  }
+}
+
 let sewHelperBridgeStarted = false
 function startSewHelperBridge(): void {
   if (sewHelperBridgeStarted) return
@@ -309,14 +328,22 @@ async function pumpSewHelperBff(): Promise<void> {
     if (!plugins.some((p) => p.name === 'sew-helper')) return
     // Гостевая часть — полностью неубиваемая (вложенные try/catch): reject
     // executeJavaScript Electron всегда дублирует внутренним логом
-    // "GUEST_VIEW_MANAGER_CALL: Script failed to execute", поэтому гость
-    // не должен кидать в принципе — пустой массив вместо исключения.
-    const reqs = (await webview.executeJavaScript(
-      '(function(){try{var q=window.__sewHelperBffReq;if(!Array.isArray(q))return[];try{return q.splice(0)}catch(e){return[]}}catch(e){return[]}})',
-    )) as Array<{
-      id: string
-      url: string
-    }>
+    // "GUEST_VIEW_MANAGER_CALL: ...", поэтому гость не должен кидать
+    // в принципе. Возвращаем JSON-строку, а не массив: structured clone
+    // результата иногда падает ("An object could not be cloned"), строка —
+    // всегда клонируема; форму проверяем ниже.
+    const rawTake = await guestJS<string>(
+      'bff-take',
+      '(function(){try{var q=window.__sewHelperBffReq;if(!Array.isArray(q))return "[]";' +
+        'try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})',
+    )
+    let reqs: Array<{ id: string; url: string }> = []
+    try {
+      const parsed: unknown = JSON.parse(typeof rawTake === 'string' ? rawTake : '[]')
+      if (Array.isArray(parsed)) reqs = parsed as Array<{ id: string; url: string }>
+    } catch {
+      reqs = []
+    }
     if (!Array.isArray(reqs) || reqs.length === 0) return
     for (const req of reqs) {
       if (!req || typeof req.id !== 'string' || typeof req.url !== 'string') continue
@@ -327,7 +354,8 @@ async function pumpSewHelperBff(): Promise<void> {
         res = { ok: false, status: 0, data: null }
       }
       try {
-        await webview.executeJavaScript(
+        await guestJS<boolean>(
+          'bff-write',
           '(function(id,payload){try{(window.__sewHelperBffRes = window.__sewHelperBffRes || {})[id]=payload;return true}catch(e){return false}})' +
             '(' +
             JSON.stringify(req.id) +
@@ -681,11 +709,12 @@ async function refreshStoragePanel(): Promise<void> {
       renderCookies([])
     }
     try {
-      const estimate = (await webview.executeJavaScript(
+      const estimate = (await guestJS<{ usage: number } | null>(
+        'storage-estimate',
         'navigator.storage && navigator.storage.estimate ' +
           '? navigator.storage.estimate().then((e) => ({ usage: e.usage ?? 0 })).catch(() => null) ' +
           ': Promise.resolve(null)',
-      )) as { usage: number } | null
+      ))
       if (estimate) parts.push(`данные сайта: ${formatSize(estimate.usage)}`)
     } catch {
       // страница не готова — показываем без данных сайта
@@ -861,7 +890,8 @@ function closeAccounts(): void {
 /** Есть ли на странице видимое поле пароля (форма входа)? */
 async function hasLoginForm(): Promise<boolean> {
   try {
-    const found = await webview.executeJavaScript(
+    const found = await guestJS<unknown>(
+      'login-form',
       '!!document.querySelector(\'input[type="password"]:not([disabled])\')',
     )
     return found === true
@@ -921,7 +951,7 @@ async function fillLogin(accountId: string): Promise<void> {
     payload +
     ')'
   try {
-    await webview.executeJavaScript(script)
+    await guestJS<unknown>('fill-login', script)
     setStatus('вход…')
   } catch (err) {
     console.warn('[shell] autofill failed:', err)
@@ -1395,7 +1425,7 @@ function wireWebviewEvents(): void {
 function startStatusPolling(): void {
   setInterval(async () => {
     try {
-      const count = await webview.executeJavaScript('(window.__sewDataLog || []).length')
+      const count = await guestJS<unknown>('datalog-count', '(window.__sewDataLog || []).length')
       setStatus(config?.debug ? `req: ${count} · debug` : `req: ${count}`)
     } catch {
       // страница ещё не готова — игнорируем
@@ -1601,11 +1631,12 @@ function closeTemplates(): void {
 /** Применить шаблон к открытой форме SEW — через onMessage-подписку content-скрипта */
 async function applyTemplateFromShell(id: string): Promise<void> {
   try {
-    const delivered = (await webview.executeJavaScript(
+    const delivered = await guestJS<boolean>(
+      'apply-template',
       `typeof window.__chromeShimReceive === 'function'` +
         ` ? (window.__chromeShimReceive({action:'applyTemplate',templateId:${JSON.stringify(id)}}), true)` +
         ` : false`,
-    )) as boolean
+    )
     closeTemplates()
     setStatus(delivered ? 'шаблон применён' : 'откройте форму в SEW и повторите')
   } catch (err) {
