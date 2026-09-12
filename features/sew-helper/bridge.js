@@ -39,6 +39,14 @@ function shbNormKeys(keys) {
   return null;
 }
 
+// --- 0. importScripts: background.js жил в хроме service worker'ом и первой
+// строкой тянет importScripts('lib.js', 'db-loader.js'). В нашем бандле оба
+// файла уже склеены РАНЬШЕ (см. порядок renderer в manifest.json), поэтому
+// здесь — no-op. Если background.js когда-нибудь импортирует что-то ещё,
+// этот файл надо добавить в renderer манифеста раньше background.js,
+// а не оживлять загрузку здесь.
+function importScripts() {}
+
 // --- 1. chrome.storage.session (in-memory) ---
 chrome.storage.session = {
   get: function (keys, cb) {
