@@ -724,7 +724,7 @@ function createWindow(): void {
   }
   #toolbar button:hover { background: #4a7ae0; }
   #toolbar button:disabled { opacity: 0.5; cursor: default; }
-  #status { flex: 1 1 auto; opacity: 0.8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 8px; }
+  #status { flex: 1 1 auto; min-width: 0; opacity: 0.8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 8px; }
   #stage {
     flex: 1 1 auto; display: flex; align-items: center; justify-content: center;
     background: #2b2d2e; overflow: auto; padding: 12px;
