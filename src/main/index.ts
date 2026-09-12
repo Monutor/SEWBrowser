@@ -13,6 +13,10 @@ import { combinePagesToPdf, detectWiaDevices, scanViaWia, type ScanPageInput } f
 
 let mainWindow: BrowserWindow | null = null
 
+// Периодическая проверка обновлений (только в собранном приложении).
+const UPDATER_CHECK_INTERVAL_MS = 2 * 60 * 60 * 1000 // раз в 2 часа
+let updaterInterval: NodeJS.Timeout | null = null
+
 /**
  * Маппинг клавиш гостевой страницы в имена шорткатов оболочки.
  * Буквы — по input.code (не зависит от раскладки: Ctrl+Ф = Ctrl+A и т.п.).
@@ -124,6 +128,7 @@ function createWindow(): void {
 
   // IPC для shell-UI
   ipcMain.handle('config:get', () => ({ ...getConfig(), debug }))
+  ipcMain.handle('shell:getVersion', () => app.getVersion())
   ipcMain.handle('config:set', (_event, patch) => saveConfig((patch ?? {}) as Parameters<typeof saveConfig>[0]))
   ipcMain.handle('plugins:list', () =>
     plugins.map((p) => ({
@@ -1131,10 +1136,20 @@ app.whenReady().then(() => {
     })
     ipcMain.on('updater:install', () => autoUpdater.quitAndInstall(false, true))
     void autoUpdater.checkForUpdates().catch((err) => console.log('[updater] check failed:', err))
+    // Периодическая проверка каждые 2 часа. Результат (available/ready)
+    // придёт событием 'updater:event' и отобразится в shell-UI;
+    // 'uptodate'/'error' без ручной проверки — тихо, как и автостарт.
+    updaterInterval = setInterval(() => {
+      void autoUpdater.checkForUpdates().catch((err) => console.log('[updater] check failed:', err))
+    }, UPDATER_CHECK_INTERVAL_MS)
   }
 })
 
 app.on('window-all-closed', () => {
+  if (updaterInterval) {
+    clearInterval(updaterInterval)
+    updaterInterval = null
+  }
   void (async () => {
     const mode = getConfig().clearOnExit
     try {

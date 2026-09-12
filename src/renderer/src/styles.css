@@ -50,6 +50,16 @@ body {
   height: 16px;
 }
 
+.app-name {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.app-version {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
 .window-controls {
   display: flex;
   height: 100%;
@@ -85,7 +95,7 @@ body {
   height: 44px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 5px;
   padding: 0 12px;
   background: var(--chrome-bg);
 }
@@ -108,6 +118,10 @@ body {
 #toolbar button svg {
   display: block;
   margin: 0 auto;
+}
+
+#btn-barcode svg {
+  margin-top: 8px !important;
 }
 
 /* Панель вкладок навигации (вторая строка тулбара, y=80..112) */

@@ -29,7 +29,8 @@ const DEFAULTS: SewConfig = {
   // *.mvideo.ru — визит для cookie-consent + прогрев кук: BFF-мост sew-helper
   // (net:fetch, default session) без MVID-кук отдаёт пусто, принять куки можно
   // только зайдя на www.mvideo.ru прямо из приложения.
-  allowlist: ['*.mvideoeldorado.ru', 'kc.tech.mvideo.ru', '*.mvideo.ru'],
+   // monutor.github.io — встроенные инструменты в тулбаре (Генератор ШК / База товаров).
+   allowlist: ['*.mvideoeldorado.ru', 'kc.tech.mvideo.ru', '*.mvideo.ru', '*.monutor.github.io'],
   plugins: {},
   zoom: {},
   clearOnExit: 'none',

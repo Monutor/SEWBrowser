@@ -1410,6 +1410,12 @@ function wireToolbar(): void {
     void navigate('https://www.mvideo.ru/')
   })
   document.getElementById('btn-reload')?.addEventListener('click', () => webview.reload())
+  document.getElementById('btn-barcode')?.addEventListener('click', () => {
+    void navigate('https://monutor.github.io/warehouse-barcode-generator/')
+  })
+  document.getElementById('btn-products')?.addEventListener('click', () => {
+    void navigate('https://monutor.github.io/DataBaseProducts/')
+  })
   document.getElementById('btn-accounts')?.addEventListener('click', () => void openAccounts(true))
   // NB: btn-templates подписывается в wireTemplates() — дубль здесь давал
   // двойной openTemplates() и задвоенный список шаблонов.
@@ -2059,9 +2065,18 @@ function wireOverlayDismiss(): void {
   }
 }
 
+function applyAppVersion(): void {
+  const el = document.getElementById('app-version') as HTMLElement | null
+  if (!el) return
+  window.shell.getVersion().then((v) => {
+    if (v) el.textContent = 'v' + v
+  }).catch(() => { /* noop */ })
+}
+
 async function init(): Promise<void> {
   config = await window.shell.getConfig()
   plugins = await window.shell.getPlugins()
+  applyAppVersion()
 
   wireToolbar()
   wireShortcuts()

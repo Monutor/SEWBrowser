@@ -80,6 +80,7 @@ const api = {
   getConfig: (): Promise<ShellConfigLike> => ipcRenderer.invoke('config:get'),
   setConfig: (patch: Partial<ShellConfigLike>): Promise<ShellConfigLike> =>
     ipcRenderer.invoke('config:set', patch),
+  getVersion: (): Promise<string> => ipcRenderer.invoke('shell:getVersion'),
   getPlugins: (): Promise<
     { name: string; code: string; styles: string; init: string; options: string }[]
   > => ipcRenderer.invoke('plugins:list'),

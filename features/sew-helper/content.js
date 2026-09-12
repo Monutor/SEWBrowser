@@ -731,7 +731,7 @@ function isClickableActionButton(btn) {
 }
 
 function triggerManualBarcodeDialog() {
-  const buttons = document.querySelectorAll('shp-action-button button, rlc-action-button button');
+  const buttons = document.querySelectorAll('shp-action-button button, rlc-action-button button, sew-iconed-action-button button');
   let fallback = null;
   for (let i = 0; i < buttons.length; i++) {
     if (!isClickableActionButton(buttons[i])) continue;
@@ -928,12 +928,14 @@ function scheduleBarcodeRepeat(barcode, attempt) {
 }
 
 function findManualBarcodeDialog() {
-  var surfaces = document.querySelectorAll('.cdk-overlay-container .mat-mdc-dialog-surface');
-  for (var i = 0; i < surfaces.length; i++) {
-    var surface = surfaces[i];
-    if (!surface.querySelector('.button-confirm')) continue;
-    if (!surface.querySelector('input:not(.sew-helper-combo-input)')) continue;
-    return surface;
+  const tagged = document.querySelector('sew-stt-barcode-manually');
+  if (tagged && tagged.isConnected) return tagged;
+  var hosts = document.querySelectorAll('.cdk-overlay-container .mat-mdc-dialog-component-host, .cdk-overlay-container .mat-mdc-dialog-surface');
+  for (var i = 0; i < hosts.length; i++) {
+    const host = hosts[i];
+    if (!host.querySelector('.button-confirm')) continue;
+    if (!host.querySelector('input:not(.sew-helper-combo-input)')) continue;
+    return host;
   }
   return null;
 }

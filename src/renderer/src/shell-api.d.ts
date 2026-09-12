@@ -215,6 +215,7 @@ interface ShellApi {
   downloadUpdate(): Promise<boolean>
   checkForUpdates(): Promise<boolean>
   installUpdate(): void
+  getVersion(): Promise<string>
 }
 
 interface Window {
