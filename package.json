@@ -1,7 +1,7 @@
 {
   "name": "sew-browser",
   "productName": "SEWBrowser",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Dedicated browser shell for the SEW web app with pluggable features",
   "repository": "https://github.com/Monutor/SEWBrowser.git",
   "main": "./out/main/index.js",
