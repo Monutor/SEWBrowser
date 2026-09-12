@@ -232,15 +232,30 @@ async function injectPlugins(): Promise<void> {
       await webview.executeJavaScript(CHROME_SHIM)
       if (!plugin.code) continue
       const key = JSON.stringify(plugin.name)
+      // Код плагина выполняется в гостевом try/catch: синхронный throw складываем
+      // в window.__shellPluginError[name] и читаем обратно в консоль оболочки.
+      // Иначе Electron пишет лишь безликое "GUEST_VIEW_MANAGER_CALL: Script
+      // failed to execute" без имени плагина и текста ошибки.
       await webview.executeJavaScript(
         `window.__shellPluginName = ${key};` +
           `window.__shellPlugins = window.__shellPlugins || {};` +
+          `window.__shellPluginError = window.__shellPluginError || {};` +
           `if (!window.__shellPlugins[${key}]) {` +
           // Код выполняется в IIFE с собственным `chrome`, привязанным к стору
           // этого плагина: отложенные вызовы (наблюдатели, обработчики) видят
           // свои данные, а не 'default' (имя в __shellPluginName уже сброшено).
-          `window.__shellPlugins[${key}] = 1;\n(() => {\nconst chrome = window.__shellChromeFor(${key});\n${plugin.code}\n})();}`,
+          `window.__shellPlugins[${key}] = 1;\n(() => {\nconst chrome = window.__shellChromeFor(${key});\ntry {\n${plugin.code}\n} catch (e) {\nwindow.__shellPluginError[${key}] = String((e && e.stack) || e);\nconsole.error('[shell-plugin:' + ${key} + ']', e);\n}\n})();}`,
       )
+      try {
+        const pluginErr = (await webview.executeJavaScript(
+          `(window.__shellPluginError || {})[${key}] ?? null`,
+        )) as unknown
+        if (typeof pluginErr === 'string' && pluginErr) {
+          console.warn(`[plugins:${plugin.name}] guest error:`, pluginErr)
+        }
+      } catch {
+        // страница ушла между инжектом и чтением — нечего читать
+      }
       if (plugin.init) {
         try {
           await webview.executeJavaScript(plugin.init)
@@ -292,7 +307,13 @@ function startSewHelperBridge(): void {
 async function pumpSewHelperBff(): Promise<void> {
   try {
     if (!plugins.some((p) => p.name === 'sew-helper')) return
-    const reqs = (await webview.executeJavaScript('(window.__sewHelperBffReq || []).splice(0)')) as Array<{
+    // Гостевая часть — полностью неубиваемая (вложенные try/catch): reject
+    // executeJavaScript Electron всегда дублирует внутренним логом
+    // "GUEST_VIEW_MANAGER_CALL: Script failed to execute", поэтому гость
+    // не должен кидать в принципе — пустой массив вместо исключения.
+    const reqs = (await webview.executeJavaScript(
+      '(function(){try{var q=window.__sewHelperBffReq;if(!Array.isArray(q))return[];try{return q.splice(0)}catch(e){return[]}}catch(e){return[]}})',
+    )) as Array<{
       id: string
       url: string
     }>
@@ -307,11 +328,12 @@ async function pumpSewHelperBff(): Promise<void> {
       }
       try {
         await webview.executeJavaScript(
-          '(window.__sewHelperBffRes = window.__sewHelperBffRes || {})[' +
+          '(function(id,payload){try{(window.__sewHelperBffRes = window.__sewHelperBffRes || {})[id]=payload;return true}catch(e){return false}})' +
+            '(' +
             JSON.stringify(req.id) +
-            '] = ' +
+            ',' +
             JSON.stringify(res ?? { ok: false, status: 0, data: null }) +
-            ';',
+            ')',
         )
       } catch {
         // страница ушла между опросом и ответом — гость повторит запрос сам (retry)
