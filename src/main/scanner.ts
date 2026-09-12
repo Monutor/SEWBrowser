@@ -39,6 +39,8 @@ function detectFormat(buffer: Buffer): { ext: string; mime: string } | null {
  * результат в переданный путь. Коды выхода: 0 — ок, 2 — отменено, иначе — ошибка.
  */
 const WIA_SCRIPT = `
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = 'Stop'
 $outPath = $args[0]
 try {
@@ -128,8 +130,10 @@ export async function scanViaWia(timeoutMs = 15 * 60 * 1000): Promise<ScanResult
         }
       }
       if (code === 2) return finish({ ok: false, error: 'отменено' })
-      const msg = stderr.trim() || `код выхода ${code}`
-      return finish({ ok: false, error: msg })
+      // Сырой stderr PowerShell (путь к скрипту, COM-интерфейсы, локализация)
+      // не показываем — отдаём человечное описание; детали остаются в логе.
+      console.warn('[shell] scanner failed (raw):', stderr.trim())
+      return finish({ ok: false, error: 'не удалось запустить сканер — устройство не найдено как WIA-сканер' })
     })
   })
 }
@@ -148,6 +152,8 @@ export interface DeviceListResult {
  * 0 — ок (даже при нуле устройств), иначе — ошибка.
  */
 const DEVICE_SCRIPT = `
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = 'Stop'
 try {
     $dm = New-Object -ComObject WIA.DeviceManager
@@ -224,8 +230,9 @@ export async function detectWiaDevices(timeoutMs = 20000): Promise<DeviceListRes
     child.on('error', (err) => finish({ ok: false, error: `ошибка запуска сканера: ${err.message}` }))
     child.on('exit', (code) => {
       if (code !== 0) {
-        const msg = stderr.trim() || `код выхода ${code}`
-        return finish({ ok: false, error: msg })
+        // Сырой stderr PowerShell не показываем — человечное описание в UI.
+        console.warn('[shell] scanner detect failed (raw):', stderr.trim())
+        return finish({ ok: false, error: 'не удалось проверить сканеры' })
       }
       const devices: string[] = []
       for (const line of stdout.split(/\r?\n/)) {

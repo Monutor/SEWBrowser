@@ -741,7 +741,7 @@ function createWindow(): void {
   <span id="status"></span>
 </div>
 <div id="stage">
-  <span id="hint">Нажмите «Определить сканер», затем «Сканировать»<br>Результат появится здесь — сохранить можно кнопкой «Сохранить»</span>
+  <span id="hint">Нажмите «Определить сканер», затем «Сканировать»<br>Результат появится здесь — сохранить можно кнопкой «Сохранить»<br><br>Если сканер не найден — проверьте, что устройство определено как сканер (не только как принтер), и установлены его драйверы</span>
   <img id="preview" alt="">
 </div>
 <script>
@@ -761,9 +761,9 @@ function createWindow(): void {
     detectBtn.disabled = true;
     window.shell.detectScanner().then(function (res) {
       detectBtn.disabled = false;
-      if (!res || !res.ok) { setStatus((res && res.error) ? ('сканеры: ' + res.error) : 'не удалось проверить сканеры'); return; }
+      if (!res || !res.ok) { setStatus(res && res.error ? res.error : 'не удалось проверить сканеры'); return; }
       var devices = (res.devices || []);
-      if (devices.length === 0) { setStatus('Сканеры не найдены. Проверьте, что устройство видно как сканер (не только как принтер).'); return; }
+      if (devices.length === 0) { setStatus('Сканеры не найдены'); return; }
       setStatus('Найдено сканеров: ' + devices.length + ' — ' + devices.join(', '));
     }).catch(function () { detectBtn.disabled = false; setStatus('ошибка проверки сканеров'); });
   });
