@@ -628,6 +628,10 @@ function wireSettings(): void {
   document.getElementById('set-save')?.addEventListener('click', () => void saveSettings())
   document.getElementById('set-cancel')?.addEventListener('click', closeSettings)
   document.getElementById('set-clear-session')?.addEventListener('click', () => void clearSessionAndLogout())
+  document.getElementById('set-reload-app')?.addEventListener('click', () => {
+    closeSettings()
+    webview.reloadIgnoringCache()
+  })
   document
     .getElementById('set-clear-cache')
     ?.addEventListener('click', () => void clearStorageTarget('cache'))
