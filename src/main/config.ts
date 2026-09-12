@@ -68,5 +68,10 @@ export function saveConfig(partial: Partial<SewConfig>): SewConfig {
 }
 
 export function isDebugMode(): boolean {
-  return process.argv.includes('--debug') || getConfig().debug === true
+  // Dev (npm run dev/dev:watch, app не упакован): дебаг всегда включён.
+  // Релиз (app.isPackaged): дебаг выключен, включается только флагом --debug.
+  // Поле config.debug больше не читаем, чтобы случайно сохранённый в dev
+  // debug:true не протекал в релиз (у dev и релиза общий userData/config.json).
+  if (process.argv.includes('--debug')) return true
+  return !app.isPackaged
 }
