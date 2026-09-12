@@ -15,6 +15,9 @@ let mainWindow: BrowserWindow | null = null
 
 // Периодическая проверка обновлений (только в собранном приложении).
 const UPDATER_CHECK_INTERVAL_MS = 2 * 60 * 60 * 1000 // раз в 2 часа
+// Если checkForUpdates не ответил за это время — значит GitHub недоступен
+// или запрос повис; показываем ошибку вместо вечного «проверяем…».
+const UPDATER_CHECK_TIMEOUT_MS = 30 * 1000 // 30 сек
 let updaterInterval: NodeJS.Timeout | null = null
 
 /**
@@ -1130,16 +1133,30 @@ app.whenReady().then(() => {
       // Ошибку проверки ловим здесь, чтобы вызов не падал в рендер с
       // неверным «проверка доступна только в установленной версии» — реальная
       // причина уже отправлена событием 'error' выше (см. autoUpdater.on('error')).
+      // Если checkForUpdates повис (GitHub недоступен) — даём понять пользователю,
+      // иначе статус «проверяем…» мог бы висеть бесконечно.
+      const timer = setTimeout(() => {
+        console.log('[updater] check timed out')
+        sendUpdater({ type: 'error', message: 'проверка не ответила — проверьте соединение с GitHub' })
+      }, UPDATER_CHECK_TIMEOUT_MS)
       try {
         await autoUpdater.checkForUpdates()
       } catch (err) {
         console.log('[updater] check failed:', err)
+      } finally {
+        clearTimeout(timer)
       }
       return true
     })
     ipcMain.handle('updater:download', async () => {
-      await autoUpdater.downloadUpdate()
-      return true
+      try {
+        await autoUpdater.downloadUpdate()
+        return true
+      } catch (err: unknown) {
+        const reason = err instanceof Error ? err.message : String(err)
+        console.log('[updater] download failed:', err)
+        throw new Error(`Не удалось скачать обновление: ${reason}`)
+      }
     })
     ipcMain.on('updater:install', () => autoUpdater.quitAndInstall(false, true))
     void autoUpdater.checkForUpdates().catch((err) => console.log('[updater] check failed:', err))

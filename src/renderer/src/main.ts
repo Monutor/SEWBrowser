@@ -1,4 +1,4 @@
-import './styles.css'
+﻿import './styles.css'
 
 const webview = document.getElementById('site') as unknown as SewWebViewElement
 const addressInput = document.getElementById('address') as HTMLInputElement | null
@@ -1543,7 +1543,7 @@ function renderUpdater(): void {
         console.warn('[shell] download update failed:', err)
         updaterState = 'available'
         renderUpdater()
-        setStatus('не удалось скачать обновление')
+        setStatus(String(err?.message ?? 'не удалось скачать обновление'))
       })
     }
   } else if (updaterState === 'downloading') {
@@ -1585,7 +1585,8 @@ function wireUpdater(): void {
         setStatus(`не удалось проверить: ${event.message ?? 'ошибка'}`)
         return
       }
-      if (updaterState === 'idle') return
+      // во время скачивания показывает catch у downloadUpdate()
+      if (updaterState === 'idle' || updaterState === 'downloading') return
       setStatus(`обновление: ${event.message ?? 'ошибка'}`)
       return
     }
