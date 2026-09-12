@@ -501,6 +501,12 @@ function createWindow(): void {
     return {}
   }
 
+  /** PDF-просмотр: отдельное окно со встроенным viewer'ом Chromium (свои кнопки скачать/печать) */
+  function openPdfViewer(dataUrl: string, title: string): void {
+    const win = new BrowserWindow({ width: 1024, height: 768, title, icon: existsSync(devIcon) ? devIcon : undefined })
+    win.loadURL(dataUrl)
+  }
+
   async function downloadGuestUrl(guest: WebContents, url: string): Promise<void> {
     const id = ++downloadSeq
     const startedAt = new Date().toISOString()
@@ -555,6 +561,11 @@ function createWindow(): void {
         fail(`bad size: ${size}`)
         return
       }
+      // PDF → окно просмотра вместо диалога сохранения (там свои кнопки скачать/печать)
+      if (mime === 'application/pdf') {
+        openPdfViewer(`data:application/pdf;base64,${base64}`, 'Документ')
+        return
+      }
       const ext = GUEST_MIME_EXT[mime] ?? 'bin'
       const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
       const name = `документ-${stamp}.${ext}`
@@ -594,6 +605,25 @@ function createWindow(): void {
     const send = (payload: Record<string, unknown>): void => sendDownloadEvent(id, name, payload)
     if (!mainWindow || mainWindow.isDestroyed()) {
       item.cancel()
+      return
+    }
+    // PDF по http(s) → окно просмотра вместо диалога сохранения.
+    // Байты тянем сами и открываем data URL: при Content-Disposition: attachment
+    // прямой loadURL повторно срабатывает will-download (зацикление).
+    // data:/blob: в ветку не пускаем — это уже финальный файл (например, из самого viewer'а).
+    const url = item.getURL()
+    if (/^https?:/i.test(url) && (item.getMimeType() === 'application/pdf' || /\.pdf$/i.test(name))) {
+      item.cancel()
+      void (async () => {
+        try {
+          const res = await net.fetch(url)
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          const buf = Buffer.from(await res.arrayBuffer())
+          openPdfViewer(`data:application/pdf;base64,${buf.toString('base64')}`, name)
+        } catch (err) {
+          console.warn('[shell] pdf viewer failed:', err)
+        }
+      })()
       return
     }
     // Синхронный диалог: пока пользователь выбирает путь, скачивание не убегает вперёд
