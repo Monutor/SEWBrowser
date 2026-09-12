@@ -13,6 +13,9 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  # Без пробелов: latest.yml должен ссылаться на имя, которое GitHub не
+  # переименует при заливке (пробелы -> точки, 404 в autoUpdater, см. 0.6.0).
+  artifactName: "${productName}-Setup-${version}.${ext}"
 publish:
   provider: github
   owner: "Monutor"

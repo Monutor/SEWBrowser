@@ -85,6 +85,11 @@ Allowlist по умолчанию: `*.mvideoeldorado.ru` + `kc.tech.mvideo.ru` (
     setWindowOpenHandler'ом — для `blob:`/`data:` контент вытягиваем через
     `guest.executeJavaScript(fetch → base64)` и пишем файл вручную из main
     (`src/main/downloads/history.ts` + `downloadGuestUrl` в `index.ts`).
+15. **Пробелы в имени NSIS-артефакта ломают autoUpdater:** дефолтное имя
+    `SEWBrowser Setup X.Y.Z.exe` в `latest.yml` пишется через дефисы, а GitHub
+    при заливке переименовывает файл через точки → апдейтер получает 404.
+    В `electron-builder.yml` задан явный
+    `nsis.artifactName: "${productName}-Setup-${version}.${ext}"` — не убирать.
 
 ## Правила работы
 
