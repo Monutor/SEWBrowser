@@ -1,6 +1,0 @@
-{
-  "name": "data-demo",
-  "version": "1.0.0",
-  "description": "Перехват fetch-запросов страницы; лог в window.__sewDataLog, счётчик в статус-баре",
-  "renderer": "./main.js"
-}
