@@ -303,8 +303,16 @@ function createWindow(): void {
      // Точный размер PDF из standard-base64: на каждые 4 символа — 3 байта минус padding
      const pad = (base64.match(/=+$/) || [''])[0].length
      const bytes = Math.floor(base64.length / 4) * 3 - pad
-     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
-     const fileName = name.trim() || `документ-${stamp}.pdf`
+     // МСК = UTC+3 (без летнего времени)
+     const stamp = (() => {
+       const d = new Date(Date.now() + 3 * 3600e3)
+       const p = (n: number): string => String(n).padStart(2, '0')
+       return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}` +
+         `-${p(d.getUTCHours())}-${p(d.getUTCMinutes())}-${p(d.getUTCSeconds())}`
+     })()
+     // Реальное имя файла сохраняется; для «дефолтного» названия ставим дату/по МСК
+     const base = name.trim()
+     const fileName = (base && base.toLowerCase() !== 'документ') ? base : `документ-${stamp}.pdf`
      if (!mainWindow || mainWindow.isDestroyed()) return false
      const filePath = dialog.showSaveDialogSync(mainWindow, {
        title: 'Сохранить документ',
