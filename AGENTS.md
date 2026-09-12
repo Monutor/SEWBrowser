@@ -90,6 +90,16 @@ Allowlist по умолчанию: `*.mvideoeldorado.ru` + `kc.tech.mvideo.ru` (
     при заливке переименовывает файл через точки → апдейтер получает 404.
     В `electron-builder.yml` задан явный
     `nsis.artifactName: "${productName}-Setup-${version}.${ext}"` — не убирать.
+16. **Гостевой fetch под CORS, main — нет:** BFF mvideo отдаёт
+    `ACAO: https://www.mvideo.ru`, из страницы SEW запрос режется CORS —
+    такие вызовы идут через мост `net:fetch` (main, `net.fetch`, куки общие
+    через default session; URL строго по `BFF_URL_RE`) + polling
+    `window.__sewHelperBffReq/Res` в `main.ts`. GitHub raw отдаёт `ACAO: *` —
+    его можно тянуть прямо из геста. Кэш картинок `mvideo:v2:*` — только
+    в памяти геста (bridge.js), НЕ в plugin-data (иначе 8 МБ раздувают JSON
+    на диске и снапшот целиком). Chrome-шим геста НЕ даёт `sendMessage` /
+    `storage.session` / `cookies` — для слияния background+content в один
+    контекст их доопределяет bridge плагина, не общий шим.
 
 ## Правила работы
 

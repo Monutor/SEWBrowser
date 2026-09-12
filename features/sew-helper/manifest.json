@@ -1,0 +1,13 @@
+{
+  "name": "sew-helper",
+  "version": "0.6.0",
+  "description": "Порт Chrome-расширения SEW-Helper 0.6.0: кнопка «Информация о товаре» — фото товаров M.Video, ШК по артикулу, зоны. lib/db-loader/background/content/css — дословно из J:/Front-end-projects/AIDevelops/web-extension/SEW-Helper, обновления переносить оттуда; адаптер под оболочку — только bridge.js.",
+  "renderer": [
+    "./bridge.js",
+    "./lib.js",
+    "./db-loader.js",
+    "./background.js",
+    "./content.js"
+  ],
+  "styles": "./content.css"
+}

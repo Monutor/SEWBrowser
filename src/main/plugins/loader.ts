@@ -13,8 +13,10 @@ export interface PluginManifest {
   name: string
   version?: string
   description?: string
-  /** Путь к JS-файлу, исполняемому в контексте страницы (относительно папки плагина) */
-  renderer?: string
+  /** Путь к JS-файлу, исполняемому в контексте страницы (относительно папки плагина).
+   * Может быть массивом — файлы склеиваются в указанном порядке
+   * (например, bridge.js + дословные исходники Chrome-расширения) */
+  renderer?: string | string[]
   /** Путь к CSS-файлу плагина (вставляется в страницу через webview.insertCSS) */
   styles?: string
   /** JS-сниппет, выполняемый после кода плагина, если документ уже загружен
@@ -69,11 +71,16 @@ export function loadPlugins(config: SewConfig): LoadedPlugin[] {
 
     const plugin: LoadedPlugin = { name: manifest.name, manifest }
     if (manifest.renderer) {
-      try {
-        plugin.code = readFileSync(join(pluginDir, manifest.renderer), 'utf-8')
-      } catch (err) {
-        console.warn(`[plugins] failed to read renderer for ${manifest.name}:`, err)
+      const files = Array.isArray(manifest.renderer) ? manifest.renderer : [manifest.renderer]
+      const parts: string[] = []
+      for (const file of files) {
+        try {
+          parts.push(readFileSync(join(pluginDir, file), 'utf-8'))
+        } catch (err) {
+          console.warn(`[plugins] failed to read renderer for ${manifest.name} (${file}):`, err)
+        }
       }
+      if (parts.length > 0) plugin.code = parts.join('\n;\n')
     }
     if (manifest.styles) {
       try {

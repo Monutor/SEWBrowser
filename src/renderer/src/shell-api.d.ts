@@ -89,6 +89,13 @@ interface DownloadedFile {
   tabNum?: string
 }
 
+/** Результат узкого fetch-моста main-процесса (только allowlist-URL) */
+interface NetFetchResult {
+  ok: boolean
+  status: number
+  data: unknown
+}
+
 interface StorageUsage {
   cacheBytes: number
   cookieCount: number
@@ -180,6 +187,8 @@ interface ShellApi {
   getAllPluginData(): Promise<Record<string, Record<string, unknown>>>
   /** Алиас preload-имени (оба ведут на 'plugin-data:get-all') */
   pluginDataGetAll(): Promise<Record<string, Record<string, unknown>>>
+  /** Узкий fetch-мост main-процесса (только allowlist-URL, напр. BFF mvideo) */
+  netFetch(url: string): Promise<NetFetchResult>
   onPluginDataChanged(cb: (event: { plugin: string }) => void): void
   onUpdater(cb: (event: UpdaterEvent) => void): void
   downloadUpdate(): Promise<boolean>

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Notification, globalShortcut, ipcMain, session, webContents, Menu, dialog, shell, clipboard } from 'electron'
+import { app, BrowserWindow, Notification, globalShortcut, ipcMain, net, session, webContents, Menu, dialog, shell, clipboard } from 'electron'
 import type { Input, MenuItemConstructorOptions, WebContents } from 'electron'
 import { join } from 'node:path'
 import { existsSync, writeFileSync } from 'node:fs'
@@ -39,6 +39,9 @@ function guestShortcutName(input: Input): string | null {
 
 /** Схемы, которые разрешено открывать во внешнем приложении */
 const EXTERNAL_SCHEME_RE = /^(https?|mailto|tel):/i
+
+/** Единственные URL, доступные через fetch-мост 'net:fetch' (BFF mvideo для sew-helper) */
+const BFF_URL_RE = /^https:\/\/www\.mvideo\.ru\/(bff\/product-details\?productId=[\w-]+|products\/[\w-]+)\/?$/
 
 /** Серверная копия allowlist-проверки (renderer делает то же самое локально) */
 function isAllowedUrl(url: string): boolean {
@@ -162,6 +165,36 @@ function createWindow(): void {
     const out: Record<string, Record<string, unknown>> = {}
     for (const p of plugins) out[p.name] = getPluginData(p.name)
     return out
+  })
+  // ---------- Узкий fetch-мост для плагинов (BFF mvideo) ----------
+  // Гость не может ходить в BFF напрямую: BFF отдаёт ACAO только www.mvideo.ru,
+  // из страницы SEW запрос режется CORS. net.fetch CORS не подвержен, а куки
+  // у него общие с webview (default session). URL строго из allowlist ниже.
+  ipcMain.handle('net:fetch', async (_event, url: unknown) => {
+    if (typeof url !== 'string' || !BFF_URL_RE.test(url)) return { ok: false, status: 0, data: null }
+    try {
+      const sku = /productId=([\w-]+)/.exec(url)?.[1]
+      const headers: Record<string, string> = { Accept: 'application/json' }
+      if (sku) {
+        // прогрев кук — зеркалит ensureCookies() из background.js расширения
+        try {
+          await (await net.fetch(`https://www.mvideo.ru/products/${sku}`)).text()
+        } catch {
+          // прогрев не критичен — пробуем BFF как есть
+        }
+        headers.Referer = `https://www.mvideo.ru/products/${sku}`
+      }
+      const res = await net.fetch(url, { headers })
+      let data: unknown = null
+      try {
+        data = await res.json()
+      } catch {
+        data = null
+      }
+      return { ok: res.ok, status: res.status, data }
+    } catch {
+      return { ok: false, status: 0, data: null }
+    }
   })
   // HTTP-кэш НЕ входит в clearStorageData — для него отдельный clearCache().
   ipcMain.handle('storage:usage', async () => {

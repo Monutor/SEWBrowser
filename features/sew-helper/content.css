@@ -1,0 +1,659 @@
+.sew-helper-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 12px;
+  margin: 0 4px;
+  border: none;
+  border-radius: 18px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.95);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.sew-helper-toolbar-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.sew-helper-toolbar-icon {
+  font-family: 'Material Icons';
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.sew-helper-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.sew-helper-modal-content {
+  position: relative;
+  max-width: 90vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+}
+
+.sew-helper-modal-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #eee;
+  color: #333;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sew-helper-modal-close:hover {
+  background: #ddd;
+}
+
+/* Форма ввода артикула */
+.sew-helper-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px;
+  min-width: 300px;
+}
+
+.sew-helper-form-title {
+  font-size: 1.05rem;
+  font-weight: 500;
+  color: #222;
+  padding-right: 32px;
+}
+
+.sew-helper-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 1rem;
+  box-sizing: border-box;
+  outline: none;
+}
+
+.sew-helper-input:focus-visible {
+  border-color: #7c4dff;
+  box-shadow: 0 0 0 2px rgba(124, 77, 255, 0.4);
+}
+
+.sew-helper-form-error {
+  min-height: 1em;
+  font-size: 0.8rem;
+  color: #d32f2f;
+}
+
+.sew-helper-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Недавние артикулы */
+.sew-helper-recent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sew-helper-recent:empty {
+  display: none;
+}
+
+.sew-helper-recent-label {
+  font-size: 0.75rem;
+  color: #666;
+}
+
+.sew-helper-recent-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sew-helper-recent-clear {
+  border: none;
+  background: none;
+  color: #7c4dff;
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 0;
+}
+
+.sew-helper-recent-clear:hover {
+  color: #5a2db8;
+  text-decoration: underline;
+}
+
+.sew-helper-recent-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sew-helper-recent-chip {
+  padding: 4px 10px;
+  border: 1px solid #ddd;
+  border-radius: 14px;
+  background: #fafafa;
+  color: #333;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.sew-helper-recent-chip:hover {
+  border-color: #7c4dff;
+  background: #f0e9ff;
+}
+
+.sew-helper-btn {
+  padding: 8px 16px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fff;
+  color: #333;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.sew-helper-btn:hover {
+  background: #f5f5f5;
+}
+
+.sew-helper-btn-primary {
+  background: #7c4dff;
+  border-color: #7c4dff;
+  color: #fff;
+}
+
+.sew-helper-btn-primary:hover {
+  background: #6a3de8;
+}
+
+/* Страница информации о товаре */
+.sew-helper-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 320px;
+}
+
+.sew-helper-info-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 16px 8px;
+}
+
+.sew-helper-sku {
+  font-weight: 600;
+  color: #222;
+}
+
+.sew-helper-barcode-info {
+  font-size: 0.8125rem;
+  color: #666;
+}
+
+.sew-helper-link {
+  font-size: 0.8125rem;
+  color: #7c4dff;
+  text-decoration: none;
+}
+
+.sew-helper-link:hover {
+  text-decoration: underline;
+}
+
+.sew-helper-product-name {
+  padding: 0 16px 4px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: #222;
+  word-break: break-word;
+}
+
+.sew-helper-fill-btn {
+  align-self: flex-start;
+  padding: 4px 12px;
+  font-size: 0.8rem;
+}
+
+.sew-helper-fill-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+}
+
+.sew-helper-qty {
+  width: 52px;
+  padding: 4px 6px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  box-sizing: border-box;
+  outline: none;
+}
+
+.sew-helper-qty:focus-visible {
+  border-color: #7c4dff;
+  box-shadow: 0 0 0 2px rgba(124, 77, 255, 0.4);
+}
+
+.sew-helper-repeat-chip {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: rgba(34, 34, 34, 0.92);
+  color: #fff;
+  font-size: 0.85rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.sew-helper-repeat-chip__cancel {
+  padding: 4px 12px;
+  border: 1px solid #fff;
+  border-radius: 6px;
+  background: transparent;
+  color: #fff;
+  font-size: 0.8rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sew-helper-repeat-chip__cancel:hover {
+  background: #fff;
+  color: #222;
+}
+
+.sew-helper-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+  overflow: auto;
+  padding: 16px;
+  min-height: 0;
+}
+
+.sew-helper-modal-grid-info {
+  max-width: 640px;
+  height: 450px;
+}
+
+.sew-helper-modal-grid img {
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.sew-helper-modal-grid .sew-helper-thumb-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.sew-helper-thumb-wrap {
+  position: relative;
+  overflow: hidden;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.sew-helper-modal-grid .sew-helper-thumb-wrap::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0);
+  transition: background 0.15s ease;
+  pointer-events: none;
+}
+
+.sew-helper-modal-grid .sew-helper-thumb-wrap:hover::before {
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.sew-helper-modal-grid .sew-helper-thumb-wrap::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 28px;
+  height: 28px;
+  background-color: #fff;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M19%2013h-6v6h-2v-6H5v-2h6V5h2v6h6z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M19%2013h-6v6h-2v-6H5v-2h6V5h2v6h6z'/%3E%3C/svg%3E") center / contain no-repeat;
+  transform: translate(-50%, -50%) scale(0.8);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.sew-helper-modal-grid .sew-helper-thumb-wrap:hover::after {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.sew-helper-status {
+  padding: 8px 16px 20px;
+  color: #888;
+  font-size: 0.9rem;
+}
+
+/* Выбор зон хранения */
+.sew-helper-shelf-section {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 8px 16px 16px;
+  border-top: 1px solid #eee;
+}
+
+.sew-helper-shelf-in-dialog {
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 4px 24px 12px;
+  border-top: none;
+}
+
+.sew-helper-shelf-fill-btn {
+  justify-self: stretch;
+  padding: 4px 12px;
+  font-size: 0.8rem;
+}
+
+.sew-helper-shelf-fill-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sew-helper-shelf {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sew-helper-shelf-label {
+  font-size: 0.75rem;
+  color: #666;
+}
+
+.sew-helper-select {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  background: #fff;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.sew-helper-select:focus-visible {
+  border-color: #7c4dff;
+  outline: 2px solid #7c4dff;
+  outline-offset: 1px;
+}
+
+.sew-helper-shelf-barcode {
+  font-size: 0.75rem;
+  color: #222;
+  font-weight: 600;
+  min-height: 1.2em;
+  word-break: break-all;
+}
+
+.sew-helper-combo-list {
+  display: none;
+  position: fixed;
+  z-index: 2147483647;
+  max-height: 240px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.sew-helper-combo-list.sew-helper-combo-open {
+  display: block;
+}
+
+.sew-helper-combo-option {
+  padding: 7px 10px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.sew-helper-combo-option:hover {
+  background: #f0e9ff;
+}
+
+.sew-helper-thumb-img.sew-helper-error,
+img.sew-helper-error {
+  opacity: 0.3;
+  filter: grayscale(1);
+}
+
+.sew-helper-thumb-img.sew-helper-loading,
+.sew-helper-modal-grid img.sew-helper-loading {
+  background: #eee;
+  animation: sew-helper-pulse 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sew-helper-thumb-img.sew-helper-loading,
+  .sew-helper-modal-grid img.sew-helper-loading {
+    animation: none;
+  }
+}
+
+@keyframes sew-helper-pulse {
+
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+.sew-helper-refresh-btn {
+  align-self: flex-start;
+  padding: 4px 12px;
+  font-size: 0.8125rem;
+}
+
+.sew-helper-refresh-btn:hover {
+  border-color: #7c4dff;
+  color: #7c4dff;
+}
+
+.sew-helper-refresh-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+.sew-helper-toast {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    margin: 4px 0;
+    border: 1px solid #d32f2f;
+    border-radius: 6px;
+    background: #fdecea;
+    color: #d32f2f;
+    font-size: 0.8125rem;
+    animation: sew-helper-pulse 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .sew-helper-toast {
+        animation: none;
+    }
+}
+
+.sew-helper-toast__action {
+    padding: 4px 12px;
+    border: 1px solid #d32f2f;
+    border-radius: 6px;
+    background: transparent;
+    color: #d32f2f;
+    cursor: pointer;
+    font-size: 0.8rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.sew-helper-toast__action:hover {
+    background: #d32f2f;
+    color: #fff;
+}
+
+.sew-helper-barcode-cached {
+    font-size: 0.75rem;
+    color: #888;
+    font-weight: 400;
+    margin-left: 4px;
+}
+
+.sew-helper-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483648;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.85);
+}
+
+.sew-helper-lightbox-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.sew-helper-lightbox-stage {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 92vw;
+  max-height: 86vh;
+}
+
+.sew-helper-lightbox-img {
+  max-width: 90vw;
+  max-height: 84vh;
+  object-fit: contain;
+  border-radius: 4px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+  user-select: none;
+}
+
+.sew-helper-lightbox-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.85);
+  color: #222;
+  font-size: 1.6rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sew-helper-lightbox-nav:hover {
+  background: #fff;
+}
+
+.sew-helper-lightbox-prev {
+  left: 16px;
+}
+
+.sew-helper-lightbox-next {
+  right: 16px;
+}
+
+.sew-helper-lightbox-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 2;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.85);
+  color: #222;
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sew-helper-lightbox-close:hover {
+  background: #fff;
+}
+
+.sew-helper-lightbox-counter {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  color: #fff;
+  font-size: 0.9rem;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  user-select: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sew-helper-lightbox {
+    animation: none;
+  }
+}

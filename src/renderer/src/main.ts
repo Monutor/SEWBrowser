@@ -275,6 +275,53 @@ async function pushPluginStores(): Promise<void> {
   }
 }
 
+/**
+ * BFF-мост для sew-helper: гость складывает запросы в window.__sewHelperBffReq,
+ * оболочка забирает их (splice — атомарно), ходит в main через netFetch
+ * (net.fetch: без CORS, куки общие с webview через default session) и кладёт
+ * ответы в window.__sewHelperBffRes[id]. Опрос каждые 500 мс, только если
+ * плагин загружен.
+ */
+let sewHelperBridgeStarted = false
+function startSewHelperBridge(): void {
+  if (sewHelperBridgeStarted) return
+  sewHelperBridgeStarted = true
+  setInterval(() => void pumpSewHelperBff(), 500)
+}
+
+async function pumpSewHelperBff(): Promise<void> {
+  try {
+    if (!plugins.some((p) => p.name === 'sew-helper')) return
+    const reqs = (await webview.executeJavaScript('(window.__sewHelperBffReq || []).splice(0)')) as Array<{
+      id: string
+      url: string
+    }>
+    if (!Array.isArray(reqs) || reqs.length === 0) return
+    for (const req of reqs) {
+      if (!req || typeof req.id !== 'string' || typeof req.url !== 'string') continue
+      let res: { ok: boolean; status: number; data: unknown }
+      try {
+        res = await window.shell.netFetch(req.url)
+      } catch {
+        res = { ok: false, status: 0, data: null }
+      }
+      try {
+        await webview.executeJavaScript(
+          '(window.__sewHelperBffRes = window.__sewHelperBffRes || {})[' +
+            JSON.stringify(req.id) +
+            '] = ' +
+            JSON.stringify(res ?? { ok: false, status: 0, data: null }) +
+            ';',
+        )
+      } catch {
+        // страница ушла между опросом и ответом — гость повторит запрос сам (retry)
+      }
+    }
+  } catch {
+    // webview не готов — молча ждём следующего тика
+  }
+}
+
 function updateAddressBar(): void {
   if (!addressInput) return
   try {
@@ -1633,6 +1680,7 @@ async function init(): Promise<void> {
   wireOverlayDismiss()
   wireWebviewEvents()
   startStatusPolling()
+  startSewHelperBridge()
   // Данные плагинов меняются из оверлеев оболочки — перепушиваем снапшот в страницу
   window.shell.onPluginDataChanged(() => void pushPluginStores())
 
