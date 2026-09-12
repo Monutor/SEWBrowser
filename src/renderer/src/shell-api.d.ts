@@ -45,6 +45,12 @@ interface SewWebViewElement extends HTMLElement {
   ): void
 }
 
+interface NavTab {
+  id: string
+  name: string
+  url: string
+}
+
 interface ShellConfig {
   startUrl: string
   debug: boolean
@@ -53,6 +59,7 @@ interface ShellConfig {
   plugins: Record<string, boolean>
   zoom: Record<string, number>
   clearOnExit: 'none' | 'cache' | 'all'
+  tabs: NavTab[]
 }
 
 interface PluginInfo {
@@ -177,6 +184,8 @@ interface ShellApi {
   openDownloadFile(id: string): Promise<boolean>
   savePdf(base64: string, name: string): Promise<boolean>
   printPdf(): Promise<boolean>
+  /** Сохранить текст (напр. экспорт вкладок) в файл через диалог сохранения */
+  saveTabsFile(content: string, name: string): Promise<boolean>
   /** Сканер (WIA): список подключённых устройств — для кнопки «Определить сканер» */
   detectScanner(): Promise<{ ok: boolean; devices?: string[]; error?: string }>
   /** Сканер (WIA): отсканировать и вернуть изображение для предосмотра (НЕ сохраняет) */

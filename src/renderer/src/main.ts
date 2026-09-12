@@ -40,6 +40,20 @@ const templatesManageOverlay = document.getElementById('templates-manage-overlay
 let templatesOpen = false
 let templatesManageOpen = false
 
+// Вкладки навигации
+const tabstrip = document.getElementById('tabstrip') as HTMLElement | null
+const tabsEl = document.getElementById('tabs') as HTMLElement | null
+const tabsOverlay = document.getElementById('tabs-overlay') as HTMLElement | null
+const tabsList = document.getElementById('tabs-list') as HTMLElement | null
+const tabForm = document.getElementById('tab-form') as HTMLElement | null
+const tabNameInput = document.getElementById('tab-name') as HTMLInputElement | null
+const tabUrlInput = document.getElementById('tab-url') as HTMLInputElement | null
+const tabsExport = document.getElementById('tabs-export') as HTMLElement | null
+const tabsImport = document.getElementById('tabs-import') as HTMLElement | null
+const tabsImportFile = document.getElementById('tabs-import-file') as HTMLInputElement | null
+let editingTabId: string | null = null
+let tabsOpen = false
+
 let config: ShellConfig | null = null
 let plugins: PluginInfo[] = []
 let isFullscreen = false
@@ -1331,6 +1345,7 @@ async function handleShortcut(name: string): Promise<void> {
       else if (templatesOpen) closeTemplates()
       else if (accountsOpen) closeAccounts()
       else if (downloadsOpen) closeDownloads()
+      else if (tabsOpen) closeTabs()
       else if (findActive) closeFind()
       else if (settingsOverlay && !settingsOverlay.hidden) closeSettings()
       else if (document.activeElement === addressInput && addressInput) addressInput.blur()
@@ -1443,6 +1458,7 @@ function wireWebviewEvents(): void {
       lastAllowedUrl = event.url
       updateAddressBar()
       applyZoomForCurrentPage()
+      updateActiveTab()
     } else {
       // Показываем заблокированный хост — так проще дополнять allowlist
       setStatus(`blocked: ${hostOf(event.url) || event.url}`)
@@ -1726,6 +1742,261 @@ function closeTemplatesManage(): void {
   templatesManageOpen = false
 }
 
+// ---------- Вкладки навигации ----------
+
+function openTabs(): void {
+  if (!tabsOverlay) return
+  editingTabId = null
+  tabForm && (tabForm.hidden = true)
+  refreshTabsList()
+  tabsOverlay.hidden = false
+  tabsOpen = true
+}
+
+function closeTabs(): void {
+  if (!tabsOverlay) return
+  tabsOverlay.hidden = true
+  tabsOpen = false
+  editingTabId = null
+  tabForm && (tabForm.hidden = true)
+}
+
+function generateTabId(): string {
+  try {
+    return crypto.randomUUID()
+  } catch {
+    return 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+  }
+}
+
+async function saveTabs(tabs: NavTab[]): Promise<void> {
+  const updated = await window.shell.setConfig({ tabs })
+  if (updated && 'tabs' in updated) config = updated as ShellConfig
+  renderStrip()
+  refreshTabsList()
+}
+
+function currentViewUrl(): string {
+  try {
+    return webview.getURL() ?? ''
+  } catch {
+    return ''
+  }
+}
+
+// Лента вкладок во второй строке тулбара. Рендерим заново при структурных
+// изменениях; активная вкладка подсвечивается по текущему URL страницы (SPA).
+function renderStrip(): void {
+  if (!tabstrip || !tabsEl || !config) return
+  tabstrip.hidden = config.tabs.length === 0
+  tabsEl.innerHTML = ''
+  const current = currentViewUrl()
+  for (const tab of config.tabs) {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'tab' + (tab.url === current ? ' active' : '')
+    btn.dataset.url = tab.url
+    btn.textContent = tab.name
+    btn.title = tab.url
+    btn.addEventListener('click', () => void navigate(tab.url))
+    tabsEl.append(btn)
+  }
+}
+
+// Точечное обновление активного класса без пересборки ленты (без потери фокуса).
+function updateActiveTab(): void {
+  if (!tabsEl) return
+  const current = currentViewUrl()
+  for (const el of tabsEl.querySelectorAll<HTMLElement>('.tab')) {
+    el.classList.toggle('active', el.dataset.url === current)
+  }
+}
+
+// Список вкладок в оверлее управления. Клик по строке — навигация; кнопки
+// перемещения/редактирования/удаления работают через stopPropagation.
+function refreshTabsList(): void {
+  if (!tabsList || !config) return
+  tabsList.innerHTML = ''
+  config.tabs.forEach((tab, index) => {
+    const row = document.createElement('div')
+    row.className = 'tab-row'
+    const info = document.createElement('div')
+    info.className = 'tab-info'
+    const name = document.createElement('span')
+    name.className = 'tab-name'
+    name.textContent = tab.name
+    name.title = tab.url
+    const url = document.createElement('span')
+    url.className = 'tab-url'
+    url.textContent = tab.url
+    info.append(name, url)
+    row.append(info)
+    row.addEventListener('click', (e: MouseEvent) => {
+      if ((e.target as HTMLElement)?.closest('.tab-row button')) return
+      void closeTabs()
+      void navigate(tab.url)
+    })
+    const up = document.createElement('button')
+    up.type = 'button'
+    up.textContent = '↑'
+    up.title = 'Поднять выше'
+    up.addEventListener('click', (e: MouseEvent) => { e.stopPropagation(); void moveTab(tab.id, -1) })
+    const down = document.createElement('button')
+    down.type = 'button'
+    down.textContent = '↓'
+    down.title = 'Опустить ниже'
+    down.addEventListener('click', (e: MouseEvent) => { e.stopPropagation(); void moveTab(tab.id, 1) })
+    const edit = document.createElement('button')
+    edit.type = 'button'
+    edit.textContent = '✎'
+    edit.title = 'Редактировать'
+    edit.addEventListener('click', (e: MouseEvent) => { e.stopPropagation(); openEditForm(tab) })
+    const del = document.createElement('button')
+    del.type = 'button'
+    del.className = 'tab-del'
+    del.textContent = '🗑'
+    del.title = 'Удалить'
+    del.addEventListener('click', (e: MouseEvent) => { e.stopPropagation(); void deleteTab(tab.id) })
+    row.append(up, down, edit, del)
+    tabsList.append(row)
+  })
+}
+
+function openEditForm(tab: NavTab): void {
+  editingTabId = tab.id
+  if (tabNameInput) tabNameInput.value = tab.name
+  if (tabUrlInput) tabUrlInput.value = tab.url
+  tabForm && (tabForm.hidden = false)
+  tabNameInput?.focus()
+}
+
+function resetForm(): void {
+  editingTabId = null
+  if (tabNameInput) tabNameInput.value = ''
+  if (tabUrlInput) tabUrlInput.value = ''
+  tabForm && (tabForm.hidden = true)
+}
+
+async function saveCurrentTab(): Promise<void> {
+  const name = tabNameInput?.value.trim() ?? ''
+  const urlRaw = tabUrlInput?.value.trim() ?? ''
+  if (!name || !urlRaw) {
+    setStatus('Укажите название и ссылку')
+    return
+  }
+  const url = normalizeUrl(urlRaw)
+  const tabs = [...(config?.tabs ?? [])]
+  if (editingTabId) {
+    const i = tabs.findIndex((t) => t.id === editingTabId)
+    if (i !== -1) tabs[i] = { ...tabs[i], name, url }
+  } else {
+    tabs.push({ id: generateTabId(), name, url })
+  }
+  await saveTabs(tabs)
+  resetForm()
+}
+
+async function deleteTab(id: string): Promise<void> {
+  if (!config || !window.confirm('Удалить вкладку?')) return
+  const tabs = config.tabs.filter((t) => t.id !== id)
+  await saveTabs(tabs)
+}
+
+async function moveTab(id: string, dir: number): Promise<void> {
+  if (!config) return
+  const tabs = [...config.tabs]
+  const i = tabs.findIndex((t) => t.id === id)
+  const j = i + dir
+  if (i === -1 || j < 0 || j >= tabs.length) return
+  ;[tabs[i], tabs[j]] = [tabs[j], tabs[i]]
+  await saveTabs(tabs)
+}
+
+/** Формат файла: заголовок для валидации + массив вкладок. */
+const TABS_FILE_FORMAT = 'sewbrowser-tabs'
+const TABS_FILE_VERSION = 1
+
+interface TabFilePayload {
+  format: string
+  version: number
+  tabs: NavTab[]
+}
+
+function buildTabsJson(): string {
+  const payload: TabFilePayload = {
+    format: TABS_FILE_FORMAT,
+    version: TABS_FILE_VERSION,
+    tabs: (config?.tabs ?? []).map((t) => ({ id: t.id, name: t.name, url: t.url })),
+  }
+  return JSON.stringify(payload, null, 2)
+}
+
+async function exportTabs(): Promise<void> {
+  const tabs = config?.tabs ?? []
+  if (!tabs.length) {
+    setStatus('Нет вкладок для экспорта')
+    return
+  }
+  const stamp = new Date().toISOString().slice(0, 10)
+  const ok = await window.shell.saveTabsFile(buildTabsJson(), `sewbrowser-tabs-${stamp}.json`)
+  setStatus(ok ? `Экспорт: ${tabs.length} вкладок сохранён` : 'Экпорт отменён')
+}
+
+function importTabs(file: File): void {
+  const reader = new FileReader()
+  reader.onload = async () => {
+    let data: Partial<TabFilePayload>
+    try {
+      data = JSON.parse(String(reader.result ?? '')) as Partial<TabFilePayload>
+    } catch {
+      setStatus('Файл не является валидным JSON')
+      return
+    }
+    if (data.format !== TABS_FILE_FORMAT || !Array.isArray(data.tabs)) {
+      setStatus('Неверный формат файла (ожидался экспорт вкладок SEWBrowser)')
+      return
+    }
+    const tabs: NavTab[] = []
+    for (const raw of data.tabs) {
+      if (!raw || typeof raw !== 'object') continue
+      const name = String((raw as NavTab).name ?? '').trim()
+      const urlRaw = String((raw as NavTab).url ?? '').trim()
+      if (!name || !urlRaw) continue
+      tabs.push({ id: generateTabId(), name, url: normalizeUrl(urlRaw) })
+    }
+    if (!tabs.length) {
+      setStatus('В файле нет валидных вкладок')
+      return
+    }
+    if (!window.confirm(`Заменить текущие ${config?.tabs.length ?? 0} вкладок на ${tabs.length} импортированные?`)) {
+      return
+    }
+    await saveTabs(tabs)
+    setStatus(`Импорт: ${tabs.length} вкладок из ${file.name}`)
+  }
+  reader.onerror = () => setStatus('Не удалось прочитать файл')
+  reader.readAsText(file)
+}
+
+function wireTabs(): void {
+  document.getElementById('tab-add')?.addEventListener('click', () => void openTabs())
+  document.getElementById('tab-manage')?.addEventListener('click', () => void openTabs())
+  document.getElementById('tab-add-new')?.addEventListener('click', () => { resetForm(); openEditForm({ id: '', name: '', url: '' }) })
+  tabsExport?.addEventListener('click', () => void exportTabs())
+  tabsImport?.addEventListener('click', () => { if (tabsImportFile) tabsImportFile.click() })
+  tabsImportFile?.addEventListener('change', (e: Event) => {
+    const file = (e.target as HTMLInputElement).files?.[0]
+    if (file) void importTabs(file)
+    // Снимаем значение, чтобы повторный выбор того же файла снова сработал
+    if (tabsImportFile) tabsImportFile.value = ''
+  })
+  document.getElementById('tab-save')?.addEventListener('click', () => void saveCurrentTab())
+  document.getElementById('tab-cancel')?.addEventListener('click', () => { resetForm() })
+  document.getElementById('tabs-close')?.addEventListener('click', closeTabs)
+  tabNameInput?.addEventListener('keydown', (e: KeyboardEvent) => { if (e.key === 'Enter') void saveCurrentTab() })
+  tabUrlInput?.addEventListener('keydown', (e: KeyboardEvent) => { if (e.key === 'Enter') void saveCurrentTab() })
+}
+
 function wireTemplates(): void {
   document.getElementById('btn-templates')?.addEventListener('click', () => void openTemplates())
   document.getElementById('templates-manage')?.addEventListener('click', () => {
@@ -1777,6 +2048,7 @@ function wireOverlayDismiss(): void {
     [settingsOverlay, closeSettings],
     [accountsOverlay, closeAccounts],
     [downloadsOverlay, closeDownloads],
+    [tabsOverlay, closeTabs],
     [templatesOverlay, closeTemplates],
     [templatesManageOverlay, closeTemplatesManage],
   ]
@@ -1798,6 +2070,7 @@ async function init(): Promise<void> {
   wireSettings()
   wireDownloads()
   wireTemplates()
+  wireTabs()
   wireUpdater()
   wireOverlayDismiss()
   wireWebviewEvents()
@@ -1810,6 +2083,7 @@ async function init(): Promise<void> {
   lastAllowedUrl = config.startUrl
   // Стартовую навигацию задаём атрибутом src — срабатывает даже до attach webview
   webview.setAttribute('src', config.startUrl)
+  renderStrip()
   setStatus(config.debug ? 'debug' : '')
 }
 

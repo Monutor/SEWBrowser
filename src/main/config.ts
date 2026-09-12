@@ -2,16 +2,23 @@ import { app } from 'electron'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+export interface NavTab {
+  id: string;
+  name: string;
+  url: string;
+}
+
 export interface SewConfig {
-  startUrl: string
-  debug: boolean
-  allowlistEnabled: boolean
-  allowlist: string[]
-  plugins: Record<string, boolean>
+  startUrl: string;
+  debug: boolean;
+  allowlistEnabled: boolean;
+  allowlist: string[];
+  plugins: Record<string, boolean>;
   /** Запомненный зум страниц: host -> zoom factor (1 = 100%) */
-  zoom: Record<string, number>
+  zoom: Record<string, number>;
   /** Автоочистка при выходе: 'none' | 'cache' (только HTTP-кэш) | 'all' (кэш + все хранилища) */
-  clearOnExit: 'none' | 'cache' | 'all'
+  clearOnExit: 'none' | 'cache' | 'all';
+  tabs: NavTab[];
 }
 
 const DEFAULTS: SewConfig = {
@@ -26,6 +33,7 @@ const DEFAULTS: SewConfig = {
   plugins: {},
   zoom: {},
   clearOnExit: 'none',
+  tabs: [],
 }
 
 function configFile(): string {

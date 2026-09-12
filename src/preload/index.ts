@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
+interface NavTabLike {
+  id: string
+  name: string
+  url: string
+}
+
 interface ShellConfigLike {
   startUrl: string
   debug: boolean
@@ -8,6 +14,7 @@ interface ShellConfigLike {
   plugins: Record<string, boolean>
   zoom: Record<string, number>
   clearOnExit: 'none' | 'cache' | 'all'
+  tabs: NavTabLike[]
 }
 
 interface DownloadEventLike {
@@ -113,6 +120,9 @@ const api = {
     ipcRenderer.invoke('pdf-viewer:save', { base64, name }),
   /** PDF-просмотр: открыть системный диалог печати */
   printPdf: (): Promise<boolean> => ipcRenderer.invoke('pdf-viewer:print'),
+  /** Сохранить текст (напр. экспорт вкладок) в файл через диалог сохранения */
+  saveTabsFile: (content: string, name: string): Promise<boolean> =>
+    ipcRenderer.invoke('tabs:export', { content, name }),
   /** Сканер (WIA): список подключённых устройств — для кнопки «Определить сканер» */
   detectScanner: (): Promise<{ ok: boolean; devices?: string[]; error?: string }> =>
     ipcRenderer.invoke('scanner:detect'),

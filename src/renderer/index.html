@@ -24,9 +24,15 @@
       <button id="btn-accounts" title="Аккаунты SEW (Ctrl+Shift+L)">&#128273;</button>
       <button id="btn-downloads" title="Загрузки">&#128229;</button>
       <button id="btn-scanner" title="Сканировать документ">&#128209;</button>
-      <button id="btn-templates" title="Шаблоны SEW (Ctrl+Shift+T)">&#128196;</button>
-      <button id="btn-settings" title="Настройки">&#9881;</button>
+       <button id="btn-templates" title="Шаблоны SEW (Ctrl+Shift+T)">&#128196;</button>
+       <button id="btn-settings" title="Настройки">&#9881;</button>
       <div id="downloads" hidden title="Загрузки"></div>
+    </div>
+
+    <div id="tabstrip" hidden>
+      <div id="tabs"></div>
+      <button id="tab-add" title="Добавить вкладку">+</button>
+      <button id="tab-manage" title="Управление вкладками">&#8942;</button>
     </div>
 
     <div id="findbar" hidden>
@@ -102,6 +108,35 @@
         </div>
         <div class="settings-danger">
           <button id="set-clear-session">Очистить данные сессии и выйти</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="tabs-overlay" hidden>
+      <div class="settings-card">
+        <div class="settings-title">Вкладки</div>
+        <div class="settings-row">Нажмите на вкладку, чтобы перейти по ссылке:</div>
+        <div id="tabs-list" class="tabs-list"></div>
+        <div id="tab-form" hidden>
+          <label class="settings-row">
+            Название вкладки
+            <input id="tab-name" spellcheck="false" autocomplete="off" />
+          </label>
+          <label class="settings-row">
+            Ссылка (URL)
+            <input id="tab-url" spellcheck="false" autocomplete="off" placeholder="https://..." />
+          </label>
+          <div class="settings-btn-row">
+            <button id="tab-save">Сохранить</button>
+            <button id="tab-cancel">Отмена</button>
+          </div>
+        </div>
+        <div class="settings-actions">
+          <button id="tabs-export" type="button">Экспорт (.json)</button>
+          <button id="tabs-import" type="button">Импорт (.json)</button>
+          <input id="tabs-import-file" type="file" accept=".json,application/json" hidden />
+          <button id="tab-add-new" type="button">+ Добавить вкладку</button>
+          <button id="tabs-close" type="button">Закрыть (Esc)</button>
         </div>
       </div>
     </div>

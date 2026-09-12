@@ -332,12 +332,41 @@ function createWindow(): void {
          finishedAt: new Date().toISOString(),
        })
        return true
-     } catch (err) {
-       console.warn('[shell] pdf save failed:', err)
-       return false
-     }
-   })
-    ipcMain.handle('pdf-viewer:print', (_event) => {
+      } catch (err) {
+        console.warn('[shell] pdf save failed:', err)
+        return false
+      }
+    })
+    // Экспорт вкладок в .json: диалог сохранения + запись на диск
+    ipcMain.handle('tabs:export', (_event, payload: unknown) => {
+      if (!payload || typeof payload !== 'object') return false
+      const { content, name } = payload as { content?: unknown; name?: unknown }
+      if (typeof content !== 'string' || !content || typeof name !== 'string' || !name.trim()) return false
+      if (!mainWindow || mainWindow.isDestroyed()) return false
+      const fileName = name.trim().endsWith('.json') ? name.trim() : `${name.trim()}.json`
+      const filePath = dialog.showSaveDialogSync(mainWindow, {
+        title: 'Сохранить вкладки',
+        defaultPath: join(app.getPath('downloads'), fileName),
+      })
+      if (!filePath) return false
+      try {
+        writeFileSync(filePath, content)
+        appendDownloadRecord({
+          id: randomUUID(),
+          name: fileName,
+          path: filePath,
+          bytes: Buffer.byteLength(content),
+          state: 'done',
+          startedAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+        })
+        return true
+      } catch (err) {
+        console.warn('[shell] tabs export failed:', err)
+        return false
+      }
+    })
+     ipcMain.handle('pdf-viewer:print', (_event) => {
       const wc = _event.sender
       if (!wc || wc.isDestroyed()) return false
       // print({}) — в Electron 44 обязательный аргумент опций (иначе краш на 'margins')
