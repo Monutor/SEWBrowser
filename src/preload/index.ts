@@ -108,6 +108,11 @@ const api = {
   showDownload: (id: string): Promise<boolean> => ipcRenderer.invoke('downloads:show', id),
   /** Открыть файл из истории приложением по умолчанию */
   openDownloadFile: (id: string): Promise<boolean> => ipcRenderer.invoke('downloads:open', id),
+  /** PDF-просмотр: сохранить документ в окно просмотра (диалог сохранения) */
+  savePdf: (base64: string, name: string): Promise<boolean> =>
+    ipcRenderer.invoke('pdf-viewer:save', { base64, name }),
+  /** PDF-просмотр: открыть системный диалог печати */
+  printPdf: (): Promise<boolean> => ipcRenderer.invoke('pdf-viewer:print'),
   /** События автообновления: available | progress | ready | error */
   onUpdater: (cb: (event: UpdaterEventLike) => void): void => {
     ipcRenderer.on('updater:event', (_event, payload: UpdaterEventLike) => cb(payload))

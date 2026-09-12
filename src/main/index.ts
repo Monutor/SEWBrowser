@@ -289,12 +289,57 @@ function createWindow(): void {
     shell.showItemInFolder(rec.path)
     return true
   })
-  ipcMain.handle('downloads:open', async (_event, id: unknown) => {
-    const rec = typeof id === 'string' ? loadDownloadHistory().find((r) => r.id === id) : undefined
-    if (!rec || !rec.path || !existsSync(rec.path)) return false
-    await shell.openPath(rec.path)
-    return true
-  })
+   ipcMain.handle('downloads:open', async (_event, id: unknown) => {
+     const rec = typeof id === 'string' ? loadDownloadHistory().find((r) => r.id === id) : undefined
+     if (!rec || !rec.path || !existsSync(rec.path)) return false
+     await shell.openPath(rec.path)
+     return true
+   })
+   // ---------- PDF-просмотр (окно с кнопками «Скачать»/«Печать») ----------
+   ipcMain.handle('pdf-viewer:save', (_event, payload: unknown) => {
+     if (!payload || typeof payload !== 'object') return false
+     const { base64, name } = payload as { base64?: unknown; name?: unknown }
+     if (typeof base64 !== 'string' || !base64 || typeof name !== 'string') return false
+     // Точный размер PDF из standard-base64: на каждые 4 символа — 3 байта минус padding
+     const pad = (base64.match(/=+$/) || [''])[0].length
+     const bytes = Math.floor(base64.length / 4) * 3 - pad
+     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
+     const fileName = name.trim() || `документ-${stamp}.pdf`
+     if (!mainWindow || mainWindow.isDestroyed()) return false
+     const filePath = dialog.showSaveDialogSync(mainWindow, {
+       title: 'Сохранить документ',
+       defaultPath: join(app.getPath('downloads'), fileName),
+     })
+     if (!filePath) return false
+     try {
+       writeFileSync(filePath, Buffer.from(base64, 'base64'))
+       appendDownloadRecord({
+         id: randomUUID(),
+         name: fileName,
+         path: filePath,
+         bytes,
+         state: 'done',
+         startedAt: new Date().toISOString(),
+         finishedAt: new Date().toISOString(),
+       })
+       return true
+     } catch (err) {
+       console.warn('[shell] pdf save failed:', err)
+       return false
+     }
+   })
+   ipcMain.handle('pdf-viewer:print', (_event) => {
+     const wc = _event.sender
+     if (!wc || wc.isDestroyed()) return false
+     // print({}) — в Electron 44 обязательный аргумент опций (иначе краш на 'margins')
+     try {
+       void wc.print({})
+       return true
+     } catch (err) {
+       console.warn('[shell] pdf print failed:', err)
+       return false
+     }
+   })
   ipcMain.on('window:max', () => {
     if (!mainWindow) return
     if (mainWindow.isMaximized()) mainWindow.unmaximize()
@@ -501,10 +546,76 @@ function createWindow(): void {
     return {}
   }
 
-  /** PDF-просмотр: отдельное окно со встроенным viewer'ом Chromium (свои кнопки скачать/печать) */
+  /** Экранирование для вставки имени файла в HTML-атрибуты/строку */
+  const htmlEscape = (value: string): string =>
+    value.replace(/[<>&"']/g, (ch) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[ch]!))
+
+  /** Сборка HTML-страницы PDF-просмотра: тулбар с кнопками «Скачать»/«Печать» + embed viewer'а */
+  function buildPdfViewerHtml(dataUrl: string, title: string): string {
+    const safeTitle = htmlEscape(title || 'Документ')
+    return `<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>${safeTitle}</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; display: flex; flex-direction: column; background: #3c3f41; }
+  #toolbar {
+    flex: 0 0 auto; height: 46px; display: flex; align-items: center; gap: 8px;
+    padding: 0 12px; background: #2b2d2e; color: #e9e9e9;
+    font: 13px/1 -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  #toolbar .name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.85; }
+  #toolbar button {
+    background: #3e6dd5; color: #fff; border: 0; padding: 6px 14px; border-radius: 4px;
+    cursor: pointer; font: inherit;
+  }
+  #toolbar button:hover { background: #4a7ae0; }
+  #embed { flex: 1 1 auto; width: 100%; height: 100%; border: 0; display: block; }
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <span class="name">${safeTitle}</span>
+  <button id="saveBtn" type="button">Скачать</button>
+  <button id="printBtn" type="button">Печать</button>
+</div>
+<embed id="embed" type="application/pdf" src="${dataUrl}"></embed>
+<script>
+(function () {
+  var embed = document.getElementById('embed');
+  document.getElementById('saveBtn').addEventListener('click', function () {
+    window.shell.savePdf(embed.getAttribute('src'), ${JSON.stringify(title || 'Документ')});
+  });
+  document.getElementById('printBtn').addEventListener('click', function () {
+    window.shell.printPdf();
+  });
+})();
+</script>
+</body>
+</html>`
+  }
+
+  /** PDF-просмотр: отдельное окно со встроенным viewer'ом Chromium и кнопками «Скачать»/«Печать» */
   function openPdfViewer(dataUrl: string, title: string): void {
-    const win = new BrowserWindow({ width: 1024, height: 768, title, icon: existsSync(devIcon) ? devIcon : undefined })
-    win.loadURL(dataUrl)
+    const win = new BrowserWindow({
+      width: 1024,
+      height: 768,
+      minWidth: 480,
+      minHeight: 320,
+      title,
+      icon: existsSync(devIcon) ? devIcon : undefined,
+      webPreferences: {
+        preload: join(__dirname, '../preload/index.js'),
+        contextIsolation: true,
+        webviewTag: false,
+      },
+    })
+    // Убираем дефолтное меню Electron (File/Edit/View) — в туларе свои кнопки
+    win.setMenu(null)
+    const html = buildPdfViewerHtml(dataUrl, title)
+    void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
   }
 
   async function downloadGuestUrl(guest: WebContents, url: string): Promise<void> {

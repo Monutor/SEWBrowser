@@ -175,6 +175,8 @@ interface ShellApi {
   removeDownload(id: string): Promise<DownloadedFile[]>
   showDownload(id: string): Promise<boolean>
   openDownloadFile(id: string): Promise<boolean>
+  savePdf(base64: string, name: string): Promise<boolean>
+  printPdf(): Promise<boolean>
   getStorageUsage(): Promise<StorageUsage>
   clearStorage(target: StorageClearTarget): Promise<boolean>
   listCookies(): Promise<CookieInfo[]>
