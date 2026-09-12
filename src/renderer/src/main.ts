@@ -3,6 +3,7 @@ import './styles.css'
 const webview = document.getElementById('site') as unknown as SewWebViewElement
 const addressInput = document.getElementById('address') as HTMLInputElement | null
 const statusEl = document.getElementById('status') as HTMLElement | null
+const toastEl = document.getElementById('toast') as HTMLElement | null
 const toolbar = document.getElementById('toolbar') as HTMLElement | null
 
 // Поиск по странице
@@ -73,8 +74,22 @@ function isAllowed(url: string): boolean {
   })
 }
 
-function setStatus(text: string): void {
+let toastTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * Статус пишется в настройки; разовые подсказки (toast=true) дополнительно
+ * всплывают тостом справа внизу на 3.5 c. Технический счётчик (polling)
+ * идёт с toast=false, чтобы не спамить.
+ */
+function setStatus(text: string, toast = true): void {
   if (statusEl) statusEl.textContent = text
+  if (!toast || !toastEl || !text) return
+  toastEl.textContent = text
+  toastEl.hidden = false
+  if (toastTimer) clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => {
+    if (toastEl) toastEl.hidden = true
+  }, 3500)
 }
 
 /**
@@ -1455,7 +1470,7 @@ function startStatusPolling(): void {
   setInterval(async () => {
     try {
       const count = await guestJS<unknown>('datalog-count', '(window.__sewDataLog || []).length')
-      setStatus(config?.debug ? `req: ${count} · debug` : `req: ${count}`)
+      setStatus(config?.debug ? `req: ${count} · debug` : `req: ${count}`, false)
     } catch {
       // страница ещё не готова — игнорируем
     }
