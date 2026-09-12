@@ -18,8 +18,11 @@ const DEFAULTS: SewConfig = {
   startUrl: 'https://sew.mvideoeldorado.ru/v2/',
   debug: false,
   allowlistEnabled: true,
-  // kc.tech.mvideo.ru — SSO (Keycloak), без него не пройти логин в SEW
-  allowlist: ['*.mvideoeldorado.ru', 'kc.tech.mvideo.ru'],
+  // kc.tech.mvideo.ru — SSO (Keycloak), без него не пройти логин в SEW.
+  // *.mvideo.ru — визит для cookie-consent + прогрев кук: BFF-мост sew-helper
+  // (net:fetch, default session) без MVID-кук отдаёт пусто, принять куки можно
+  // только зайдя на www.mvideo.ru прямо из приложения.
+  allowlist: ['*.mvideoeldorado.ru', 'kc.tech.mvideo.ru', '*.mvideo.ru'],
   plugins: {},
   zoom: {},
   clearOnExit: 'none',

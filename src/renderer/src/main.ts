@@ -318,6 +318,7 @@ async function guestJS<T>(label: string, code: string): Promise<T> {
 
 let sewHelperBridgeStarted = false
 let bffTakeDiagged = false
+let lastBffProbe = ''
 function startSewHelperBridge(): void {
   if (sewHelperBridgeStarted) return
   sewHelperBridgeStarted = true
@@ -330,14 +331,21 @@ async function pumpSewHelperBff(): Promise<void> {
     // Гостевая часть — полностью неубиваемая (вложенные try/catch): reject
     // executeJavaScript Electron всегда дублирует внутренним логом
     // "GUEST_VIEW_MANAGER_CALL: ...", поэтому гость не должен кидать
-    // в принципе. Возвращаем JSON-строку, а не массив: structured clone
-    // результата иногда падает ("An object could not be cloned"), строка —
-    // всегда клонируема; форму проверяем ниже.
-    // DIAG-ЭКСПЕРИМЕНТ (откатить после ответа пользователя): вместо чтения
-    // очереди возвращаем константу. Дренаж и так мёртв (take падает на клоне),
-    // поведение не меняется. Константа ПРОЙДЁТ — виновато вычисление take;
-    // УПАДЁТ так же — сломан сам канал invoke для этого геста (systemic).
-    const rawTake = await guestJS<string>('bff-take', '"[]"').catch((err) => {
+    // в принципе.
+    // DIAG-2 (откатить после ответа пользователя): очередь НЕ дренируем
+    // (slice вместо splice — запросы не теряются, мост по-прежнему ждёт),
+    // возвращаем сводку "n:<длина> json:<содержимое>" (кап n<=50).
+    // Исходы: "n:0 ..." — очередь пуста и канал жив; "n:N json:..." —
+    // чтение+передача содержимого живы; "too-big" — очередь раздута;
+    // "stringify-throw" — содержимое не сериализуется; падение с клоном —
+    // ломается уже само чтение/сериализация в гесте.
+    const rawTake = await guestJS<string>(
+      'bff-take',
+      '(function(){try{var q=window.__sewHelperBffReq;if(!Array.isArray(q))return "n:-1";' +
+        'var n=q.length;if(n>50)return "n:"+n+" too-big";' +
+        'try{var s=JSON.stringify(q.slice());return "n:"+n+" json:"+s}' +
+        'catch(e){return "n:"+n+" stringify-throw"}}catch(e){return "x-outer-throw"}})',
+    ).catch((err) => {
       // take возвращает строку во всех ветках — клон здесь ни при чём.
       // Фиксируем состояние ГЕСТА (синхронные хост-вызовы, без клона),
       // чтобы понять, в какой момент падает invoke. Однократно.
@@ -353,6 +361,12 @@ async function pumpSewHelperBff(): Promise<void> {
       }
       throw err
     })
+    // DIAG-2: сводку не парсим как запросы (JSON.parse упадёт → reqs=[]),
+    // а показываем: интересно всё, кроме пустой очереди. Дедуп по значению.
+    if (typeof rawTake === 'string' && rawTake !== 'n:0 json:[]' && lastBffProbe !== rawTake) {
+      lastBffProbe = rawTake
+      console.info(`[guestjs:bff-probe] ${rawTake.slice(0, 500)}`)
+    }
     let reqs: Array<{ id: string; url: string }> = []
     try {
       const parsed: unknown = JSON.parse(typeof rawTake === 'string' ? rawTake : '[]')
