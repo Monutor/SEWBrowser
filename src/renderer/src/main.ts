@@ -1362,6 +1362,12 @@ function wireShortcuts(): void {
 function wireToolbar(): void {
   document.getElementById('btn-back')?.addEventListener('click', () => webview.goBack())
   document.getElementById('btn-forward')?.addEventListener('click', () => webview.goForward())
+  document.getElementById('btn-home')?.addEventListener('click', () => {
+    if (config) void navigate(config.startUrl)
+  })
+  document.getElementById('btn-mvideo')?.addEventListener('click', () => {
+    void navigate('https://www.mvideo.ru/')
+  })
   document.getElementById('btn-reload')?.addEventListener('click', () => webview.reload())
   document.getElementById('btn-accounts')?.addEventListener('click', () => void openAccounts(true))
   // NB: btn-templates подписывается в wireTemplates() — дубль здесь давал
