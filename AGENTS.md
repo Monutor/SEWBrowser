@@ -100,6 +100,11 @@ Allowlist по умолчанию: `*.mvideoeldorado.ru` + `kc.tech.mvideo.ru` (
     на диске и снапшот целиком). Chrome-шим геста НЕ даёт `sendMessage` /
     `storage.session` / `cookies` — для слияния background+content в один
     контекст их доопределяет bridge плагина, не общий шим.
+17. **executeJavaScript клонирует completion value:** результат скрипта обязан
+    быть structured-cloneable. Голая `(function(){...})` БЕЗ вызывающих `()`
+    возвращает сам объект функции → `GUEST_VIEW_MANAGER_CALL: An object could
+    not be cloned` на КАЖДОМ тике. IIFE всегда заканчивать `})()`; для
+    диагностики достаточно вернуть константу-строку (`'"[]"'`).
 
 ## Правила работы
 
