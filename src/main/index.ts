@@ -1127,7 +1127,14 @@ app.whenReady().then(() => {
     ipcMain.handle('updater:check', async () => {
       // Ручная проверка из настроек. Результат придёт событием
       // 'updater:event' (available | uptodate | error) — как и при автостарте.
-      await autoUpdater.checkForUpdates()
+      // Ошибку проверки ловим здесь, чтобы вызов не падал в рендер с
+      // неверным «проверка доступна только в установленной версии» — реальная
+      // причина уже отправлена событием 'error' выше (см. autoUpdater.on('error')).
+      try {
+        await autoUpdater.checkForUpdates()
+      } catch (err) {
+        console.log('[updater] check failed:', err)
+      }
       return true
     })
     ipcMain.handle('updater:download', async () => {
