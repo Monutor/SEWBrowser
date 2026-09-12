@@ -178,6 +178,8 @@ interface ShellApi {
   pluginDataSet(plugin: string, obj: Record<string, unknown>): Promise<boolean>
   pluginDataRemove(plugin: string, keys: string[]): Promise<boolean>
   getAllPluginData(): Promise<Record<string, Record<string, unknown>>>
+  /** Алиас preload-имени (оба ведут на 'plugin-data:get-all') */
+  pluginDataGetAll(): Promise<Record<string, Record<string, unknown>>>
   onPluginDataChanged(cb: (event: { plugin: string }) => void): void
   onUpdater(cb: (event: UpdaterEvent) => void): void
   downloadUpdate(): Promise<boolean>

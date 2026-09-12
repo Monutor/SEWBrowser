@@ -152,6 +152,9 @@ const api = {
   /** Снапшот данных всех плагинов — для пуша в гостевую страницу (у неё нет window.shell) */
   pluginDataGetAll: (): Promise<Record<string, Record<string, unknown>>> =>
     ipcRenderer.invoke('plugin-data:get-all'),
+  /** Алиас для renderer (shell-api.d.ts): тот же снапшот, имя getAllPluginData */
+  getAllPluginData: (): Promise<Record<string, Record<string, unknown>>> =>
+    ipcRenderer.invoke('plugin-data:get-all'),
   /** Уведомление об изменении данных плагина (для chrome.storage.onChanged) */
   onPluginDataChanged: (cb: (event: { plugin: string }) => void): void => {
     ipcRenderer.on('plugin-data:changed', (_event, payload: { plugin: string }) => cb(payload))
