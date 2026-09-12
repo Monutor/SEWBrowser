@@ -113,6 +113,17 @@ const api = {
     ipcRenderer.invoke('pdf-viewer:save', { base64, name }),
   /** PDF-просмотр: открыть системный диалог печати */
   printPdf: (): Promise<boolean> => ipcRenderer.invoke('pdf-viewer:print'),
+  /** Сканер (WIA): список подключённых устройств — для кнопки «Определить сканер» */
+  detectScanner: (): Promise<{ ok: boolean; devices?: string[]; error?: string }> =>
+    ipcRenderer.invoke('scanner:detect'),
+  /** Сканер (WIA): отсканировать и вернуть изображение для предосмотра (НЕ сохраняет) */
+  scan: (): Promise<{ ok: boolean; base64?: string; mime?: string; ext?: string; error?: string }> =>
+    ipcRenderer.invoke('scanner:scan'),
+  /** Сканер (WIA): сохранить предпросмотренное изображение в «Загрузки» (диалог сохранения) */
+  saveScan: (payload: { base64: string; ext?: string }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('scanner:save', payload),
+  /** Открыть окно сканера (отдельное BrowserWindow) */
+  openScanner: (): void => ipcRenderer.send('scanner:open'),
   /** События автообновления: available | progress | ready | error */
   onUpdater: (cb: (event: UpdaterEventLike) => void): void => {
     ipcRenderer.on('updater:event', (_event, payload: UpdaterEventLike) => cb(payload))

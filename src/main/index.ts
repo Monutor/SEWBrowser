@@ -9,6 +9,7 @@ import { loadPlugins } from './plugins/loader'
 import { getPluginData, removePluginData, setPluginData } from './plugins/store'
 import { getAccountSecrets, getLastUsedAccountId, listAccounts, removeAccount, saveAccount, setLastUsedAccountId } from './credentials/store'
 import { appendDownloadRecord, clearDownloadHistory, loadDownloadHistory, removeDownloadRecord } from './downloads/history'
+import { detectWiaDevices, scanViaWia } from './scanner'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -336,18 +337,93 @@ function createWindow(): void {
        return false
      }
    })
-   ipcMain.handle('pdf-viewer:print', (_event) => {
-     const wc = _event.sender
-     if (!wc || wc.isDestroyed()) return false
-     // print({}) — в Electron 44 обязательный аргумент опций (иначе краш на 'margins')
-     try {
-       void wc.print({})
-       return true
-     } catch (err) {
-       console.warn('[shell] pdf print failed:', err)
-       return false
-     }
-   })
+    ipcMain.handle('pdf-viewer:print', (_event) => {
+      const wc = _event.sender
+      if (!wc || wc.isDestroyed()) return false
+      // print({}) — в Electron 44 обязательный аргумент опций (иначе краш на 'margins')
+      try {
+        void wc.print({})
+        return true
+      } catch (err) {
+        console.warn('[shell] pdf print failed:', err)
+        return false
+      }
+    })
+    // ---------- Сканер (WIA через PowerShell): скан → диалог сохранения в «Загрузки» ----------
+    /**
+     * Сохранить отсканированные байты в «Загрузки»: диалог сохранения (по умолчанию
+     * папка «Загрузки», имя со штамтом по МСК) + запись в историю загрузок оболочки.
+     */
+    async function saveScanToDownloads(
+      buffer: Buffer,
+      ext: string,
+    ): Promise<{ ok: boolean; error?: string }> {
+      const safeExt = ['png', 'jpg', 'bmp', 'gif'].includes(ext) ? (ext as string) : 'jpg'
+      // МСК = UTC+3 (без летнего времени) — как у PDF-имён
+      const stamp = (() => {
+        const d = new Date(Date.now() + 3 * 3600e3)
+        const p = (n: number): string => String(n).padStart(2, '0')
+        return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}` +
+          `-${p(d.getUTCHours())}-${p(d.getUTCMinutes())}-${p(d.getUTCSeconds())}`
+      })()
+      const fileName = `сканирование-${stamp}.${safeExt}`
+      if (!mainWindow || mainWindow.isDestroyed()) return { ok: false, error: 'окно оболочки закрыто' }
+      const filePath = dialog.showSaveDialogSync(mainWindow, {
+        title: 'Сохранить отсканированный документ',
+        defaultPath: join(app.getPath('downloads'), fileName),
+      })
+      if (!filePath) return { ok: false, error: 'отменено' }
+      try {
+        writeFileSync(filePath, buffer)
+        appendDownloadRecord({
+          id: randomUUID(),
+          name: fileName,
+          path: filePath,
+          bytes: buffer.length,
+          state: 'done',
+          startedAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+        })
+        return { ok: true }
+      } catch (err) {
+        console.warn('[shell] scan save failed:', err)
+        return { ok: false, error: 'не удалось сохранить файл' }
+      }
+    }
+
+    // ---------- Сканер (WIA): определение устройств / сканирование / сохранение ----------
+    ipcMain.handle('scanner:detect', async () => {
+      try {
+        return await detectWiaDevices()
+      } catch (err) {
+        console.warn('[shell] scanner:detect failed:', err)
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    })
+
+    // Сканирование НЕ сохраняет — возвращает изображение для предосмотра в окне.
+    ipcMain.handle('scanner:scan', async () => {
+      try {
+        const result = await scanViaWia()
+        if (!result.ok || !result.buffer) {
+          return { ok: false, error: result.error ?? 'сканирование не выполнено' }
+        }
+        return { ok: true, base64: result.buffer.toString('base64'), mime: result.mime, ext: result.ext }
+      } catch (err) {
+        console.warn('[shell] scanner:scan failed:', err)
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    })
+
+    // Сохранить предпросмотренное изображение из окна сканера.
+    ipcMain.handle('scanner:save', (_event, payload: unknown) => {
+      if (!payload || typeof payload !== 'object') return { ok: false, error: 'нет данных' }
+      const { base64, ext } = payload as { base64?: unknown; ext?: unknown }
+      if (typeof base64 !== 'string' || !base64) return { ok: false, error: 'нет данных' }
+      return saveScanToDownloads(Buffer.from(base64, 'base64'), typeof ext === 'string' ? ext : '')
+    })
+
+    ipcMain.on('scanner:open', () => openScanner())
   ipcMain.on('window:max', () => {
     if (!mainWindow) return
     if (mainWindow.isMaximized()) mainWindow.unmaximize()
@@ -624,6 +700,121 @@ function createWindow(): void {
     win.setMenu(null)
     const html = buildPdfViewerHtml(dataUrl, title)
     void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+  }
+
+  /** Разметка окна сканера: кнопки «Определить сканер»/«Сканировать»/«Сохранить»,
+   *  строка статуса и область предосмотра. Предосмотр появляется после скана,
+   *  а в «Загрузки» уходит только по нажатию «Сохранить». */
+  function buildScannerHtml(): string {
+    return `<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Сканирование</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; display: flex; flex-direction: column; background: #3c3f41; font: 13px/1.4 -apple-system, "Segoe UI", Roboto, sans-serif; }
+  #toolbar {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+    padding: 0 12px; height: 46px; background: #2b2d2e; color: #e9e9e9;
+  }
+  #toolbar button {
+    background: #3e6dd5; color: #fff; border: 0; padding: 6px 14px; border-radius: 4px;
+    cursor: pointer; font: inherit;
+  }
+  #toolbar button:hover { background: #4a7ae0; }
+  #toolbar button:disabled { opacity: 0.5; cursor: default; }
+  #status { flex: 1 1 auto; opacity: 0.8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 8px; }
+  #stage {
+    flex: 1 1 auto; display: flex; align-items: center; justify-content: center;
+    background: #2b2d2e; overflow: auto; padding: 12px;
+  }
+  #preview { max-width: 100%; max-height: 100%; background: #fff; box-shadow: 0 0 0 1px rgba(255,255,255,0.15); display: none; }
+  #hint { color: #9aa0a4; text-align: center; white-space: pre-line; }
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <button id="detectBtn" type="button">Определить сканер</button>
+  <button id="scanBtn" type="button">Сканировать</button>
+  <button id="saveBtn" type="button" disabled>Сохранить</button>
+  <span id="status"></span>
+</div>
+<div id="stage">
+  <span id="hint">Нажмите «Определить сканер», затем «Сканировать»<br>Результат появится здесь — сохранить можно кнопкой «Сохранить»</span>
+  <img id="preview" alt="">
+</div>
+<script>
+(function () {
+  var statusEl = document.getElementById('status');
+  var preview = document.getElementById('preview');
+  var hint = document.getElementById('hint');
+  var detectBtn = document.getElementById('detectBtn');
+  var scanBtn = document.getElementById('scanBtn');
+  var saveBtn = document.getElementById('saveBtn');
+  var current = null;
+
+  function setStatus(text) { statusEl.textContent = text; }
+
+  detectBtn.addEventListener('click', function () {
+    setStatus('проверяю сканеры…');
+    detectBtn.disabled = true;
+    window.shell.detectScanner().then(function (res) {
+      detectBtn.disabled = false;
+      if (!res || !res.ok) { setStatus((res && res.error) ? ('сканеры: ' + res.error) : 'не удалось проверить сканеры'); return; }
+      var devices = (res.devices || []);
+      if (devices.length === 0) { setStatus('Сканеры не найдены. Проверьте, что устройство видно как сканер (не только как принтер).'); return; }
+      setStatus('Найдено сканеров: ' + devices.length + ' — ' + devices.join(', '));
+    }).catch(function () { detectBtn.disabled = false; setStatus('ошибка проверки сканеров'); });
+  });
+
+  scanBtn.addEventListener('click', function () {
+    scanBtn.disabled = true; saveBtn.disabled = true;
+    setStatus('сканирование — выберите сканер и отсканируйте документ в диалоге Windows…');
+    window.shell.scan().then(function (res) {
+      scanBtn.disabled = false;
+      if (!res || !res.ok) { setStatus((res && res.error) ? ('ошибка: ' + res.error) : 'сканирование не выполнено'); return; }
+      current = { base64: res.base64, ext: res.ext };
+      preview.src = 'data:' + (res.mime || 'image/jpeg') + ';base64,' + res.base64;
+      preview.style.display = 'block';
+      hint.style.display = 'none';
+      saveBtn.disabled = false;
+      setStatus('Отскано. Проверьте предосмотр и нажмите «Сохранить»');
+    }).catch(function () { scanBtn.disabled = false; setStatus('ошибка сканирования'); });
+  });
+
+  saveBtn.addEventListener('click', function () {
+    if (!current) return;
+    saveBtn.disabled = true;
+    window.shell.saveScan({ base64: current.base64, ext: current.ext }).then(function (res) {
+      saveBtn.disabled = false;
+      if (!res || !res.ok) setStatus((res && res.error) ? ('не удалось сохранить: ' + res.error) : 'отменено');
+      else setStatus('Сохранено в «Загрузки»');
+    }).catch(function () { saveBtn.disabled = false; setStatus('ошибка сохранения'); });
+  });
+})();
+</script>
+</body>
+</html>`
+  }
+
+  /** Окно сканера: отдельное BrowserWindow со своим preload (window.shell) */
+  function openScanner(): void {
+    const win = new BrowserWindow({
+      width: 720,
+      height: 820,
+      minWidth: 420,
+      minHeight: 520,
+      title: 'Сканирование',
+      icon: existsSync(devIcon) ? devIcon : undefined,
+      webPreferences: {
+        preload: join(__dirname, '../preload/index.js'),
+        contextIsolation: true,
+        webviewTag: false,
+      },
+    })
+    win.setMenu(null)
+    void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildScannerHtml())}`)
   }
 
   async function downloadGuestUrl(guest: WebContents, url: string): Promise<void> {

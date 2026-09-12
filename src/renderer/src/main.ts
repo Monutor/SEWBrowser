@@ -1409,6 +1409,8 @@ function wireToolbar(): void {
   document.getElementById('btn-max')?.addEventListener('click', () => window.shell.windowMax())
   document.getElementById('btn-close')?.addEventListener('click', () => window.shell.windowClose())
 
+  document.getElementById('btn-scanner')?.addEventListener('click', () => window.shell.openScanner())
+
   // DevTools webview — только в debug-режиме
   window.addEventListener('keydown', (event: KeyboardEvent) => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'i' && config?.debug) {
@@ -1417,6 +1419,9 @@ function wireToolbar(): void {
     }
   })
 }
+
+// ---------- Сканер (WIA через PowerShell) ----------
+
 
 // Последний разрешённый URL — точка возврата при срабатывании allowlist.
 // (preventDefault() в will-navigate у webview не работает, поэтому запрещённую
