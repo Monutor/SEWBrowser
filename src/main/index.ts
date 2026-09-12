@@ -695,7 +695,10 @@ app.whenReady().then(() => {
       console.log('[updater] available:', info.version)
       sendUpdater({ type: 'available', version: info.version })
     })
-    autoUpdater.on('update-not-available', () => console.log('[updater] up to date'))
+    autoUpdater.on('update-not-available', () => {
+      console.log('[updater] up to date')
+      sendUpdater({ type: 'uptodate' })
+    })
     autoUpdater.on('download-progress', (progress) => {
       sendUpdater({ type: 'progress', percent: Math.round(progress.percent) })
     })
@@ -706,6 +709,12 @@ app.whenReady().then(() => {
     autoUpdater.on('error', (err) => {
       console.log('[updater] error:', err)
       sendUpdater({ type: 'error', message: String(err?.message ?? err) })
+    })
+    ipcMain.handle('updater:check', async () => {
+      // Ручная проверка из настроек. Результат придёт событием
+      // 'updater:event' (available | uptodate | error) — как и при автостарте.
+      await autoUpdater.checkForUpdates()
+      return true
     })
     ipcMain.handle('updater:download', async () => {
       await autoUpdater.downloadUpdate()

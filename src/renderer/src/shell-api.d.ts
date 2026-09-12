@@ -106,7 +106,7 @@ interface StorageUsage {
 type StorageClearTarget = 'cache' | 'cookies' | 'all'
 
 interface UpdaterEvent {
-  type: 'available' | 'progress' | 'ready' | 'error'
+  type: 'available' | 'progress' | 'ready' | 'error' | 'uptodate'
   version?: string
   percent?: number
   message?: string
@@ -194,6 +194,7 @@ interface ShellApi {
   onPluginDataChanged(cb: (event: { plugin: string }) => void): void
   onUpdater(cb: (event: UpdaterEvent) => void): void
   downloadUpdate(): Promise<boolean>
+  checkForUpdates(): Promise<boolean>
   installUpdate(): void
 }
 

@@ -644,8 +644,15 @@ function wireSettings(): void {
   document.getElementById('set-cancel')?.addEventListener('click', closeSettings)
   document.getElementById('set-clear-session')?.addEventListener('click', () => void clearSessionAndLogout())
   document.getElementById('set-reload-app')?.addEventListener('click', () => {
+    // Ручная проверка обновлений на GitHub. Если версия есть — покажется
+    // updatebar «Доступно обновление», если нет — тост «у вас последняя версия».
     closeSettings()
-    webview.reloadIgnoringCache()
+    manualUpdateCheck = true
+    setStatus('проверяем обновления…')
+    window.shell.checkForUpdates().catch(() => {
+      manualUpdateCheck = false
+      setStatus('проверка доступна только в установленной версии')
+    })
   })
   document
     .getElementById('set-clear-cache')
@@ -1485,6 +1492,8 @@ const updateAction = document.getElementById('update-action') as HTMLButtonEleme
 
 type UpdaterUiState = 'idle' | 'available' | 'downloading' | 'ready'
 let updaterState: UpdaterUiState = 'idle'
+/** Ручная проверка из настроек (флаг отличает её от тихого автостарта) */
+let manualUpdateCheck = false
 let updaterVersion = ''
 let updaterPercent = 0
 
@@ -1528,6 +1537,7 @@ function wireUpdater(): void {
   })
   window.shell.onUpdater((event) => {
     if (event.type === 'available') {
+      manualUpdateCheck = false
       updaterState = 'available'
       updaterVersion = event.version ?? ''
     } else if (event.type === 'progress') {
@@ -1536,8 +1546,18 @@ function wireUpdater(): void {
     } else if (event.type === 'ready') {
       updaterState = 'ready'
       updaterVersion = event.version ?? updaterVersion
+    } else if (event.type === 'uptodate') {
+      // Тихо при автостарте; тост — только по ручной проверке из настроек
+      if (!manualUpdateCheck) return
+      manualUpdateCheck = false
+      setStatus('у вас последняя версия')
     } else {
       // error — показываем только если пользователь уже в процессе
+      if (manualUpdateCheck) {
+        manualUpdateCheck = false
+        setStatus(`не удалось проверить: ${event.message ?? 'ошибка'}`)
+        return
+      }
       if (updaterState === 'idle') return
       setStatus(`обновление: ${event.message ?? 'ошибка'}`)
       return

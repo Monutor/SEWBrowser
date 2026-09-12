@@ -43,7 +43,7 @@ interface StorageUsageLike {
 }
 
 interface UpdaterEventLike {
-  type: 'available' | 'progress' | 'ready' | 'error'
+  type: 'available' | 'progress' | 'ready' | 'error' | 'uptodate'
   version?: string
   percent?: number
   message?: string
@@ -114,6 +114,8 @@ const api = {
   },
   /** Скачать доступное обновление (по кнопке пользователя) */
   downloadUpdate: (): Promise<boolean> => ipcRenderer.invoke('updater:download'),
+  /** Вручную проверить обновления на GitHub (кнопка в настройках) */
+  checkForUpdates: (): Promise<boolean> => ipcRenderer.invoke('updater:check'),
   /** Перезапустить оболочку и установить скачанное обновление */
   installUpdate: (): void => ipcRenderer.send('updater:install'),
   /** Размер HTTP-кэша и число куки */
