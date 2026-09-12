@@ -9,7 +9,7 @@ import { loadPlugins } from './plugins/loader'
 import { getPluginData, removePluginData, setPluginData } from './plugins/store'
 import { getAccountSecrets, getLastUsedAccountId, listAccounts, removeAccount, saveAccount, setLastUsedAccountId } from './credentials/store'
 import { appendDownloadRecord, clearDownloadHistory, loadDownloadHistory, removeDownloadRecord } from './downloads/history'
-import { detectWiaDevices, scanViaWia } from './scanner'
+import { combinePagesToPdf, detectWiaDevices, scanViaWia, type ScanPageInput } from './scanner'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -358,7 +358,7 @@ function createWindow(): void {
       buffer: Buffer,
       ext: string,
     ): Promise<{ ok: boolean; error?: string }> {
-      const safeExt = ['png', 'jpg', 'bmp', 'gif'].includes(ext) ? (ext as string) : 'jpg'
+      const safeExt = ['png', 'jpg', 'bmp', 'gif', 'pdf'].includes(ext) ? (ext as string) : 'jpg'
       // МСК = UTC+3 (без летнего времени) — как у PDF-имён
       const stamp = (() => {
         const d = new Date(Date.now() + 3 * 3600e3)
@@ -392,6 +392,10 @@ function createWindow(): void {
     }
 
     // ---------- Сканер (WIA): определение устройств / сканирование / сохранение ----------
+    // Сессии многостраничного сканирования: sessionId → отсканированные страницы.
+    // Очистка после сохранения защищает long-running main от утечки памяти.
+    const scanSessions = new Map<string, ScanPageInput[]>()
+
     ipcMain.handle('scanner:detect', async () => {
       try {
         return await detectWiaDevices()
@@ -402,25 +406,43 @@ function createWindow(): void {
     })
 
     // Сканирование НЕ сохраняет — возвращает изображение для предосмотра в окне.
-    ipcMain.handle('scanner:scan', async () => {
+    // sessionId === undefined/null — новая сессия (сбрасываем предыдущие страницы);
+    // иначе добавляем страницу к существующей сессии (многостраничный режим).
+    ipcMain.handle('scanner:scan', async (_event, sessionId?: string) => {
       try {
         const result = await scanViaWia()
         if (!result.ok || !result.buffer) {
           return { ok: false, error: result.error ?? 'сканирование не выполнено' }
         }
-        return { ok: true, base64: result.buffer.toString('base64'), mime: result.mime, ext: result.ext }
+        const page: ScanPageInput = { base64: result.buffer.toString('base64'), mime: result.mime }
+        if (!sessionId) {
+          sessionId = randomUUID()
+          scanSessions.set(sessionId, [page])
+        } else {
+          const existing = scanSessions.get(sessionId)
+          if (existing) existing.push(page)
+          else scanSessions.set(sessionId, [page])
+        }
+        return { ok: true, sessionId, count: scanSessions.get(sessionId)!.length, base64: page.base64, mime: result.mime, ext: result.ext }
       } catch (err) {
         console.warn('[shell] scanner:scan failed:', err)
         return { ok: false, error: err instanceof Error ? err.message : String(err) }
       }
     })
 
-    // Сохранить предпросмотренное изображение из окна сканера.
-    ipcMain.handle('scanner:save', (_event, payload: unknown) => {
-      if (!payload || typeof payload !== 'object') return { ok: false, error: 'нет данных' }
-      const { base64, ext } = payload as { base64?: unknown; ext?: unknown }
-      if (typeof base64 !== 'string' || !base64) return { ok: false, error: 'нет данных' }
-      return saveScanToDownloads(Buffer.from(base64, 'base64'), typeof ext === 'string' ? ext : '')
+    // Собрать все страницы сессии в один PDF и сохранить в «Загрузки».
+    ipcMain.handle('scanner:save', async (_event, sessionId?: string) => {
+      const pages = typeof sessionId === 'string' ? scanSessions.get(sessionId) : undefined
+      if (!pages || pages.length === 0) return { ok: false, error: 'нет данных для сохранения' }
+      // Чистим сессию до сборки — защита от утечки в long-running main.
+      void scanSessions.delete(sessionId as string)
+      try {
+        const pdf = await combinePagesToPdf(pages)
+        return await saveScanToDownloads(pdf, 'pdf')
+      } catch (err) {
+        console.warn('[shell] scanner:save pdf failed:', err)
+        return { ok: false, error: 'не удалось собрать PDF' }
+      }
     })
 
     ipcMain.on('scanner:open', () => openScanner())
@@ -737,6 +759,7 @@ function createWindow(): void {
 <div id="toolbar">
   <button id="detectBtn" type="button">Определить сканер</button>
   <button id="scanBtn" type="button">Сканировать</button>
+  <button id="addBtn" type="button" hidden>Е ещё страницу</button>
   <button id="saveBtn" type="button" disabled>Сохранить</button>
   <span id="status"></span>
 </div>
@@ -751,8 +774,9 @@ function createWindow(): void {
   var hint = document.getElementById('hint');
   var detectBtn = document.getElementById('detectBtn');
   var scanBtn = document.getElementById('scanBtn');
+  var addBtn = document.getElementById('addBtn');
   var saveBtn = document.getElementById('saveBtn');
-  var current = null;
+  var sessionId = null;
 
   function setStatus(text) { statusEl.textContent = text; }
 
@@ -771,25 +795,41 @@ function createWindow(): void {
   scanBtn.addEventListener('click', function () {
     scanBtn.disabled = true; saveBtn.disabled = true;
     setStatus('сканирование — выберите сканер и отсканируйте документ в диалоге Windows…');
-    window.shell.scan().then(function (res) {
-      scanBtn.disabled = false;
+    window.shell.scan(null).then(function (res) {
       if (!res || !res.ok) { setStatus((res && res.error) ? ('ошибка: ' + res.error) : 'сканирование не выполнено'); return; }
-      current = { base64: res.base64, ext: res.ext };
+      sessionId = res.sessionId || null;
       preview.src = 'data:' + (res.mime || 'image/jpeg') + ';base64,' + res.base64;
       preview.style.display = 'block';
       hint.style.display = 'none';
       saveBtn.disabled = false;
-      setStatus('Отскано. Проверьте предосмотр и нажмите «Сохранить»');
+      // Первая страница готова: «Сканировать» заменяем на «Е ещё страницу».
+      scanBtn.hidden = true;
+      if (addBtn) addBtn.hidden = false;
+      setStatus('Отскано · страница ' + (res.count || 1));
     }).catch(function () { scanBtn.disabled = false; setStatus('ошибка сканирования'); });
   });
 
+  // Добавить ещё одну страницу к текущей сессии (многостраничный PDF).
+  if (addBtn) {
+    addBtn.addEventListener('click', function () {
+      saveBtn.disabled = true;
+      setStatus('сканирование — добавьте ещё страницу в диалоге Windows…');
+      window.shell.scan(sessionId).then(function (res) {
+        saveBtn.disabled = false;
+        if (!res || !res.ok) { setStatus((res && res.error) ? ('ошибка: ' + res.error) : 'сканирование не выполнено'); return; }
+        preview.src = 'data:' + (res.mime || 'image/jpeg') + ';base64,' + res.base64;
+        setStatus('Отскано · страница ' + (res.count || 1));
+      }).catch(function () { setStatus('ошибка сканирования'); });
+    });
+  }
+
   saveBtn.addEventListener('click', function () {
-    if (!current) return;
+    if (!sessionId) return;
     saveBtn.disabled = true;
-    window.shell.saveScan({ base64: current.base64, ext: current.ext }).then(function (res) {
+    window.shell.saveScan(sessionId).then(function (res) {
       saveBtn.disabled = false;
       if (!res || !res.ok) setStatus((res && res.error) ? ('не удалось сохранить: ' + res.error) : 'отменено');
-      else setStatus('Сохранено в «Загрузки»');
+      else setStatus('Сохранено в «Загрузки» — PDF');
     }).catch(function () { saveBtn.disabled = false; setStatus('ошибка сохранения'); });
   });
 })();

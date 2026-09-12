@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { PDFDocument, rgb } from 'pdf-lib'
 
 /** Результат сканирования: при ok — buffer + определённый формат; иначе — причина в error */
 export interface ScanResult {
@@ -242,4 +243,50 @@ export async function detectWiaDevices(timeoutMs = 20000): Promise<DeviceListRes
       return finish({ ok: true, devices })
     })
   })
+}
+
+/** Страница для сборки PDF (база 64 + MIME из определения формата) */
+export interface ScanPageInput {
+  base64: string
+  mime?: string
+}
+
+/**
+ * Собирает отсканированные страницы в один PDF (A4, по соотношению сторон).
+ * Поддерживает JPEG и PNG — остальные форматы пропускаются с предупреждением.
+ * Каждая страница — отдельный лист формата A4 (595x842 pt), изображение
+ * масштабируется с сохранением соотноления сторон и центрируется на белом фоне.
+ */
+export async function combinePagesToPdf(pages: ScanPageInput[]): Promise<Buffer> {
+  const doc = await PDFDocument.create()
+  const PAGE_W = 595
+  const PAGE_H = 842
+
+  for (const page of pages) {
+    if (!page || !page.base64) continue
+    let image: Awaited<ReturnType<typeof doc.embedJpg>> | Awaited<ReturnType<typeof doc.embedPng>> | undefined
+    try {
+      const buffer = Buffer.from(page.base64, 'base64')
+      if (!buffer.length) continue
+      image = page.mime === 'image/png' ? await doc.embedPng(buffer) : await doc.embedJpg(buffer)
+    } catch (err) {
+      console.warn('[shell] pdf: пропущена страница с неподдерживаемым форматом:', err)
+      continue
+    }
+    if (!image) continue
+    const scale = Math.min(PAGE_W / image.width, PAGE_H / image.height)
+    const drawW = image.width * scale
+    const drawH = image.height * scale
+    const pdfPage = doc.addPage([PAGE_W, PAGE_H])
+    pdfPage.drawRectangle({ x: 0, y: 0, width: PAGE_W, height: PAGE_H, color: rgb(1, 1, 1) })
+    pdfPage.drawImage(image, {
+      x: (PAGE_W - drawW) / 2,
+      y: (PAGE_H - drawH) / 2,
+      width: drawW,
+      height: drawH,
+    })
+  }
+
+  const bytes = await doc.save()
+  return Buffer.from(bytes)
 }

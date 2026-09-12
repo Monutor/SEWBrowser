@@ -180,9 +180,9 @@ interface ShellApi {
   /** Сканер (WIA): список подключённых устройств — для кнопки «Определить сканер» */
   detectScanner(): Promise<{ ok: boolean; devices?: string[]; error?: string }>
   /** Сканер (WIA): отсканировать и вернуть изображение для предосмотра (НЕ сохраняет) */
-  scan(): Promise<{ ok: boolean; base64?: string; mime?: string; ext?: string; error?: string }>
-  /** Сканер (WIA): сохранить предпросмотренное изображение в «Загрузки» */
-  saveScan(payload: { base64: string; ext?: string }): Promise<{ ok: boolean; error?: string }>
+  scan(sessionId?: string): Promise<{ ok: boolean; sessionId?: string; count?: number; base64?: string; mime?: string; ext?: string; error?: string }>
+  /** Сканер (WIA): собрать все страницы сессии в один PDF и сохранить в «Загрузки» */
+  saveScan(sessionId: string): Promise<{ ok: boolean; error?: string }>
   /** Открыть окно сканера (отдельное BrowserWindow) */
   openScanner(): void
   getStorageUsage(): Promise<StorageUsage>

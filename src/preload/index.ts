@@ -117,11 +117,11 @@ const api = {
   detectScanner: (): Promise<{ ok: boolean; devices?: string[]; error?: string }> =>
     ipcRenderer.invoke('scanner:detect'),
   /** Сканер (WIA): отсканировать и вернуть изображение для предосмотра (НЕ сохраняет) */
-  scan: (): Promise<{ ok: boolean; base64?: string; mime?: string; ext?: string; error?: string }> =>
-    ipcRenderer.invoke('scanner:scan'),
-  /** Сканер (WIA): сохранить предпросмотренное изображение в «Загрузки» (диалог сохранения) */
-  saveScan: (payload: { base64: string; ext?: string }): Promise<{ ok: boolean; error?: string }> =>
-    ipcRenderer.invoke('scanner:save', payload),
+  scan: (sessionId?: string): Promise<{ ok: boolean; sessionId?: string; count?: number; base64?: string; mime?: string; ext?: string; error?: string }> =>
+    ipcRenderer.invoke('scanner:scan', sessionId),
+  /** Сканер (WIA): собрать все страницы сессии в один PDF и сохранить в «Загрузки» */
+  saveScan: (sessionId: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('scanner:save', sessionId),
   /** Открыть окно сканера (отдельное BrowserWindow) */
   openScanner: (): void => ipcRenderer.send('scanner:open'),
   /** События автообновления: available | progress | ready | error */
