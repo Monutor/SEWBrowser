@@ -61,6 +61,8 @@ let tabsOpen = false
 
 let config: ShellConfig | null = null
 let plugins: PluginInfo[] = []
+/** Все плагины (включая выключенные) — для настроек */
+let allPlugins: { name: string; enabled: boolean }[] = []
 let isFullscreen = false
 
 function normalizeUrl(raw: string): string {
@@ -83,6 +85,7 @@ function isAllowed(url: string): boolean {
   if (!config || !config.allowlistEnabled) return true
   const host = hostOf(url)
   if (!host) return false
+  if (!Array.isArray(config.allowlist)) return false
   return config.allowlist.some((pattern) => {
     const p = pattern.toLowerCase()
     if (p.startsWith('*.')) {
@@ -352,15 +355,39 @@ async function guestJS<T>(label: string, code: string): Promise<T> {
 
 let sewHelperBridgeStarted = false
 let bffTakeDiagged = false
+/** Адаптивный опрос: 500мс при работе, до 2000мс в простое + пауза когда окно скрыто */
+let bffDelay = 500
+let bffBusy = false
 function startSewHelperBridge(): void {
   if (sewHelperBridgeStarted) return
   sewHelperBridgeStarted = true
-  setInterval(() => void pumpSewHelperBff(), 500)
+  const tick = (): void => {
+    if (document.hidden) {
+      bffDelay = 2000
+      setTimeout(tick, bffDelay)
+      return
+    }
+    if (!bffBusy) {
+      bffBusy = true
+      void pumpSewHelperBff()
+        .then((hadWork) => {
+          bffDelay = hadWork ? 500 : Math.min(2000, bffDelay + 250)
+        })
+        .catch(() => {
+          bffDelay = Math.min(2000, bffDelay + 250)
+        })
+        .finally(() => {
+          bffBusy = false
+        })
+    }
+    setTimeout(tick, bffDelay)
+  }
+  setTimeout(tick, 500)
 }
 
-async function pumpSewHelperBff(): Promise<void> {
+async function pumpSewHelperBff(): Promise<boolean> {
   try {
-    if (!plugins.some((p) => p.name === 'sew-helper')) return
+    if (!plugins.some((p) => p.name === 'sew-helper')) return false
     // Гостевая часть — полностью неубиваемая (вложенные try/catch): reject
     // executeJavaScript Electron всегда дублирует внутренним логом
     // "GUEST_VIEW_MANAGER_CALL: ...", поэтому гость не должен кидать
@@ -397,7 +424,7 @@ async function pumpSewHelperBff(): Promise<void> {
     } catch {
       reqs = []
     }
-    if (!Array.isArray(reqs) || reqs.length === 0) return
+    if (!Array.isArray(reqs) || reqs.length === 0) return false
     for (const req of reqs) {
       if (!req || typeof req.id !== 'string' || typeof req.url !== 'string') continue
       let res: { ok: boolean; status: number; data: unknown }
@@ -420,8 +447,10 @@ async function pumpSewHelperBff(): Promise<void> {
         // страница ушла между опросом и ответом — гость повторит запрос сам (retry)
       }
     }
+    return true
   } catch {
     // webview не готов — молча ждём следующего тика
+    return false
   }
 }
 
@@ -435,15 +464,39 @@ async function pumpSewHelperBff(): Promise<void> {
  */
 let scansBridgeStarted = false
 let scansTakeDiagged = false
+/** Тот же адаптивный опрос, что у BFF-моста: быстро при работе, медленно в простое */
+let scansDelay = 500
+let scansBusy = false
 function startScansBridge(): void {
   if (scansBridgeStarted) return
   scansBridgeStarted = true
-  setInterval(() => void pumpScansBridge(), 500)
+  const tick = (): void => {
+    if (document.hidden) {
+      scansDelay = 2000
+      setTimeout(tick, scansDelay)
+      return
+    }
+    if (!scansBusy) {
+      scansBusy = true
+      void pumpScansBridge()
+        .then((hadWork) => {
+          scansDelay = hadWork ? 500 : Math.min(2000, scansDelay + 250)
+        })
+        .catch(() => {
+          scansDelay = Math.min(2000, scansDelay + 250)
+        })
+        .finally(() => {
+          scansBusy = false
+        })
+    }
+    setTimeout(tick, scansDelay)
+  }
+  setTimeout(tick, 500)
 }
 
-async function pumpScansBridge(): Promise<void> {
+async function pumpScansBridge(): Promise<boolean> {
   try {
-    if (!plugins.some((p) => p.name === 'scans-block')) return
+    if (!plugins.some((p) => p.name === 'scans-block')) return false
     const rawTake = await guestJS<string>(
       'scans-take',
       '(function(){try{var q=window.__sewScansReq;if(!Array.isArray(q))return "[]";' +
@@ -468,7 +521,7 @@ async function pumpScansBridge(): Promise<void> {
     } catch {
       reqs = []
     }
-    if (!Array.isArray(reqs) || reqs.length === 0) return
+    if (!Array.isArray(reqs) || reqs.length === 0) return false
     for (const req of reqs) {
       if (!req || typeof req.id !== 'string' || typeof req.type !== 'string') continue
       let result: unknown
@@ -516,8 +569,10 @@ async function pumpScansBridge(): Promise<void> {
         // страница ушла между опросом и ответом — гость повторит запрос сам
       }
     }
+    return true
   } catch {
     // webview не готов — молча ждём следующего тика
+    return false
   }
 }
 
@@ -683,16 +738,19 @@ function openSettings(): void {
   if (setAllowlist) setAllowlist.value = config.allowlist.join('\n')
   if (setPlugins) {
     setPlugins.innerHTML = ''
-    for (const plugin of plugins) {
+    // Показываем ВСЕ плагины (включая выключенные), иначе выключенный
+    // пропадал из списка и его нельзя было включить обратно.
+    const list = allPlugins.length > 0 ? allPlugins : plugins.map((p) => ({ name: p.name, enabled: true }))
+    for (const plugin of list) {
       const label = document.createElement('label')
       const checkbox = document.createElement('input')
       checkbox.type = 'checkbox'
       checkbox.dataset.plugin = plugin.name
-      checkbox.checked = config.plugins[plugin.name] ?? true
+      checkbox.checked = config.plugins[plugin.name] ?? plugin.enabled ?? true
       label.append(checkbox, document.createTextNode(plugin.name))
       setPlugins.append(label)
     }
-    if (plugins.length === 0) {
+    if (list.length === 0) {
       const empty = document.createElement('span')
       empty.textContent = 'Нет загруженных плагинов'
       setPlugins.append(empty)
@@ -786,9 +844,12 @@ function wireSettings(): void {
     closeSettings()
     manualUpdateCheck = true
     setStatus('проверяем обновления…')
-    window.shell.checkForUpdates().catch(() => {
+    window.shell.checkForUpdates().catch((err) => {
       manualUpdateCheck = false
-      setStatus('проверка доступна только в установленной версии')
+      const msg = err instanceof Error && err.message ? err.message : String(err ?? '')
+      // В dev хендлера нет вообще («No handler registered») — честно говорим,
+      // что проверка только в сборке; таймаут и прочие — текстом ошибки.
+      setStatus(/no handler/i.test(msg) ? 'проверка доступна только в установленной версии' : msg || 'не удалось проверить')
     })
   })
   document
@@ -1553,7 +1614,6 @@ function wireToolbar(): void {
   document.getElementById('btn-max')?.addEventListener('click', () => window.shell.windowMax())
   document.getElementById('btn-close')?.addEventListener('click', () => window.shell.windowClose())
 
-  document.getElementById('btn-scanner')?.addEventListener('click', () => window.shell.openScanner())
   document.getElementById('btn-scans')?.addEventListener('click', async () => {
     try {
       await guestJS<void>('scans-open', '(function(){try{window.dispatchEvent(new CustomEvent("scans-block:open"))}catch(e){}})()')
@@ -1570,9 +1630,6 @@ function wireToolbar(): void {
     }
   })
 }
-
-// ---------- Сканер (WIA через PowerShell) ----------
-
 
 // Последний разрешённый URL — точка возврата при срабатывании allowlist.
 // (preventDefault() в will-navigate у webview не работает, поэтому запрещённую
@@ -2117,7 +2174,6 @@ function importTabs(file: File): void {
 }
 
 function wireTabs(): void {
-  document.getElementById('btn-tabs')?.addEventListener('click', () => void openTabs())
   document.getElementById('tab-add')?.addEventListener('click', () => void openTabs())
   document.getElementById('tab-manage')?.addEventListener('click', () => void openTabs())
   document.getElementById('tab-add-new')?.addEventListener('click', () => { resetForm(); openEditForm({ id: '', name: '', url: '' }) })
@@ -2209,6 +2265,11 @@ function applyAppVersion(): void {
 async function init(): Promise<void> {
   config = await window.shell.getConfig()
   plugins = await window.shell.getPlugins()
+  try {
+    allPlugins = await window.shell.getAllPlugins()
+  } catch {
+    allPlugins = []
+  }
   applyAppVersion()
 
   wireToolbar()
@@ -2227,6 +2288,18 @@ async function init(): Promise<void> {
   startScansBridge()
   // Данные плагинов меняются из оверлеев оболочки — перепушиваем снапшот в страницу
   window.shell.onPluginDataChanged(() => void pushPluginStores())
+  // Живые обновления папки сканов: main шлёт 'scans:changed' при каждом изменении —
+  // форвардим список в гостя событием 'scans-block:update' (блок перерисуется сам).
+  window.shell.onScansChanged((files) => {
+    void guestJS<void>(
+      'scans-push',
+      '(function(list){try{window.dispatchEvent(new CustomEvent("scans-block:update",{detail:list}))}catch(e){}})(' +
+        JSON.stringify(files ?? []) +
+        ')',
+    ).catch(() => {
+      // страница не готова — гость подтянет список сам через bridgeSend('list')
+    })
+  })
 
   if (addressInput) addressInput.value = config.startUrl
   lastAllowedUrl = config.startUrl

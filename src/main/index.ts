@@ -1,15 +1,16 @@
 import { app, BrowserWindow, Notification, globalShortcut, ipcMain, net, session, webContents, Menu, dialog, shell, clipboard } from 'electron'
 import type { Input, MenuItemConstructorOptions, WebContents } from 'electron'
-import { join } from 'node:path'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { join, basename } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { autoUpdater } from 'electron-updater'
 import { getConfig, isDebugMode, saveConfig } from './config'
-import { loadPlugins } from './plugins/loader'
+import { loadPlugins, listAllPlugins } from './plugins/loader'
 import { getPluginData, removePluginData, setPluginData } from './plugins/store'
 import { getAccountSecrets, getLastUsedAccountId, listAccounts, removeAccount, saveAccount, setLastUsedAccountId } from './credentials/store'
 import { appendDownloadRecord, clearDownloadHistory, loadDownloadHistory, removeDownloadRecord } from './downloads/history'
-import { combinePagesToPdf, detectWiaDevices, scanViaWia, type ScanPageInput } from './scanner'
 import {
   createScanWatcher,
   deleteScanFile,
@@ -60,6 +61,21 @@ function guestShortcutName(input: Input): string | null {
 /** Схемы, которые разрешено открывать во внешнем приложении */
 const EXTERNAL_SCHEME_RE = /^(https?|mailto|tel):/i
 
+/**
+ * Санитизация имени файла от remote-источника (getFilename, title PDF):
+ * basename против `../`, вырезать запрещённое в Windows, точки/пробелы по краям,
+ * лимит длины. Пустое/«дефолтное» — fallback.
+ */
+function sanitizeFileName(raw: unknown, fallback: string, ext?: string): string {
+  let base = typeof raw === 'string' ? raw : ''
+  base = basename(base.trim())
+  base = base.replace(/[\0-\x1f<>:\"/\\|?*]/g, '_').replace(/[. ]+$/g, '').trim()
+  if (!base || base.toLowerCase() === 'документ') base = fallback
+  if (ext && !new RegExp(`\\.${ext}$`, 'i').test(base)) base = `${base}.${ext}`
+  if (base.length > 180) base = base.slice(0, 180)
+  return base || fallback
+}
+
 /** Единственные URL, доступные через fetch-мост 'net:fetch' (BFF mvideo для sew-helper) */
 const BFF_URL_RE = /^https:\/\/www\.mvideo\.ru\/(bff\/product-details\?productId=[\w-]+|products\/[\w-]+)\/?$/
 
@@ -74,6 +90,7 @@ function isAllowedUrl(url: string): boolean {
     return false
   }
   if (!host) return false
+  if (!Array.isArray(config.allowlist)) return false
   return config.allowlist.some((pattern) => {
     const p = pattern.toLowerCase()
     if (p.startsWith('*.')) {
@@ -81,6 +98,18 @@ function isAllowedUrl(url: string): boolean {
       return host === domain || host.endsWith(`.${domain}`)
     }
     return host === p
+  })
+}
+
+/** Пересоздать вотчер папки сканов из актуального конфига и слать 'scans:changed' в shell-UI */
+function restartScanWatcher(): void {
+  stopScanWatcher(scanWatcher)
+  scanWatcher = null
+  scanWatcher = createScanWatcher(getConfig().scanFolder, (files: ScanFile[]) => {
+    if (getConfig().debug) console.log(`[shell] в папке сканов: ${files.length} файл(ов)`)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('scans:changed', files)
+    }
   })
 }
 
@@ -144,7 +173,13 @@ function createWindow(): void {
   // IPC для shell-UI
   ipcMain.handle('config:get', () => ({ ...getConfig(), debug }))
   ipcMain.handle('shell:getVersion', () => app.getVersion())
-  ipcMain.handle('config:set', (_event, patch) => saveConfig((patch ?? {}) as Parameters<typeof saveConfig>[0]))
+  ipcMain.handle('config:set', (_event, patch) => {
+    const prevFolder = getConfig().scanFolder
+    const next = saveConfig((patch ?? {}) as Parameters<typeof saveConfig>[0])
+    // Смена папки сканов применяется сразу, без рестарта оболочки.
+    if (next.scanFolder !== prevFolder) restartScanWatcher()
+    return next
+  })
   ipcMain.handle('plugins:list', () =>
     plugins.map((p) => ({
       name: p.name,
@@ -154,6 +189,8 @@ function createWindow(): void {
       options: p.options ?? '',
     })),
   )
+  // Полный список (включая выключенные) — для настроек, чтобы выключенное можно было включить обратно
+  ipcMain.handle('plugins:list-all', () => listAllPlugins(getConfig()))
   ipcMain.handle('session:clear', async () => {
     await session.defaultSession.clearCache()
     await session.defaultSession.clearStorageData()
@@ -236,7 +273,8 @@ function createWindow(): void {
     console.log('[SEWBrowser] storage cleared:', target)
     return true
   })
-  // Значения куки НЕ отдаём в renderer — там только имена/домены/метаданные
+  // Значения куки НЕ отдаём в renderer — там только имена/домены/метаданные.
+  // size считаем БЕЗ длины значения (иначе палим длину секрета, напр. сессии).
   ipcMain.handle('cookies:list', async () => {
     const all = await session.defaultSession.cookies.get({})
     return all
@@ -248,7 +286,7 @@ function createWindow(): void {
         httpOnly: c.httpOnly ?? false,
         session: c.session ?? false,
         expirationDate: c.expirationDate,
-        size: c.name.length + (c.value ?? '').length,
+        size: c.name.length,
       }))
       .sort((a, b) => `${a.domain}${a.name}`.localeCompare(`${b.domain}${b.name}`))
   })
@@ -318,40 +356,60 @@ function createWindow(): void {
    })
    // ---------- PDF-просмотр (окно с кнопками «Скачать»/«Печать») ----------
    ipcMain.handle('pdf-viewer:save', (_event, payload: unknown) => {
-     if (!payload || typeof payload !== 'object') return false
-     const { base64, name } = payload as { base64?: unknown; name?: unknown }
-     if (typeof base64 !== 'string' || !base64 || typeof name !== 'string') return false
-     // Точный размер PDF из standard-base64: на каждые 4 символа — 3 байта минус padding
-     const pad = (base64.match(/=+$/) || [''])[0].length
-     const bytes = Math.floor(base64.length / 4) * 3 - pad
-     // МСК = UTC+3 (без летнего времени)
-     const stamp = (() => {
-       const d = new Date(Date.now() + 3 * 3600e3)
-       const p = (n: number): string => String(n).padStart(2, '0')
-       return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}` +
-         `-${p(d.getUTCHours())}-${p(d.getUTCMinutes())}-${p(d.getUTCSeconds())}`
-     })()
-     // Реальное имя файла сохраняется; для «дефолтного» названия ставим дату/по МСК
-     const base = name.trim()
-     const fileName = (base && base.toLowerCase() !== 'документ') ? base : `документ-${stamp}.pdf`
-     if (!mainWindow || mainWindow.isDestroyed()) return false
-     const filePath = dialog.showSaveDialogSync(mainWindow, {
-       title: 'Сохранить документ',
-       defaultPath: join(app.getPath('downloads'), fileName),
-     })
-     if (!filePath) return false
-     try {
-       writeFileSync(filePath, Buffer.from(base64, 'base64'))
-       appendDownloadRecord({
-         id: randomUUID(),
-         name: fileName,
-         path: filePath,
-         bytes,
-         state: 'done',
-         startedAt: new Date().toISOString(),
-         finishedAt: new Date().toISOString(),
-       })
-       return true
+      if (!payload || typeof payload !== 'object') return false
+      const { base64, name } = payload as { base64?: unknown; name?: unknown }
+      if (typeof base64 !== 'string' || !base64 || typeof name !== 'string') return false
+      // Сюда прилетает data URL целиком (см. buildPdfViewerHtml: savePdf(embed.src)),
+      // а не чистый base64. Префикс «data:…;base64,» декодировать нельзя —
+      // иначе в начало файла пишется мусор и PDF открывается как «повреждённый».
+      let raw = base64.trim()
+      if (raw.startsWith('data:')) {
+        const comma = raw.indexOf(',')
+        if (comma === -1) return false
+        raw = raw.slice(comma + 1)
+      }
+      raw = raw.replace(/\s+/g, '')
+      if (!raw) return false
+      let pdf: Buffer
+      try {
+        pdf = Buffer.from(raw, 'base64')
+      } catch (err) {
+        console.warn('[shell] pdf save failed (bad base64):', err)
+        return false
+      }
+      if (pdf.length === 0 || pdf.slice(0, 4).toString('latin1') !== '%PDF') {
+        console.warn('[shell] pdf save failed: decoded bytes are not a PDF')
+        return false
+      }
+      const bytes = pdf.length
+      // МСК = UTC+3 (без летнего времени)
+      const stamp = (() => {
+        const d = new Date(Date.now() + 3 * 3600e3)
+        const p = (n: number): string => String(n).padStart(2, '0')
+        return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}` +
+          `-${p(d.getUTCHours())}-${p(d.getUTCMinutes())}-${p(d.getUTCSeconds())}`
+      })()
+      // Реальное имя файла сохраняется; для «дефолтного» названия ставим дату/по МСК.
+      // Имя от remote — через sanitize (basename против `../`, запрещённые символы).
+      const fileName = sanitizeFileName(name, `документ-${stamp}.pdf`, 'pdf')
+      if (!mainWindow || mainWindow.isDestroyed()) return false
+      const filePath = dialog.showSaveDialogSync(mainWindow, {
+        title: 'Сохранить документ',
+        defaultPath: join(app.getPath('downloads'), fileName),
+      })
+      if (!filePath) return false
+      try {
+        writeFileSync(filePath, pdf)
+        appendDownloadRecord({
+          id: randomUUID(),
+          name: basename(filePath),
+          path: filePath,
+          bytes,
+          state: 'done',
+          startedAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+        })
+        return true
       } catch (err) {
         console.warn('[shell] pdf save failed:', err)
         return false
@@ -363,7 +421,7 @@ function createWindow(): void {
       const { content, name } = payload as { content?: unknown; name?: unknown }
       if (typeof content !== 'string' || !content || typeof name !== 'string' || !name.trim()) return false
       if (!mainWindow || mainWindow.isDestroyed()) return false
-      const fileName = name.trim().endsWith('.json') ? name.trim() : `${name.trim()}.json`
+      const fileName = sanitizeFileName(name, 'sewbrowser-tabs.json', 'json')
       const filePath = dialog.showSaveDialogSync(mainWindow, {
         title: 'Сохранить вкладки',
         defaultPath: join(app.getPath('downloads'), fileName),
@@ -373,7 +431,7 @@ function createWindow(): void {
         writeFileSync(filePath, content)
         appendDownloadRecord({
           id: randomUUID(),
-          name: fileName,
+          name: basename(filePath),
           path: filePath,
           bytes: Buffer.byteLength(content),
           state: 'done',
@@ -387,115 +445,62 @@ function createWindow(): void {
       }
     })
      ipcMain.handle('pdf-viewer:print', (_event) => {
-      const wc = _event.sender
-      if (!wc || wc.isDestroyed()) return false
-      // print({}) — в Electron 44 обязательный аргумент опций (иначе краш на 'margins')
+      const sender = _event.sender
+      if (!sender || sender.isDestroyed()) return false
+      // Печатаем сам документ (все страницы), а не обёртку окна просмотра.
+      const doc = pdfViewerDocs.get(sender.id)
+      if (!doc) {
+        console.warn('[shell] pdf print failed: no document for this window')
+        return false
+      }
       try {
-        void wc.print({})
+        let title = doc.title || 'Документ'
+        try {
+          const t = sender.getTitle()
+          if (t) title = t
+        } catch {
+          // заголовок не критичен — печатаем с дефолтным
+        }
+        printPdfDocument(pathToFileURL(doc.filePath).toString(), title)
         return true
       } catch (err) {
         console.warn('[shell] pdf print failed:', err)
         return false
       }
     })
-    // ---------- Сканер (WIA через PowerShell): скан → диалог сохранения в «Загрузки» ----------
-    /**
-     * Сохранить отсканированные байты в «Загрузки»: диалог сохранения (по умолчанию
-     * папка «Загрузки», имя со штамтом по МСК) + запись в историю загрузок оболочки.
-     */
-    async function saveScanToDownloads(
-      buffer: Buffer,
-      ext: string,
-    ): Promise<{ ok: boolean; error?: string }> {
-      const safeExt = ['png', 'jpg', 'bmp', 'gif', 'pdf'].includes(ext) ? (ext as string) : 'jpg'
-      // МСК = UTC+3 (без летнего времени) — как у PDF-имён
-      const stamp = (() => {
-        const d = new Date(Date.now() + 3 * 3600e3)
-        const p = (n: number): string => String(n).padStart(2, '0')
-        return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}` +
-          `-${p(d.getUTCHours())}-${p(d.getUTCMinutes())}-${p(d.getUTCSeconds())}`
-      })()
-      const fileName = `сканирование-${stamp}.${safeExt}`
-      if (!mainWindow || mainWindow.isDestroyed()) return { ok: false, error: 'окно оболочки закрыто' }
-      const filePath = dialog.showSaveDialogSync(mainWindow, {
-        title: 'Сохранить отсканированный документ',
-        defaultPath: join(app.getPath('downloads'), fileName),
+    // Сохранение текущего PDF из окна просмотра (байты уже во временном файле —
+    // base64 через IPC не гоняем, иначе большие файлы рвут лимиты).
+    ipcMain.handle('pdf-viewer:save-current', (_event) => {
+      const sender = _event.sender
+      if (!sender || sender.isDestroyed()) return false
+      const doc = pdfViewerDocs.get(sender.id)
+      if (!doc || !existsSync(doc.filePath)) return false
+      const viewerWin = BrowserWindow.fromWebContents(sender)
+      if (!viewerWin || viewerWin.isDestroyed()) return false
+      const safeName = sanitizeFileName(doc.title, 'документ.pdf', 'pdf')
+      const filePath = dialog.showSaveDialogSync(viewerWin, {
+        title: 'Сохранить документ',
+        defaultPath: join(app.getPath('downloads'), safeName),
       })
-      if (!filePath) return { ok: false, error: 'отменено' }
+      if (!filePath) return false
       try {
-        writeFileSync(filePath, buffer)
+        const pdf = readFileSync(doc.filePath)
+        writeFileSync(filePath, pdf)
         appendDownloadRecord({
           id: randomUUID(),
-          name: fileName,
+          name: basename(filePath),
           path: filePath,
-          bytes: buffer.length,
+          bytes: pdf.length,
           state: 'done',
           startedAt: new Date().toISOString(),
           finishedAt: new Date().toISOString(),
         })
-        return { ok: true }
+        return true
       } catch (err) {
-        console.warn('[shell] scan save failed:', err)
-        return { ok: false, error: 'не удалось сохранить файл' }
-      }
-    }
-
-    // ---------- Сканер (WIA): определение устройств / сканирование / сохранение ----------
-    // Сессии многостраничного сканирования: sessionId → отсканированные страницы.
-    // Очистка после сохранения защищает long-running main от утечки памяти.
-    const scanSessions = new Map<string, ScanPageInput[]>()
-
-    ipcMain.handle('scanner:detect', async () => {
-      try {
-        return await detectWiaDevices()
-      } catch (err) {
-        console.warn('[shell] scanner:detect failed:', err)
-        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+        console.warn('[shell] pdf save failed:', err)
+        return false
       }
     })
-
-    // Сканирование НЕ сохраняет — возвращает изображение для предосмотра в окне.
-    // sessionId === undefined/null — новая сессия (сбрасываем предыдущие страницы);
-    // иначе добавляем страницу к существующей сессии (многостраничный режим).
-    ipcMain.handle('scanner:scan', async (_event, sessionId?: string) => {
-      try {
-        const result = await scanViaWia()
-        if (!result.ok || !result.buffer) {
-          return { ok: false, error: result.error ?? 'сканирование не выполнено' }
-        }
-        const page: ScanPageInput = { base64: result.buffer.toString('base64'), mime: result.mime }
-        if (!sessionId) {
-          sessionId = randomUUID()
-          scanSessions.set(sessionId, [page])
-        } else {
-          const existing = scanSessions.get(sessionId)
-          if (existing) existing.push(page)
-          else scanSessions.set(sessionId, [page])
-        }
-        return { ok: true, sessionId, count: scanSessions.get(sessionId)!.length, base64: page.base64, mime: result.mime, ext: result.ext }
-      } catch (err) {
-        console.warn('[shell] scanner:scan failed:', err)
-        return { ok: false, error: err instanceof Error ? err.message : String(err) }
-      }
-    })
-
-    // Собрать все страницы сессии в один PDF и сохранить в «Загрузки».
-    ipcMain.handle('scanner:save', async (_event, sessionId?: string) => {
-      const pages = typeof sessionId === 'string' ? scanSessions.get(sessionId) : undefined
-      if (!pages || pages.length === 0) return { ok: false, error: 'нет данных для сохранения' }
-      // Чистим сессию до сборки — защита от утечки в long-running main.
-      void scanSessions.delete(sessionId as string)
-      try {
-        const pdf = await combinePagesToPdf(pages)
-        return await saveScanToDownloads(pdf, 'pdf')
-      } catch (err) {
-        console.warn('[shell] scanner:save pdf failed:', err)
-        return { ok: false, error: 'не удалось собрать PDF' }
-      }
-    })
-
-    ipcMain.on('scanner:open', () => openScanner())
-
     // ---------- Сканы (внешний HP-софт + папка) ----------
     // launch — запустить софт по пути из настроек; list — файлы в scanFolder;
     // delete/open/show — операции с файлами; scans:changed — рассылка окну «Сканы».
@@ -570,10 +575,10 @@ function createWindow(): void {
       return Array.isArray(paths) && paths.length > 0 ? paths[0] : ''
     })
 
-    // Мониторинг папки HP-софта: новые файлы пересылаем в окно «Сканы».
-    scanWatcher = createScanWatcher(getConfig().scanFolder, (files: ScanFile[]) => {
-      if (getConfig().debug) console.log(`[shell] в папке сканов: ${files.length} файл(ов)`)
-    })
+    // Мониторинг папки HP-софта: новые файлы пересылаем в shell-UI
+    // событием 'scans:changed' (renderer форвардит его в гостя),
+    // а renderer по нему же может обновить окно «Сканы».
+    restartScanWatcher()
 
   ipcMain.on('window:max', () => {
     if (!mainWindow) return
@@ -597,15 +602,35 @@ function createWindow(): void {
     const guest = webContents.fromId(id)
     if (!guest || guest.isDestroyed()) return
     attachedGuests.add(id)
+    // Чистим сет при уничтожении геста (пересоздание webview/crash),
+    // иначе id копились бы вечно.
+    guest.once('destroyed', () => {
+      attachedGuests.delete(id)
+    })
     // Диагностика навигации гостя: видно каждую загрузку и вердикт allowlist
     guest.on('did-navigate', (_navEvent, url) => {
       console.log('[shell] guest nav:', url.slice(0, 200), isAllowedUrl(url) ? '(allowed)' : '(blocked)')
     })
+    // Блокировка ДО коммита: запрещённый URL не исполняется вообще.
+    // (bounce-back в renderer на did-navigate оставляем как вторую линию —
+    // на случай гонки, но сюда в норме уже ничего не должно долетать.)
+    const denyBlocked = (event: Electron.Event, url: string): void => {
+      if (!isAllowedUrl(url)) {
+        event.preventDefault()
+        console.log('[shell] nav blocked:', url.slice(0, 200))
+      }
+    }
+    guest.on('will-navigate', (event, url) => denyBlocked(event, url))
+    guest.on('will-redirect', (event, url) => denyBlocked(event, url))
     guest.on('before-input-event', (event, input) => {
       if (input.type !== 'keyDown') return
       const name = guestShortcutName(input)
       if (!name) return
-      event.preventDefault()
+      // Escape НЕ preventDefault'им: страница SEW сама использует Esc
+      // (закрытие дропдаунов/модалок). Shell-оверлеи renderer закроет
+      // по событию, а страница при этом тоже получит клавишу — двойное
+      // закрытие в редком кейсе лучше, чем сглотнутый Esc.
+      if (name !== 'escape') event.preventDefault()
       mainWindow?.webContents.send('shell:shortcut', name)
     })
 
@@ -785,9 +810,12 @@ function createWindow(): void {
   const htmlEscape = (value: string): string =>
     value.replace(/[<>&"']/g, (ch) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[ch]!))
 
-  /** Сборка HTML-страницы PDF-просмотра: тулбар с кнопками «Скачать»/«Печать» + embed viewer'а */
-  function buildPdfViewerHtml(dataUrl: string, title: string): string {
+  /** Сборка HTML-страницы PDF-просмотра: тулбар с кнопками «Скачать»/«Печать» + embed viewer'а.
+   *  pdfSrc — file:// URL временного PDF (не data:, иначе большие файлы рвут лимиты URL).
+   *  Сам HTML маленький, его грузим через data:text/html как раньше. */
+  function buildPdfViewerHtml(pdfSrc: string, title: string): string {
     const safeTitle = htmlEscape(title || 'Документ')
+    const safeSrc = htmlEscape(pdfSrc)
     return `<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -808,6 +836,12 @@ function createWindow(): void {
   }
   #toolbar button:hover { background: #4a7ae0; }
   #embed { flex: 1 1 auto; width: 100%; height: 100%; border: 0; display: block; }
+  /* Ctrl+P в окне просмотра: тулбар в печать не тянем (сам документ
+     печатается кнопкой «Печать» через скрытое окно — см. printPdfDocument) */
+  @media print {
+    #toolbar { display: none; }
+    html, body { background: #fff; }
+  }
 </style>
 </head>
 <body>
@@ -816,12 +850,11 @@ function createWindow(): void {
   <button id="saveBtn" type="button">Скачать</button>
   <button id="printBtn" type="button">Печать</button>
 </div>
-<embed id="embed" type="application/pdf" src="${dataUrl}"></embed>
+<embed id="embed" type="application/pdf" src="${safeSrc}"></embed>
 <script>
 (function () {
-  var embed = document.getElementById('embed');
   document.getElementById('saveBtn').addEventListener('click', function () {
-    window.shell.savePdf(embed.getAttribute('src'), ${JSON.stringify(title || 'Документ')});
+    window.shell.saveCurrentPdf();
   });
   document.getElementById('printBtn').addEventListener('click', function () {
     window.shell.printPdf();
@@ -833,7 +866,83 @@ function createWindow(): void {
   }
 
   /** PDF-просмотр: отдельное окно со встроенным viewer'ом Chromium и кнопками «Скачать»/«Печать» */
-  function openPdfViewer(dataUrl: string, title: string): void {
+  // Временные PDF по webContentsId окна просмотра. Байты лежат в файле
+  // в temp (не в data: URL — большие PDF рвали лимиты длины URL).
+  const pdfViewerDocs = new Map<number, { filePath: string; title: string }>()
+  // Скрытые окна печати держим в сете, чтобы их не собрал GC до конца печати.
+  const pdfPrintWindows = new Set<BrowserWindow>()
+
+  function getPdfTempDir(): string {
+    const dir = join(app.getPath('temp'), 'sewbrowser-pdfs')
+    try {
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+    } catch {
+      // fallback — системный temp
+      return tmpdir()
+    }
+    return dir
+  }
+
+  /**
+   * Печать PDF-документа целиком. Скрытое окно грузит сам PDF-файл (без обёртки
+   * с тулбаром), поэтому Chromium печатает все страницы документа. Печать
+   * обёртки через wc.print() давала растровый «скриншот» видимой области
+   * embed'а вместо документа.
+   */
+  function printPdfDocument(fileUrl: string, title: string): void {
+    const printWin = new BrowserWindow({
+      show: false,
+      title,
+      icon: existsSync(devIcon) ? devIcon : undefined,
+      webPreferences: {
+        contextIsolation: true,
+        webviewTag: false,
+      },
+    })
+    printWin.setMenu(null)
+    pdfPrintWindows.add(printWin)
+    let done = false
+    const cleanup = (): void => {
+      pdfPrintWindows.delete(printWin)
+      if (!printWin.isDestroyed()) printWin.destroy()
+    }
+    const finish = (): void => {
+      if (done) return
+      done = true
+      // Даём спулеру забрать задание, затем гасим скрытое окно
+      setTimeout(cleanup, 2000)
+    }
+    printWin.webContents.once('did-finish-load', () => {
+      // PDF-плагину нужно время на инициализацию после did-finish-load
+      setTimeout(() => {
+        if (printWin.isDestroyed() || done) return
+        try {
+          printWin.webContents.print({}, () => finish())
+        } catch (err) {
+          console.warn('[shell] pdf print failed:', err)
+          finish()
+        }
+      }, 800)
+    })
+    printWin.webContents.once('did-fail-load', (_e, code, desc) => {
+      console.warn('[shell] pdf print load failed:', code, desc)
+      finish()
+    })
+    // Страховка: не висим скрытым окном вечно (диалог печати закрыли — колбэк всё равно придёт)
+    setTimeout(finish, 120_000)
+    void printWin.loadURL(fileUrl)
+  }
+
+  function openPdfViewer(pdf: Buffer, title: string): void {
+    // Пишем во временный файл: data: URL с base64 рвал лимиты на больших PDF.
+    let filePath = ''
+    try {
+      filePath = join(getPdfTempDir(), `${randomUUID()}.pdf`)
+      writeFileSync(filePath, pdf)
+    } catch (err) {
+      console.warn('[shell] pdf viewer failed (temp write):', err)
+      return
+    }
     const win = new BrowserWindow({
       width: 1024,
       height: 768,
@@ -849,143 +958,19 @@ function createWindow(): void {
     })
     // Убираем дефолтное меню Electron (File/Edit/View) — в туларе свои кнопки
     win.setMenu(null)
-    const html = buildPdfViewerHtml(dataUrl, title)
+    pdfViewerDocs.set(win.webContents.id, { filePath, title })
+    win.on('closed', () => {
+      pdfViewerDocs.delete(win.webContents.id)
+      try {
+        if (filePath) unlinkSync(filePath)
+      } catch {
+        // temp подчистит ОС
+      }
+    })
+    const fileUrl = pathToFileURL(filePath).toString()
+    const html = buildPdfViewerHtml(fileUrl, title)
     void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
   }
-
-  /** Разметка окна сканера: кнопки «Определить сканер»/«Сканировать»/«Сохранить»,
-   *  строка статуса и область предосмотра. Предосмотр появляется после скана,
-   *  а в «Загрузки» уходит только по нажатию «Сохранить». */
-  function buildScannerHtml(): string {
-    return `<!DOCTYPE html>
-<html lang="ru">
-<head>
-<meta charset="utf-8">
-<title>Сканирование</title>
-<style>
-  * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; display: flex; flex-direction: column; background: #3c3f41; font: 13px/1.4 -apple-system, "Segoe UI", Roboto, sans-serif; }
-  #toolbar {
-    flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
-    padding: 0 12px; height: 46px; background: #2b2d2e; color: #e9e9e9;
-  }
-  #toolbar button {
-    background: #3e6dd5; color: #fff; border: 0; padding: 6px 14px; border-radius: 4px;
-    cursor: pointer; font: inherit;
-  }
-  #toolbar button:hover { background: #4a7ae0; }
-  #toolbar button:disabled { opacity: 0.5; cursor: default; }
-  #status { flex: 1 1 auto; min-width: 0; opacity: 0.8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 8px; }
-  #stage {
-    flex: 1 1 auto; display: flex; align-items: center; justify-content: center;
-    background: #2b2d2e; overflow: auto; padding: 12px;
-  }
-  #preview { max-width: 100%; max-height: 100%; background: #fff; box-shadow: 0 0 0 1px rgba(255,255,255,0.15); display: none; }
-  #hint { color: #9aa0a4; text-align: center; white-space: pre-line; }
-</style>
-</head>
-<body>
-<div id="toolbar">
-  <button id="detectBtn" type="button">Определить сканер</button>
-  <button id="scanBtn" type="button">Сканировать</button>
-  <button id="addBtn" type="button" hidden>Е ещё страницу</button>
-  <button id="saveBtn" type="button" disabled>Сохранить</button>
-  <span id="status"></span>
-</div>
-<div id="stage">
-  <span id="hint">Нажмите «Определить сканер», затем «Сканировать»<br>Результат появится здесь — сохранить можно кнопкой «Сохранить»<br><br>Если сканер не найден — проверьте, что устройство определено как сканер (не только как принтер), и установлены его драйверы</span>
-  <img id="preview" alt="">
-</div>
-<script>
-(function () {
-  var statusEl = document.getElementById('status');
-  var preview = document.getElementById('preview');
-  var hint = document.getElementById('hint');
-  var detectBtn = document.getElementById('detectBtn');
-  var scanBtn = document.getElementById('scanBtn');
-  var addBtn = document.getElementById('addBtn');
-  var saveBtn = document.getElementById('saveBtn');
-  var sessionId = null;
-
-  function setStatus(text) { statusEl.textContent = text; }
-
-  detectBtn.addEventListener('click', function () {
-    setStatus('проверяю сканеры…');
-    detectBtn.disabled = true;
-    window.shell.detectScanner().then(function (res) {
-      detectBtn.disabled = false;
-      if (!res || !res.ok) { setStatus(res && res.error ? res.error : 'не удалось проверить сканеры'); return; }
-      var devices = (res.devices || []);
-      if (devices.length === 0) { setStatus('Сканеры не найдены'); return; }
-      setStatus('Найдено сканеров: ' + devices.length + ' — ' + devices.join(', '));
-    }).catch(function () { detectBtn.disabled = false; setStatus('ошибка проверки сканеров'); });
-  });
-
-  scanBtn.addEventListener('click', function () {
-    scanBtn.disabled = true; saveBtn.disabled = true;
-    setStatus('сканирование — выберите сканер и отсканируйте документ в диалоге Windows…');
-    window.shell.scan(null).then(function (res) {
-      if (!res || !res.ok) { setStatus((res && res.error) ? ('ошибка: ' + res.error) : 'сканирование не выполнено'); return; }
-      sessionId = res.sessionId || null;
-      preview.src = 'data:' + (res.mime || 'image/jpeg') + ';base64,' + res.base64;
-      preview.style.display = 'block';
-      hint.style.display = 'none';
-      saveBtn.disabled = false;
-      // Первая страница готова: «Сканировать» заменяем на «Е ещё страницу».
-      scanBtn.hidden = true;
-      if (addBtn) addBtn.hidden = false;
-      setStatus('Отскано · страница ' + (res.count || 1));
-    }).catch(function () { scanBtn.disabled = false; setStatus('ошибка сканирования'); });
-  });
-
-  // Добавить ещё одну страницу к текущей сессии (многостраничный PDF).
-  if (addBtn) {
-    addBtn.addEventListener('click', function () {
-      saveBtn.disabled = true;
-      setStatus('сканирование — добавьте ещё страницу в диалоге Windows…');
-      window.shell.scan(sessionId).then(function (res) {
-        saveBtn.disabled = false;
-        if (!res || !res.ok) { setStatus((res && res.error) ? ('ошибка: ' + res.error) : 'сканирование не выполнено'); return; }
-        preview.src = 'data:' + (res.mime || 'image/jpeg') + ';base64,' + res.base64;
-        setStatus('Отскано · страница ' + (res.count || 1));
-      }).catch(function () { setStatus('ошибка сканирования'); });
-    });
-  }
-
-  saveBtn.addEventListener('click', function () {
-    if (!sessionId) return;
-    saveBtn.disabled = true;
-    window.shell.saveScan(sessionId).then(function (res) {
-      saveBtn.disabled = false;
-      if (!res || !res.ok) setStatus((res && res.error) ? ('не удалось сохранить: ' + res.error) : 'отменено');
-      else setStatus('Сохранено в «Загрузки» — PDF');
-    }).catch(function () { saveBtn.disabled = false; setStatus('ошибка сохранения'); });
-  });
-})();
-</script>
-</body>
-</html>`
-  }
-
-  /** Окно сканера: отдельное BrowserWindow со своим preload (window.shell) */
-  function openScanner(): void {
-    const win = new BrowserWindow({
-      width: 720,
-      height: 820,
-      minWidth: 420,
-      minHeight: 520,
-      title: 'Сканирование',
-      icon: existsSync(devIcon) ? devIcon : undefined,
-      webPreferences: {
-        preload: join(__dirname, '../preload/index.js'),
-        contextIsolation: true,
-        webviewTag: false,
-      },
-    })
-    win.setMenu(null)
-    void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildScannerHtml())}`)
-  }
-
 
   async function downloadGuestUrl(guest: WebContents, url: string): Promise<void> {
     const id = ++downloadSeq
@@ -1043,7 +1028,7 @@ function createWindow(): void {
       }
       // PDF → окно просмотра вместо диалога сохранения (там свои кнопки скачать/печать)
       if (mime === 'application/pdf') {
-        openPdfViewer(`data:application/pdf;base64,${base64}`, 'Документ')
+        openPdfViewer(Buffer.from(base64, 'base64'), 'Документ')
         return
       }
       const ext = GUEST_MIME_EXT[mime] ?? 'bin'
@@ -1088,28 +1073,72 @@ function createWindow(): void {
       return
     }
     // PDF по http(s) → окно просмотра вместо диалога сохранения.
-    // Байты тянем сами и открываем data URL: при Content-Disposition: attachment
+    // Байты тянем сами и открываем viewer: при Content-Disposition: attachment
     // прямой loadURL повторно срабатывает will-download (зацикление).
     // data:/blob: в ветку не пускаем — это уже финальный файл (например, из самого viewer'а).
+    // ВАЖНО: item сразу НЕ cancel'им, а pause — оригинальный запрос может быть POST'ом
+    // (GET-перекачка вернёт HTML/ошибку). Валидируем %PDF-магию, иначе — fallback
+    // на обычное скачивание исходного item (иначе файл терялся).
     const url = item.getURL()
     if (/^https?:/i.test(url) && (item.getMimeType() === 'application/pdf' || /\.pdf$/i.test(name))) {
-      item.cancel()
+      try {
+        item.pause()
+      } catch {
+        // старый Electron без pause — идём старым путём
+      }
       void (async () => {
         try {
           const res = await net.fetch(url)
           if (!res.ok) throw new Error(`HTTP ${res.status}`)
           const buf = Buffer.from(await res.arrayBuffer())
-          openPdfViewer(`data:application/pdf;base64,${buf.toString('base64')}`, name)
+          const isPdf = buf.length > 4 && buf.slice(0, 4).toString('latin1') === '%PDF'
+          if (!isPdf) throw new Error('not a PDF (probably POST-generated or HTML)')
+          try {
+            item.cancel()
+          } catch {
+            // ignore
+          }
+          openPdfViewer(buf, name)
         } catch (err) {
-          console.warn('[shell] pdf viewer failed:', err)
+          console.warn('[shell] pdf viewer failed, fallback to normal download:', err)
+          try {
+            item.resume()
+          } catch {
+            // resume не удался — дальше обычный диалог всё равно покажем,
+            // но item уже мёртв; просто выходим чтобы не зависнуть
+            return
+          }
+          startNormalDownload(item, wc, id, name, startedAt, send)
         }
       })()
       return
     }
-    // Синхронный диалог: пока пользователь выбирает путь, скачивание не убегает вперёд
+    startNormalDownload(item, wc, id, name, startedAt, send)
+  })
+
+  /** Обычное скачивание через диалог сохранения (вынесено для fallback из PDF-ветки) */
+  function startNormalDownload(
+    item: Electron.DownloadItem,
+    wc: WebContents,
+    id: number,
+    name: string,
+    startedAt: string,
+    send: (payload: Record<string, unknown>) => void,
+  ): void {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      try {
+        item.cancel()
+      } catch {
+        // ignore
+      }
+      return
+    }
+    // Синхронный диалог: пока пользователь выбирает путь, скачивание не убегает вперёд.
+    // Имя от remote — через sanitize (иначе `../` убегало из папки загрузок).
+    const safeName = sanitizeFileName(name, 'файл')
     const filePath = dialog.showSaveDialogSync(mainWindow, {
       title: 'Сохранить файл',
-      defaultPath: join(app.getPath('downloads'), name),
+      defaultPath: join(app.getPath('downloads'), safeName),
     })
     if (!filePath) {
       item.cancel()
@@ -1149,7 +1178,7 @@ function createWindow(): void {
       }
       send({ type: 'done', ok, path: savePath, state })
     })
-  })
+  }
 
   // ---------- Разрешения страницы ----------
   const SAFE_PERMISSIONS = new Set(['notifications', 'fullscreen', 'pointerLock'])
@@ -1223,21 +1252,29 @@ app.whenReady().then(() => {
     ipcMain.handle('updater:check', async () => {
       // Ручная проверка из настроек. Результат придёт событием
       // 'updater:event' (available | uptodate | error) — как и при автостарте.
-      // Ошибку проверки ловим здесь, чтобы вызов не падал в рендер с
-      // неверным «проверка доступна только в установленной версии» — реальная
-      // причина уже отправлена событием 'error' выше (см. autoUpdater.on('error')).
-      // Если checkForUpdates повис (GitHub недоступен) — даём понять пользователю,
-      // иначе статус «проверяем…» мог бы висеть бесконечно.
-      const timer = setTimeout(() => {
-        console.log('[updater] check timed out')
-        sendUpdater({ type: 'error', message: 'проверка не ответила — проверьте соединение с GitHub' })
-      }, UPDATER_CHECK_TIMEOUT_MS)
+      // Реальные ошибки уже уходят событием 'error' выше — здесь их глотаем.
+      // Таймаут (GitHub повис) событием НЕ отправляем, а кидаем в invoke:
+      // иначе таймаут-ошибка + поздний реальный результат давали бы
+      // двойной статус («ошибка», а следом «доступно»). Позднее событие
+      // теперь просто доводит UI до корректного состояния само.
+      let timer: NodeJS.Timeout | null = null
+      let timedOut = false
       try {
-        await autoUpdater.checkForUpdates()
+        await Promise.race([
+          autoUpdater.checkForUpdates(),
+          new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => {
+              timedOut = true
+              console.log('[updater] check timed out')
+              reject(new Error('проверка не ответила — проверьте соединение с GitHub'))
+            }, UPDATER_CHECK_TIMEOUT_MS)
+          }),
+        ])
       } catch (err) {
+        if (timedOut) throw err
         console.log('[updater] check failed:', err)
       } finally {
-        clearTimeout(timer)
+        if (timer) clearTimeout(timer)
       }
       return true
     })

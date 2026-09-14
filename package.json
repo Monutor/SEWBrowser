@@ -1,7 +1,7 @@
 {
   "name": "sew-browser",
   "productName": "SEWBrowser",
-  "version": "0.10.2",
+  "version": "0.10.3",
   "description": "Dedicated browser shell for the SEW web app with pluggable features",
   "repository": "https://github.com/Monutor/SEWBrowser.git",
   "main": "./out/main/index.js",
@@ -21,7 +21,6 @@
     "vite": "^7.3.6"
   },
   "dependencies": {
-    "electron-updater": "^6.8.9",
-    "pdf-lib": "^1.17.1"
+    "electron-updater": "^6.8.9"
   }
 }

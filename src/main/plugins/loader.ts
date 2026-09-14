@@ -44,6 +44,31 @@ export function getFeaturesDir(): string {
   return join(__dirname, '..', '..', 'features')
 }
 
+export interface PluginState {
+  name: string
+  enabled: boolean
+}
+
+/** Все плагины из features/ с резолвом enabled (включая выключенные) — для настроек */
+export function listAllPlugins(config: SewConfig): PluginState[] {
+  const dir = getFeaturesDir()
+  if (!existsSync(dir)) return []
+  const result: PluginState[] = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    const manifestPath = join(dir, entry.name, 'manifest.json')
+    if (!existsSync(manifestPath)) continue
+    try {
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as PluginManifest
+      if (!manifest || typeof manifest.name !== 'string' || !manifest.name) continue
+      result.push({ name: manifest.name, enabled: config.plugins[manifest.name] ?? manifest.enabled ?? true })
+    } catch {
+      continue
+    }
+  }
+  return result.sort((a, b) => a.name.localeCompare(b.name))
+}
+
 export function loadPlugins(config: SewConfig): LoadedPlugin[] {
   const dir = getFeaturesDir()
   if (!existsSync(dir)) {

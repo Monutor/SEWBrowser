@@ -48,6 +48,9 @@
 
   // --- состояние ------------------------------------------------------------
   var files = [] // ScanFile-записи (из папки) + «picked» (с диска)
+  // Байты picked-файлов (с диска / из нативного дропа): id -> {base64, mime, name}.
+  // Раньше base64 выбрасывался и picked-запись хранила только мету — файл терялся.
+  var pickedCache = {}
 
   // --- утилиты --------------------------------------------------------------
   function fmtSize(b) {
@@ -72,6 +75,43 @@
 
   function extOf(rec) {
     return (rec.ext || '').toLowerCase()
+  }
+
+  function isPicked(rec) {
+    return !!rec && (rec._picked === true || (typeof rec.id === 'string' && rec.id.indexOf('picked::') === 0))
+  }
+
+  function base64ToBlob(base64, mime) {
+    try {
+      var bin = atob(base64 || '')
+      var len = bin.length
+      var arr = new Uint8Array(len)
+      for (var i = 0; i < len; i++) arr[i] = bin.charCodeAt(i)
+      return new Blob([arr], { type: mime || 'application/octet-stream' })
+    } catch (e) {
+      return null
+    }
+  }
+
+  // Предпросмотр picked-файла в новой вкладке (байты из pickedCache, не с диска).
+  function previewPicked(rec) {
+    var cached = pickedCache[rec.id]
+    if (!cached || !cached.base64) {
+      setStatus('нет данных файла — выберите его заново')
+      return
+    }
+    var blob = base64ToBlob(cached.base64, cached.mime)
+    if (!blob) {
+      setStatus('не удалось открыть файл')
+      return
+    }
+    try {
+      var url = URL.createObjectURL(blob)
+      window.open(url, '_blank')
+      setTimeout(function () { try { URL.revokeObjectURL(url) } catch (e) {} }, 60000)
+    } catch (e) {
+      setStatus('не удалось открыть файл')
+    }
   }
 
   // Безопасное создание DOM-узла без innerHTML (имена файлов могут содержать <script>)
@@ -129,7 +169,31 @@
     // ВАЖНО: в гостевой странице <webview> нет window.shell (нет preload),
     // поэтому все операции идут через host-мост bridgeSend (см. pumpScansBridge
     // в renderer). Прямые вызовы window.shell здесь — undefined и молча падают.
-    if (rec.path && rec.id.indexOf('picked::') !== 0) {
+    if (isPicked(rec)) {
+      // Picked-файл живёт только в pickedCache (байты уже есть) — даём
+      // предпросмотр и удаление из списка (раньше кнопок не было вообще
+      // и запись нельзя было убрать без перезагрузки страницы).
+      var viewBtn = el('button')
+      viewBtn.className = 'scans-block-item-btn'
+      viewBtn.title = 'Предпросмотр'
+      viewBtn.textContent = '👁'
+      viewBtn.addEventListener('click', function (e) {
+        e.stopPropagation()
+        previewPicked(rec)
+      })
+      btns.appendChild(viewBtn)
+
+      var rmBtn = el('button')
+      rmBtn.className = 'scans-block-item-btn scans-block-del'
+      rmBtn.title = 'Убрать из списка'
+      rmBtn.textContent = '🗑'
+      rmBtn.addEventListener('click', function (e) {
+        e.stopPropagation()
+        try { delete pickedCache[rec.id] } catch (err) {}
+        render(files.filter(function (f) { return f.id !== rec.id }))
+      })
+      btns.appendChild(rmBtn)
+    } else if (rec.path) {
       var openBtn = el('button')
       openBtn.className = 'scans-block-item-btn'
       openBtn.title = 'Открыть файл'
@@ -189,7 +253,13 @@
 
   function render(list) {
     if (!listEl) return
-    files = Array.isArray(list) ? list : []
+    // Список от вотчера/main содержит только файлы папки — picked-записи
+    // (только в памяти) сохраняем, иначе живое обновление стирало выбранное.
+    var incoming = Array.isArray(list) ? list : []
+    var picked = files.filter(function (f) { return isPicked(f) })
+    var seen = {}
+    incoming.forEach(function (r) { if (r && r.id) seen[r.id] = true })
+    files = incoming.concat(picked.filter(function (f) { return !seen[f.id] }))
     listEl.innerHTML = ''
     if (files.length === 0) {
       var empty = el('div', 'scans-block-empty')
@@ -233,9 +303,14 @@
     // Выбор файла — тоже через мост (window.shell в госте нет).
     bridgeSend('pick', null).then(function (content) {
       if (!content) return
-      // Копируем «picked»-запись в наш список с кэшем содержимого
+      // main возвращает id 'picked::<path>' — используем его как есть
+      // (раньше лепили свой 'picked::<name>' и ломали связку с кэшем).
+      var id = typeof content.id === 'string' && content.id ? content.id : ('picked::' + (content.name || 'файл'))
+      if (content.base64) {
+        pickedCache[id] = { base64: content.base64, mime: content.mime || 'application/octet-stream', name: content.name }
+      }
       var rec = {
-        id: 'picked::' + (content.name || 'файл'),
+        id: id,
         name: content.name,
         path: null,
         bytes: content.bytes || 0,
@@ -380,7 +455,6 @@
     document.addEventListener('drop', function (e) {
       if (dragId === null) return
       dragId = null
-      dragFile = null
       removeDropzoneHighlight()
       setStatus('перетащите файл из проводника в наш блок или «Выбрать файл»')
     }, true)
@@ -393,9 +467,15 @@
       var result = typeof reader.result === 'string' ? reader.result : ''
       var m = /^data:([^;,]*)?(;base64)?,([\s\S]*)$/.exec(result)
       if (!m) return
-      var mime = (m[1] || '').toLowerCase()
+      var mime = (m[1] || file.type || '').toLowerCase()
+      // readAsDataURL всегда отдаёт base64 — сохраняем байты в кэш,
+      // раньше они выбрасывались и запись была пустой.
+      var base64 = m[2] ? m[3].replace(/\s+/g, '') : ''
+      if (!base64) return
+      var id = 'picked::' + file.name + '::' + Date.now()
+      pickedCache[id] = { base64: base64, mime: mime || 'application/octet-stream', name: file.name }
       var rec = {
-        id: 'picked::' + file.name,
+        id: id,
         name: file.name,
         path: null,
         bytes: file.size || 0,
@@ -404,6 +484,7 @@
         _picked: true,
       }
       render(files.concat([rec]))
+      setStatus('файл добавлен — откройте предпросмотр (👁)')
     }
     reader.onerror = function () {}
     reader.readAsDataURL(file)
@@ -419,6 +500,15 @@
   window.addEventListener('scans-block:open', function () {
     if (collapsed) toggleCollapsed()
     else doList()
+  })
+
+  // Живые обновления от вотчера main (через renderer-форвард 'scans-push'):
+  // свежий список файлов — перерисовываем без лишнего bridgeSend('list').
+  window.addEventListener('scans-block:update', function (e) {
+    try {
+      var list = e && e.detail
+      if (Array.isArray(list)) render(list)
+    } catch (err) {}
   })
 
   // --- старт ---------------------------------------------------------------

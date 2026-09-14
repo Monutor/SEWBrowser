@@ -105,6 +105,9 @@ const api = {
   getPlugins: (): Promise<
     { name: string; code: string; styles: string; init: string; options: string }[]
   > => ipcRenderer.invoke('plugins:list'),
+  /** Все плагины (включая выключенные) — для настроек */
+  getAllPlugins: (): Promise<{ name: string; enabled: boolean }[]> =>
+    ipcRenderer.invoke('plugins:list-all'),
   clearSession: (): Promise<boolean> => ipcRenderer.invoke('session:clear'),
   windowMin: (): void => ipcRenderer.send('window:min'),
   windowMax: (): void => ipcRenderer.send('window:max'),
@@ -140,22 +143,13 @@ const api = {
   /** PDF-просмотр: сохранить документ в окно просмотра (диалог сохранения) */
   savePdf: (base64: string, name: string): Promise<boolean> =>
     ipcRenderer.invoke('pdf-viewer:save', { base64, name }),
+  /** PDF-просмотр: сохранить текущий документ окна (байты уже в temp main) */
+  saveCurrentPdf: (): Promise<boolean> => ipcRenderer.invoke('pdf-viewer:save-current'),
   /** PDF-просмотр: открыть системный диалог печати */
   printPdf: (): Promise<boolean> => ipcRenderer.invoke('pdf-viewer:print'),
   /** Сохранить текст (напр. экспорт вкладок) в файл через диалог сохранения */
   saveTabsFile: (content: string, name: string): Promise<boolean> =>
     ipcRenderer.invoke('tabs:export', { content, name }),
-  /** Сканер (WIA): список подключённых устройств — для кнопки «Определить сканер» */
-  detectScanner: (): Promise<{ ok: boolean; devices?: string[]; error?: string }> =>
-    ipcRenderer.invoke('scanner:detect'),
-  /** Сканер (WIA): отсканировать и вернуть изображение для предосмотра (НЕ сохраняет) */
-  scan: (sessionId?: string): Promise<{ ok: boolean; sessionId?: string; count?: number; base64?: string; mime?: string; ext?: string; error?: string }> =>
-    ipcRenderer.invoke('scanner:scan', sessionId),
-  /** Сканер (WIA): собрать все страницы сессии в один PDF и сохранить в «Загрузки» */
-  saveScan: (sessionId: string): Promise<{ ok: boolean; error?: string }> =>
-    ipcRenderer.invoke('scanner:save', sessionId),
-  /** Открыть окно сканера (отдельное BrowserWindow) */
-  openScanner: (): void => ipcRenderer.send('scanner:open'),
   /** Запустить внешний софт сканера (напр. HP) по его пути из настроек */
   launchScannerApp: (): Promise<boolean> => ipcRenderer.invoke('scans:launch'),
   /** Список файлов в папке «Сканы» — новые в начале */

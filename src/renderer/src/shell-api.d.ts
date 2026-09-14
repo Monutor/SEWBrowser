@@ -191,6 +191,7 @@ interface ShellApi {
   getConfig(): Promise<ShellConfig>
   setConfig(patch: Partial<ShellConfig>): Promise<ShellConfig>
   getPlugins(): Promise<PluginInfo[]>
+  getAllPlugins(): Promise<{ name: string; enabled: boolean }[]>
   clearSession(): Promise<boolean>
   windowMin(): void
   windowMax(): void
@@ -207,17 +208,10 @@ interface ShellApi {
   showDownload(id: string): Promise<boolean>
   openDownloadFile(id: string): Promise<boolean>
   savePdf(base64: string, name: string): Promise<boolean>
+  saveCurrentPdf(): Promise<boolean>
   printPdf(): Promise<boolean>
   /** Сохранить текст (напр. экспорт вкладок) в файл через диалог сохранения */
   saveTabsFile(content: string, name: string): Promise<boolean>
-  /** Сканер (WIA): список подключённых устройств — для кнопки «Определить сканер» */
-  detectScanner(): Promise<{ ok: boolean; devices?: string[]; error?: string }>
-  /** Сканер (WIA): отсканировать и вернуть изображение для предосмотра (НЕ сохраняет) */
-  scan(sessionId?: string): Promise<{ ok: boolean; sessionId?: string; count?: number; base64?: string; mime?: string; ext?: string; error?: string }>
-  /** Сканер (WIA): собрать все страницы сессии в один PDF и сохранить в «Загрузки» */
-  saveScan(sessionId: string): Promise<{ ok: boolean; error?: string }>
-  /** Открыть окно сканера (отдельное BrowserWindow) */
-  openScanner(): void
   /** Запустить внешний софт сканера (напр. HP) по его пути из настроек */
   launchScannerApp(): Promise<boolean>
   /** Список файлов в папке «Сканы» — новые в начале */
