@@ -552,6 +552,69 @@ body {
   cursor: pointer;
 }
 
+/* Выпадающие секции настроек (details/summary) */
+.settings-details {
+  background: #1a1b1e;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 0;
+}
+
+.settings-details > summary {
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.settings-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-details > summary::before {
+  content: '▸ ';
+  color: var(--text-dim);
+}
+
+.settings-details[open] > summary::before {
+  content: '▾ ';
+}
+
+.settings-details > summary:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+}
+
+.settings-details[open] > summary {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px 6px 0 0;
+}
+
+.settings-details .settings-details-body,
+.settings-details #set-plugins {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+
+.settings-details .settings-subblock {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-details .settings-row {
+  margin: 0;
+}
+
+.settings-details .settings-danger {
+  border-top: none;
+  padding-top: 0;
+}
+
 /* Секция «Хранилище» */
 .storage-usage {
   font-size: 12px;
@@ -799,6 +862,25 @@ body {
 
 #set-cancel {
   background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+
+#set-scanner-app-browse,
+#set-scan-folder-browse {
+  margin-left: 6px;
+  padding: 3px 10px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#set-scanner-app-browse:hover,
+#set-scan-folder-browse:hover {
+  background: rgba(255, 255, 255, 0.14);
   color: var(--text);
 }
 

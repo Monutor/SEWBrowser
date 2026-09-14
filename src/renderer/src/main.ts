@@ -25,6 +25,10 @@ const setPlugins = document.getElementById('set-plugins') as HTMLElement | null
 const setStorageUsage = document.getElementById('set-storage-usage') as HTMLElement | null
 const setCookies = document.getElementById('set-cookies') as HTMLElement | null
 const setClearOnExit = document.getElementById('set-clear-on-exit') as HTMLSelectElement | null
+const setScannerApp = document.getElementById('set-scanner-app') as HTMLInputElement | null
+const setScanFolder = document.getElementById('set-scan-folder') as HTMLInputElement | null
+const setScannerAppBrowse = document.getElementById('set-scanner-app-browse') as HTMLButtonElement | null
+const setScanFolderBrowse = document.getElementById('set-scan-folder-browse') as HTMLButtonElement | null
 
 // Загрузки
 const downloadsEl = document.getElementById('downloads') as HTMLElement | null
@@ -420,6 +424,93 @@ async function pumpSewHelperBff(): Promise<void> {
   }
 }
 
+/**
+ * Мост для в-page блока «Сканы»: гость складывает запросы в
+ * window.__sewScansReq, оболочка забирает их (splice — атомарно) и ходит в main
+ * через window.shell.* (у гостя нет window.shell, поэтому мост — в renderer).
+ * Ответи кладём в window.__sewScansRes[id] как JSON-СТРОКУ (structured clone
+ * падает на объектах; строка безопасна). IIFE ОБЯЗАТНО заканчивается `()()`
+ * (ловушка 17: голая `(function(){...})` без вызова не клонируется → GUEST_VIEW_MANAGER_CALL).
+ */
+let scansBridgeStarted = false
+let scansTakeDiagged = false
+function startScansBridge(): void {
+  if (scansBridgeStarted) return
+  scansBridgeStarted = true
+  setInterval(() => void pumpScansBridge(), 500)
+}
+
+async function pumpScansBridge(): Promise<void> {
+  try {
+    if (!plugins.some((p) => p.name === 'scans-block')) return
+    const rawTake = await guestJS<string>(
+      'scans-take',
+      '(function(){try{var q=window.__sewScansReq;if(!Array.isArray(q))return "[]";' +
+        'try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})()',
+    ).catch((err) => {
+      if (!scansTakeDiagged) {
+        scansTakeDiagged = true
+        try {
+          console.warn(
+            `[guestjs:scans-take] guest state: url=${webview.getURL()} loading=${webview.isLoading()} crashed=${webview.isCrashed()}`,
+          )
+        } catch {
+          // ignore
+        }
+      }
+      throw err
+    })
+    let reqs: Array<{ id: string; type: string; payload?: unknown }> = []
+    try {
+      const parsed: unknown = JSON.parse(typeof rawTake === 'string' ? rawTake : '[]')
+      if (Array.isArray(parsed)) reqs = parsed as Array<{ id: string; type: string; payload?: unknown }>
+    } catch {
+      reqs = []
+    }
+    if (!Array.isArray(reqs) || reqs.length === 0) return
+    for (const req of reqs) {
+      if (!req || typeof req.id !== 'string' || typeof req.type !== 'string') continue
+      let result: unknown
+      try {
+        switch (req.type) {
+          case 'list':
+            result = await window.shell.listScans()
+            break
+          case 'read':
+            result = typeof req.payload === 'string' ? await window.shell.readScanFile(req.payload) : null
+            break
+          case 'launch':
+            result = await window.shell.launchScannerApp()
+            break
+          case 'pick':
+            result = await window.shell.pickScanFile()
+            break
+          default:
+            result = { ok: false, error: 'unknown type' }
+        }
+      } catch (err) {
+        console.warn(`[scans-bridge] ${req.type} failed:`, err)
+        result = { ok: false, error: String((err as Error)?.message ?? err) }
+      }
+      try {
+        await guestJS<boolean>(
+          'scans-write',
+          '(function(id,payload){try{(window.__sewScansRes = window.__sewScansRes || {})[id]=' +
+            JSON.stringify(result ?? null) +
+            ';return true}catch(e){return false}})' +
+            '(' +
+            JSON.stringify(req.id) +
+            ')',
+        )
+      } catch {
+        // страница ушла между опросом и ответом — гость повторит запрос сам
+      }
+    }
+  } catch {
+    // webview не готов — молча ждём следующего тика
+  }
+}
+
 function updateAddressBar(): void {
   if (!addressInput) return
   try {
@@ -598,6 +689,8 @@ function openSettings(): void {
     }
   }
   if (setClearOnExit) setClearOnExit.value = config.clearOnExit
+  if (setScannerApp) setScannerApp.value = config.scannerAppPath ?? ''
+  if (setScanFolder) setScanFolder.value = config.scanFolder ?? ''
   settingsOverlay.hidden = false
   void refreshStoragePanel()
 }
@@ -623,6 +716,8 @@ async function saveSettings(): Promise<void> {
       .filter(Boolean),
     plugins: pluginStates,
     clearOnExit: (setClearOnExit?.value as ShellConfig['clearOnExit']) ?? config.clearOnExit,
+    scannerAppPath: setScannerApp?.value.trim() ?? config.scannerAppPath,
+    scanFolder: setScanFolder?.value.trim() ?? config.scanFolder,
   }
   try {
     const oldStartUrl = config.startUrl
@@ -656,6 +751,22 @@ function wireSettings(): void {
   document.getElementById('btn-settings')?.addEventListener('click', openSettings)
   document.getElementById('set-save')?.addEventListener('click', () => void saveSettings())
   document.getElementById('set-cancel')?.addEventListener('click', closeSettings)
+  document.getElementById('set-scanner-app-browse')?.addEventListener('click', async () => {
+    try {
+      const path = await window.shell.browseScannerApp()
+      if (path && setScannerApp) setScannerApp.value = path
+    } catch (err) {
+      console.warn('[shell] scans:browse-app failed:', err)
+    }
+  })
+  document.getElementById('set-scan-folder-browse')?.addEventListener('click', async () => {
+    try {
+      const path = await window.shell.browseScanFolder()
+      if (path && setScanFolder) setScanFolder.value = path
+    } catch (err) {
+      console.warn('[shell] scans:browse-folder failed:', err)
+    }
+  })
   document.getElementById('set-clear-session')?.addEventListener('click', () => void clearSessionAndLogout())
   document.getElementById('set-reload-app')?.addEventListener('click', () => {
     // Ручная проверка обновлений на GitHub. Если версия есть — покажется
@@ -1431,6 +1542,13 @@ function wireToolbar(): void {
   document.getElementById('btn-close')?.addEventListener('click', () => window.shell.windowClose())
 
   document.getElementById('btn-scanner')?.addEventListener('click', () => window.shell.openScanner())
+  document.getElementById('btn-scans')?.addEventListener('click', async () => {
+    try {
+      await guestJS<void>('scans-open', '(function(){try{window.dispatchEvent(new CustomEvent("scans-block:open"))}catch(e){}})()')
+    } catch (err) {
+      console.warn('[shell] failed to open scans block:', err)
+    }
+  })
 
   // DevTools webview — только в debug-режиме
   window.addEventListener('keydown', (event: KeyboardEvent) => {
@@ -2092,6 +2210,7 @@ async function init(): Promise<void> {
   wireWebviewEvents()
   startStatusPolling()
   startSewHelperBridge()
+  startScansBridge()
   // Данные плагинов меняются из оверлеев оболочки — перепушиваем снапшот в страницу
   window.shell.onPluginDataChanged(() => void pushPluginStores())
 

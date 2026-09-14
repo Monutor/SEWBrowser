@@ -68,6 +68,27 @@ interface CookieInfoLike {
   size: number
 }
 
+/** Запись об отсканированном файле в папке «Сканы» */
+interface ScanFileLike {
+  id: string
+  name: string
+  path: string
+  bytes: number
+  ext: string
+  modifiedAt: string
+}
+
+/** Содержимое файла сканов в base64 — для предосмотра и drag-n-drop в госте */
+interface ScanFileContentLike {
+  id: string
+  name: string
+  path: string
+  bytes: number
+  ext: string
+  mime: string
+  base64: string
+}
+
 /** Публичная часть аккаунта SEW (без пароля) */
 interface AccountInfoLike {
   id: string
@@ -135,6 +156,28 @@ const api = {
     ipcRenderer.invoke('scanner:save', sessionId),
   /** Открыть окно сканера (отдельное BrowserWindow) */
   openScanner: (): void => ipcRenderer.send('scanner:open'),
+  /** Запустить внешний софт сканера (напр. HP) по его пути из настроек */
+  launchScannerApp: (): Promise<boolean> => ipcRenderer.invoke('scans:launch'),
+  /** Список файлов в папке «Сканы» — новые в начале */
+  listScans: (): Promise<ScanFileLike[]> => ipcRenderer.invoke('scans:list'),
+  /** Удалить файл из папки «Сканы» (возвращает обновлённый список) */
+  deleteScan: (id: string): Promise<ScanFileLike[]> => ipcRenderer.invoke('scans:delete', id),
+  /** Открыть файл приложением по умолчанию */
+  openScanFile: (filePath: string): Promise<boolean> => ipcRenderer.invoke('scans:open', filePath),
+  /** Показать файл из папки «Сканы» в проводнике */
+  showScanInFolder: (filePath: string): Promise<boolean> => ipcRenderer.invoke('scans:show', filePath),
+  /** Изменение папки сканов: прислать свежий список файлов */
+  onScansChanged: (cb: (event: ScanFileLike[]) => void): void => {
+    ipcRenderer.on('scans:changed', (_event, payload: ScanFileLike[]) => cb(payload))
+  },
+  /** Прочитать файл из папки «Сканы» в base64 — для предосмотра/переноса в госте */
+  readScanFile: (id: string): Promise<ScanFileContentLike> => ipcRenderer.invoke('scans:read', id),
+  /** Открыть выбор файла с диска и прочитать его в base64 (для переноса в SEW) */
+  pickScanFile: (): Promise<ScanFileContentLike | null> => ipcRenderer.invoke('scans:pick'),
+  /** Выбор пути к программе сканера (EXE) через родной диалог — для настроек */
+  browseScannerApp: (): Promise<string> => ipcRenderer.invoke('scans:browse-app'),
+  /** Выбор папки автосохранения сканов через родной диалог — для настроек */
+  browseScanFolder: (): Promise<string> => ipcRenderer.invoke('scans:browse-folder'),
   /** События автообновления: available | progress | ready | error */
   onUpdater: (cb: (event: UpdaterEventLike) => void): void => {
     ipcRenderer.on('updater:event', (_event, payload: UpdaterEventLike) => cb(payload))

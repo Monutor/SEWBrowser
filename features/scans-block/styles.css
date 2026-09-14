@@ -1,0 +1,238 @@
+/* Блок «Сканы» — плавающая панель в правом нижнем углу гостевой страницы SEW.
+   Свой namespace через класс .scans-block-root, чтобы не конфликтовать с CSS SEW. */
+
+.scans-block-root {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 2147483647;
+  width: 340px;
+  max-width: calc(100vw - 40px);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #e8e8ea;
+  background: #2b2d2e;
+  border: 1px solid #3c3f41;
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  user-select: none;
+}
+
+.scans-block-root * {
+  box-sizing: border-box;
+}
+
+/* Сворачиваемая кнопка-шторка */
+.scans-block-toggle {
+  position: fixed;
+  z-index: 2147483647;
+  right: 20px;
+  bottom: 20px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: none;
+  background: #3e6dd5;
+  color: #fff;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+.scans-block-root.scans-block-collapsed .scans-block-panel {
+  display: none;
+}
+
+.scans-block-root.scans-block-collapsed .scans-block-toggle {
+  display: flex;
+}
+
+/* Панель */
+.scans-block-panel {
+  display: flex;
+  flex-direction: column;
+  max-height: 460px;
+}
+
+.scans-block-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #3c3f41;
+  cursor: move;
+}
+
+.scans-block-title {
+  font-weight: 600;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scans-block-head-btn {
+  background: transparent;
+  border: 1px solid #56595b;
+  color: #c9ccd0;
+  padding: 4px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.scans-block-head-btn:hover {
+  background: #4a4d4f;
+  color: #fff;
+}
+
+.scans-block-actions {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid #3c3f41;
+}
+
+.scans-block-btn {
+  flex: 1;
+  border: none;
+  border-radius: 6px;
+  padding: 7px 8px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #fff;
+  background: #3e6dd5;
+}
+
+.scans-block-btn:hover {
+  background: #4a7ae0;
+}
+
+.scans-block-btn.scans-block-btn-ghost {
+  background: #4a4d4f;
+  flex: 0 0 auto;
+}
+
+.scans-block-btn.scans-block-btn-ghost:hover {
+  background: #56595b;
+}
+
+.scans-block-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.scans-block-status {
+  padding: 5px 12px 9px;
+  font-size: 11px;
+  color: #9a9da0;
+  min-height: 18px;
+}
+
+.scans-block-list {
+  overflow-y: auto;
+  max-height: 320px;
+  padding-bottom: 8px;
+}
+
+.scans-block-empty {
+  padding: 18px 12px;
+  color: #9a9da0;
+  font-size: 12px;
+  text-align: center;
+  line-height: 1.6;
+}
+
+.scans-block-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-top: 1px solid #3c3f41;
+  cursor: grab;
+}
+
+.scans-block-item:active {
+  cursor: grabbing;
+}
+
+.scans-block-item:hover {
+  background: #333638;
+}
+
+.scans-block-item.dragging {
+  opacity: 0.4;
+}
+
+.scans-block-icon {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  background: #4a4d4f;
+  font-size: 14px;
+}
+
+.scans-block-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.scans-block-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scans-block-size {
+  font-size: 11px;
+  color: #9a9da0;
+}
+
+.scans-block-item-btns {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.scans-block-item-btn {
+  background: #4a4d4f;
+  border: none;
+  color: #c9ccd0;
+  width: 28px;
+  height: 28px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.scans-block-item-btn:hover {
+  background: #56595b;
+  color: #fff;
+}
+
+.scans-block-item-btn.scans-block-del:hover {
+  background: #c0392b;
+  color: #fff;
+}
+
+/* Подсветка зоны дропа на странице SEW */
+.scans-block-dropzone {
+  position: fixed;
+  z-index: 2147483646;
+  pointer-events: none;
+  outline: 2px dashed #3e6dd5;
+  outline-offset: 2px;
+  background: rgba(62, 109, 213, 0.12);
+  border-radius: 4px;
+}

@@ -60,6 +60,8 @@ interface ShellConfig {
   zoom: Record<string, number>
   clearOnExit: 'none' | 'cache' | 'all'
   tabs: NavTab[]
+  scannerAppPath: string
+  scanFolder: string
 }
 
 interface PluginInfo {
@@ -131,6 +133,27 @@ interface CookieInfo {
   size: number
 }
 
+/** Запись об отсканированном файле в папке «Сканы» */
+interface ScanFile {
+  id: string
+  name: string
+  path: string
+  bytes: number
+  ext: string
+  modifiedAt: string
+}
+
+/** Содержимое файла сканов в base64 — для предосмотра и drag-n-drop в госте */
+interface ScanFileContent {
+  id: string
+  name: string
+  path: string
+  bytes: number
+  ext: string
+  mime: string
+  base64: string
+}
+
 /** Публичная часть аккаунта SEW (без пароля) */
 interface AccountInfo {
   id: string
@@ -194,6 +217,26 @@ interface ShellApi {
   saveScan(sessionId: string): Promise<{ ok: boolean; error?: string }>
   /** Открыть окно сканера (отдельное BrowserWindow) */
   openScanner(): void
+  /** Запустить внешний софт сканера (напр. HP) по его пути из настроек */
+  launchScannerApp(): Promise<boolean>
+  /** Список файлов в папке «Сканы» — новые в начале */
+  listScans(): Promise<ScanFile[]>
+  /** Удалить файл из папки «Сканы» (возвращает обновлённый список) */
+  deleteScan(id: string): Promise<ScanFile[]>
+  /** Открыть файл приложением по умолчанию */
+  openScanFile(filePath: string): Promise<boolean>
+  /** Показать файл из папки «Сканы» в проводнике */
+  showScanInFolder(filePath: string): Promise<boolean>
+  /** Изменение папки сканов: прислать свежий список файлов */
+  onScansChanged(cb: (event: ScanFile[]) => void): void
+  /** Прочитать файл из папки «Сканы» в base64 — для предосмотра/переноса в госте */
+  readScanFile(id: string): Promise<ScanFileContent>
+  /** Открыть выбор файла с диска и прочитать его в base64 (для переноса в SEW) */
+  pickScanFile(): Promise<ScanFileContent | null>
+  /** Выбор пути к программе сканера (EXE) через родной диалог — для настроек */
+  browseScannerApp(): Promise<string>
+  /** Выбор папки автосохранения сканов через родной диалог — для настроек */
+  browseScanFolder(): Promise<string>
   getStorageUsage(): Promise<StorageUsage>
   clearStorage(target: StorageClearTarget): Promise<boolean>
   listCookies(): Promise<CookieInfo[]>

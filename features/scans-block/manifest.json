@@ -1,0 +1,7 @@
+{
+  "name": "scans-block",
+  "version": "0.1.0",
+  "description": "В-page блок «Сканы»: список файлов из папки HP-софта, запуск сканера, перенос документов в SEW drag-n-dropом",
+  "renderer": "./block.js",
+  "styles": "./styles.css"
+}

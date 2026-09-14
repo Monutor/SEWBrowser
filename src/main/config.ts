@@ -19,6 +19,10 @@ export interface SewConfig {
   /** Автоочистка при выходе: 'none' | 'cache' (только HTTP-кэш) | 'all' (кэш + все хранилища) */
   clearOnExit: 'none' | 'cache' | 'all';
   tabs: NavTab[];
+  /** Путь до внешнего софта сканера (напр. HP) — запускается по кнопке «Сканы» */
+  scannerAppPath: string;
+  /** Папка, куда HP-софт сохраняет отсканированные файлы — мониторится на новые файлы */
+  scanFolder: string;
 }
 
 const DEFAULTS: SewConfig = {
@@ -33,8 +37,10 @@ const DEFAULTS: SewConfig = {
    allowlist: ['*.mvideoeldorado.ru', 'kc.tech.mvideo.ru', '*.mvideo.ru', '*.monutor.github.io'],
   plugins: {},
   zoom: {},
-  clearOnExit: 'none',
-  tabs: [],
+   clearOnExit: 'none',
+   tabs: [],
+   scannerAppPath: '',
+   scanFolder: '',
 }
 
 function configFile(): string {

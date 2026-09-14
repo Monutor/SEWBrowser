@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Notification, globalShortcut, ipcMain, net, session, webContents, Menu, dialog, shell, clipboard } from 'electron'
 import type { Input, MenuItemConstructorOptions, WebContents } from 'electron'
 import { join } from 'node:path'
-import { existsSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { autoUpdater } from 'electron-updater'
 import { getConfig, isDebugMode, saveConfig } from './config'
@@ -10,8 +10,20 @@ import { getPluginData, removePluginData, setPluginData } from './plugins/store'
 import { getAccountSecrets, getLastUsedAccountId, listAccounts, removeAccount, saveAccount, setLastUsedAccountId } from './credentials/store'
 import { appendDownloadRecord, clearDownloadHistory, loadDownloadHistory, removeDownloadRecord } from './downloads/history'
 import { combinePagesToPdf, detectWiaDevices, scanViaWia, type ScanPageInput } from './scanner'
+import {
+  createScanWatcher,
+  deleteScanFile,
+  launchScannerApp,
+  listScanFiles,
+  readScanFile,
+  stopScanWatcher,
+  type ScanFile,
+  type ScanFileContent,
+} from './scans'
 
 let mainWindow: BrowserWindow | null = null
+// Мониторинг папки HP-софта (создаётся один раз из scanFolder в настройках).
+let scanWatcher: ReturnType<typeof createScanWatcher> | null = null
 
 // Периодическая проверка обновлений (только в собранном приложении).
 const UPDATER_CHECK_INTERVAL_MS = 2 * 60 * 60 * 1000 // раз в 2 часа
@@ -483,6 +495,86 @@ function createWindow(): void {
     })
 
     ipcMain.on('scanner:open', () => openScanner())
+
+    // ---------- Сканы (внешний HP-софт + папка) ----------
+    // launch — запустить софт по пути из настроек; list — файлы в scanFolder;
+    // delete/open/show — операции с файлами; scans:changed — рассылка окну «Сканы».
+    ipcMain.handle('scans:launch', () => launchScannerApp(getConfig().scannerAppPath))
+    ipcMain.handle('scans:list', () => listScanFiles(getConfig().scanFolder))
+    ipcMain.handle('scans:delete', (_event, id: unknown) => {
+      if (typeof id !== 'string') return []
+      deleteScanFile(id)
+      return listScanFiles(getConfig().scanFolder)
+    })
+    ipcMain.handle('scans:open', async (_event, filePath: unknown) => {
+      if (typeof filePath !== 'string') return false
+      try {
+        const err = await shell.openPath(filePath)
+        return err === ''
+      } catch (err) {
+        console.warn('[shell] scans:open failed:', err)
+        return false
+      }
+    })
+    ipcMain.handle('scans:show', (_event, filePath: unknown) => {
+      if (typeof filePath !== 'string') return false
+      try {
+        shell.showItemInFolder(filePath)
+        return true
+      } catch (err) {
+        console.warn('[shell] scans:show failed:', err)
+        return false
+      }
+    })
+    // Читать содержимое файла в base64 — для предосмотра и drag-n-drop в госте.
+    ipcMain.handle('scans:read', (_event, id: unknown) => {
+      if (typeof id !== 'string') return null
+      const content = readScanFile(id)
+      if (!content) console.warn('[shell] scans:read failed for:', id)
+      return content
+    })
+    // Выбор файла с диска (альтернатива HP-софту): диалог → чтение в base64.
+    ipcMain.handle('scans:pick', async () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return null
+      const paths = await dialog.showOpenDialogSync(mainWindow, {
+        title: 'Выберите файл для переноса в SEW',
+        filters: [
+          { name: 'Документы', extensions: ['pdf', 'png', 'jpg', 'jpeg', 'bmp', 'tif', 'tiff'] },
+          { name: 'Все файлы', extensions: ['*'] },
+        ],
+        properties: ['openFile'],
+      })
+      if (!Array.isArray(paths) || paths.length === 0) return null
+      const content = readScanFile(paths[0])
+      if (!content) return null
+      // Метка «picked» отличает выбранный с диска файл от файла из папки HP.
+      return { ...content, id: 'picked::' + content.path }
+    })
+    // Выбор пути к программе сканера (EXE) — для настройки scannerAppPath.
+    ipcMain.handle('scans:browse-app', async () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return ''
+      const paths = await dialog.showOpenDialogSync(mainWindow, {
+        title: 'Выберите программу сканера (EXE)',
+        filters: [{ name: 'Программа', extensions: ['exe'] }],
+        properties: ['openFile'],
+      })
+      return Array.isArray(paths) && paths.length > 0 ? paths[0] : ''
+    })
+    // Выбор павки автосохранения сканов — для настройки scanFolder.
+    ipcMain.handle('scans:browse-folder', async () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return ''
+      const paths = await dialog.showOpenDialogSync(mainWindow, {
+        title: 'Выберите папку автосохранения сканов',
+        properties: ['openDirectory'],
+      })
+      return Array.isArray(paths) && paths.length > 0 ? paths[0] : ''
+    })
+
+    // Мониторинг папки HP-софта: новые файлы пересылаем в окно «Сканы».
+    scanWatcher = createScanWatcher(getConfig().scanFolder, (files: ScanFile[]) => {
+      if (getConfig().debug) console.log(`[shell] в папке сканов: ${files.length} файл(ов)`)
+    })
+
   ipcMain.on('window:max', () => {
     if (!mainWindow) return
     if (mainWindow.isMaximized()) mainWindow.unmaximize()
@@ -894,6 +986,7 @@ function createWindow(): void {
     void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildScannerHtml())}`)
   }
 
+
   async function downloadGuestUrl(guest: WebContents, url: string): Promise<void> {
     const id = ++downloadSeq
     const startedAt = new Date().toISOString()
@@ -1174,6 +1267,8 @@ app.on('window-all-closed', () => {
     clearInterval(updaterInterval)
     updaterInterval = null
   }
+  stopScanWatcher(scanWatcher)
+  scanWatcher = null
   void (async () => {
     const mode = getConfig().clearOnExit
     try {
