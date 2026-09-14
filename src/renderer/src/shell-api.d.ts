@@ -61,6 +61,7 @@ interface ShellConfig {
   clearOnExit: 'none' | 'cache' | 'all'
   tabs: NavTab[]
   scannerAppPath: string
+  scannerAppArgs: string
   scanFolder: string
 }
 

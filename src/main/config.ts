@@ -21,6 +21,8 @@ export interface SewConfig {
   tabs: NavTab[];
   /** Путь до внешнего софта сканера (напр. HP) — запускается по кнопке «Сканы» */
   scannerAppPath: string;
+  /** Аргументы запуска софта сканера (напр. HP G3110 требует -mg3110) */
+  scannerAppArgs: string;
   /** Папка, куда HP-софт сохраняет отсканированные файлы — мониторится на новые файлы */
   scanFolder: string;
 }
@@ -40,6 +42,7 @@ const DEFAULTS: SewConfig = {
    clearOnExit: 'none',
    tabs: [],
    scannerAppPath: '',
+   scannerAppArgs: '',
    scanFolder: '',
 }
 

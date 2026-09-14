@@ -499,7 +499,7 @@ function createWindow(): void {
     // ---------- Сканы (внешний HP-софт + папка) ----------
     // launch — запустить софт по пути из настроек; list — файлы в scanFolder;
     // delete/open/show — операции с файлами; scans:changed — рассылка окну «Сканы».
-    ipcMain.handle('scans:launch', () => launchScannerApp(getConfig().scannerAppPath))
+    ipcMain.handle('scans:launch', () => launchScannerApp(getConfig().scannerAppPath, getConfig().scannerAppArgs ?? ''))
     ipcMain.handle('scans:list', () => listScanFiles(getConfig().scanFolder))
     ipcMain.handle('scans:delete', (_event, id: unknown) => {
       if (typeof id !== 'string') return []

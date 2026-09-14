@@ -26,6 +26,7 @@ const setStorageUsage = document.getElementById('set-storage-usage') as HTMLElem
 const setCookies = document.getElementById('set-cookies') as HTMLElement | null
 const setClearOnExit = document.getElementById('set-clear-on-exit') as HTMLSelectElement | null
 const setScannerApp = document.getElementById('set-scanner-app') as HTMLInputElement | null
+const setScannerArgs = document.getElementById('set-scanner-args') as HTMLInputElement | null
 const setScanFolder = document.getElementById('set-scan-folder') as HTMLInputElement | null
 const setScannerAppBrowse = document.getElementById('set-scanner-app-browse') as HTMLButtonElement | null
 const setScanFolderBrowse = document.getElementById('set-scan-folder-browse') as HTMLButtonElement | null
@@ -690,6 +691,7 @@ function openSettings(): void {
   }
   if (setClearOnExit) setClearOnExit.value = config.clearOnExit
   if (setScannerApp) setScannerApp.value = config.scannerAppPath ?? ''
+  if (setScannerArgs) setScannerArgs.value = (config as ShellConfig).scannerAppArgs ?? ''
   if (setScanFolder) setScanFolder.value = config.scanFolder ?? ''
   settingsOverlay.hidden = false
   void refreshStoragePanel()
@@ -717,6 +719,7 @@ async function saveSettings(): Promise<void> {
     plugins: pluginStates,
     clearOnExit: (setClearOnExit?.value as ShellConfig['clearOnExit']) ?? config.clearOnExit,
     scannerAppPath: setScannerApp?.value.trim() ?? config.scannerAppPath,
+    scannerAppArgs: setScannerArgs?.value.trim() ?? (config as ShellConfig).scannerAppArgs ?? '',
     scanFolder: setScanFolder?.value.trim() ?? config.scanFolder,
   }
   try {
@@ -1909,11 +1912,12 @@ function currentViewUrl(): string {
   }
 }
 
-// Лента вкладок во второй строке тулбара. Рендерим заново при структурных
-// изменениях; активная вкладка подсвечивается по текущему URL страницы (SPA).
+// Лента вкладок во второй строке тулбара. Всегда видима (даже при пустом
+// списке), иначе кнопки +/⋮ внутри скрытой ленты недостижимы, а в тулбаре
+// отдельной кнопки не было — на чистой установке вкладки нельзя было создать.
 function renderStrip(): void {
   if (!tabstrip || !tabsEl || !config) return
-  tabstrip.hidden = config.tabs.length === 0
+  tabstrip.hidden = false
   tabsEl.innerHTML = ''
   const current = currentViewUrl()
   for (const tab of config.tabs) {
@@ -2104,6 +2108,7 @@ function importTabs(file: File): void {
 }
 
 function wireTabs(): void {
+  document.getElementById('btn-tabs')?.addEventListener('click', () => void openTabs())
   document.getElementById('tab-add')?.addEventListener('click', () => void openTabs())
   document.getElementById('tab-manage')?.addEventListener('click', () => void openTabs())
   document.getElementById('tab-add-new')?.addEventListener('click', () => { resetForm(); openEditForm({ id: '', name: '', url: '' }) })

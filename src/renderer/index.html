@@ -26,7 +26,8 @@
       <button id="btn-accounts" title="Аккаунты SEW (Ctrl+Shift+L)">&#128273;</button>
       <button id="btn-downloads" title="Загрузки">&#128229;</button>
       <button id="btn-scanner" title="Сканировать документ">&#128209;</button>
-      <button id="btn-scans" title="Сканы (папка HP-софта)">&#128194;</button>
+       <button id="btn-scans" title="Сканы (папка HP-софта)">&#128194;</button>
+       <button id="btn-tabs" title="Вкладки">&#128193;</button>
        <button id="btn-templates" title="Шаблоны SEW (Ctrl+Shift+T)">&#128196;</button>
        <button id="btn-settings" title="Настройки">&#9881;</button>
       <div id="downloads" hidden title="Загрузки"></div>
@@ -88,6 +89,10 @@
               Программа сканера (EXE, запускает скан и кладёт файл в папку)
               <input id="set-scanner-app" spellcheck="false" autocomplete="off" placeholder="Напр. C:\Program Files\HP\...\scan.exe" />
               <button type="button" id="set-scanner-app-browse">…</button>
+            </label>
+            <label class="settings-row">
+              Аргументы запуска (напр. HP G3110 требует -mg3110)
+              <input id="set-scanner-args" spellcheck="false" autocomplete="off" placeholder="Напр. -mg3110" />
             </label>
             <label class="settings-row">
               Папка автосохранения сканов

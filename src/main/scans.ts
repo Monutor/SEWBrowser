@@ -87,15 +87,35 @@ export function deleteScanFile(filePath: string): boolean {
 const activeChildren = new Set<ChildProcess>()
 
 /**
+ * Разбор строки аргументов в массив для spawn: учитывает кавычки
+ * ("C:\Program Files\..." и '...'), иначе — сплит по пробелам.
+ * Нужно для софта типа HP G3110, который без ключа -mg3110 выдаёт ошибку.
+ */
+export function parseAppArgs(raw: string): string[] {
+  const out: string[] = []
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g
+  let m: RegExpExecArray | null
+  const src = (raw ?? '').trim()
+  if (!src) return out
+  while ((m = re.exec(src)) !== null) {
+    out.push(m[1] ?? m[2] ?? m[3])
+  }
+  return out
+}
+
+/**
  * Запуск внешнего софта сканера (напр. HP). Возвращает true, если процесс
  * удалось запустить. Сам HP-софт показывает свой интерфейс (можно отсканировать
  * несколько листов) и сохраняет PDF в папку scanFolder — она задана заранее
  * в настройках самого софта.
  */
-export function launchScannerApp(appPath: string): boolean {
-  if (!appPath || !existsSync(appPath)) return false
+export function launchScannerApp(appPath: string, appArgs = ''): boolean {
+  // Пользователи часто вставляют путь из свойств ярлыка вместе с кавычками —
+  // existsSync/spawn их не понимают, поэтому срезаем окружающую пару кавычек.
+  const cleanPath = (appPath ?? '').trim().replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1')
+  if (!cleanPath || !existsSync(cleanPath)) return false
   try {
-    const child = spawn(appPath, [], { stdio: ['ignore', 'ignore', 'ignore'] })
+    const child = spawn(cleanPath, parseAppArgs(appArgs), { stdio: ['ignore', 'ignore', 'ignore'] })
     activeChildren.add(child)
     child.on('exit', () => {
       activeChildren.delete(child)
