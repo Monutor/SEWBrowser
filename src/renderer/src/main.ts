@@ -486,6 +486,15 @@ async function pumpScansBridge(): Promise<void> {
           case 'pick':
             result = await window.shell.pickScanFile()
             break
+          case 'open':
+            result = typeof req.payload === 'string' ? await window.shell.openScanFile(req.payload) : false
+            break
+          case 'show':
+            result = typeof req.payload === 'string' ? await window.shell.showScanInFolder(req.payload) : false
+            break
+          case 'delete':
+            result = typeof req.payload === 'string' ? await window.shell.deleteScan(req.payload) : []
+            break
           default:
             result = { ok: false, error: 'unknown type' }
         }
@@ -496,11 +505,11 @@ async function pumpScansBridge(): Promise<void> {
       try {
         await guestJS<boolean>(
           'scans-write',
-          '(function(id,payload){try{(window.__sewScansRes = window.__sewScansRes || {})[id]=' +
-            JSON.stringify(result ?? null) +
-            ';return true}catch(e){return false}})' +
+          '(function(id,payload){try{(window.__sewScansRes = window.__sewScansRes || {})[id]=payload;return true}catch(e){return false}})' +
             '(' +
             JSON.stringify(req.id) +
+            ',' +
+            JSON.stringify(result ?? null) +
             ')',
         )
       } catch {

@@ -45,12 +45,15 @@
   justify-content: center;
 }
 
-.scans-block-root.scans-block-collapsed .scans-block-panel {
-  display: none;
+.scans-block-root.scans-block-collapsed {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 
-.scans-block-root.scans-block-collapsed .scans-block-toggle {
-  display: flex;
+.scans-block-root.scans-block-collapsed .scans-block-panel {
+  display: none;
 }
 
 /* Панель */

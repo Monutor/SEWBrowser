@@ -126,6 +126,9 @@
     btns.appendChild(dragHint)
 
     // Открыть / Показать в папке — только у файлов с реальным путём на диске
+    // ВАЖНО: в гостевой странице <webview> нет window.shell (нет preload),
+    // поэтому все операции идут через host-мост bridgeSend (см. pumpScansBridge
+    // в renderer). Прямые вызовы window.shell здесь — undefined и молча падают.
     if (rec.path && rec.id.indexOf('picked::') !== 0) {
       var openBtn = el('button')
       openBtn.className = 'scans-block-item-btn'
@@ -133,7 +136,9 @@
       openBtn.textContent = '↗'
       openBtn.addEventListener('click', function (e) {
         e.stopPropagation()
-        void window.shell.openScanFile(rec.path)
+        bridgeSend('open', rec.path).then(function (ok) {
+          if (ok !== true) setStatus('не удалось открыть файл')
+        })
       })
       btns.appendChild(openBtn)
 
@@ -143,7 +148,9 @@
       inFolderBtn.textContent = '📁'
       inFolderBtn.addEventListener('click', function (e) {
         e.stopPropagation()
-        void window.shell.showScanInFolder(rec.path)
+        bridgeSend('show', rec.path).then(function (ok) {
+          if (ok !== true) setStatus('не удалось показать файл в папке')
+        })
       })
       btns.appendChild(inFolderBtn)
 
@@ -153,8 +160,9 @@
       delBtn.textContent = '🗑'
       delBtn.addEventListener('click', function (e) {
         e.stopPropagation()
-        void window.shell.deleteScan(rec.id).then(function (list) {
+        bridgeSend('delete', rec.id).then(function (list) {
           if (Array.isArray(list)) render(list)
+          else doList()
         })
       })
       btns.appendChild(delBtn)
@@ -222,7 +230,8 @@
   }
 
   function doPick() {
-    window.shell.pickScanFile().then(function (content) {
+    // Выбор файла — тоже через мост (window.shell в госте нет).
+    bridgeSend('pick', null).then(function (content) {
       if (!content) return
       // Копируем «picked»-запись в наш список с кэшем содержимого
       var rec = {
@@ -261,12 +270,18 @@
   }
 
   // --- навигация «свернуть/развернуть» -------------------------------------
+  // ВАЖНО: toggleEl — отдельный элемент (sibling rootEl в body), а не ребёнок
+  // rootEl, поэтому его видимостью управляем явно через JS. Сам rootEl в
+  // collapsed-состоянии полностью скрыт CSS (display:none), чтобы не оставалась
+  // «линия» от пустого контейнера с border/background.
   function toggleCollapsed() {
     collapsed = !collapsed
     if (collapsed) {
       rootEl.classList.add('scans-block-collapsed')
+      if (toggleEl) toggleEl.style.display = 'flex'
     } else {
       rootEl.classList.remove('scans-block-collapsed')
+      if (toggleEl) toggleEl.style.display = 'none'
       doList()
     }
   }
@@ -325,6 +340,9 @@
     toggleEl.addEventListener('click', function () {
       if (collapsed) toggleCollapsed()
     })
+    // Начальное состояние: блок свёрнут -> показываем только кнопку,
+    // сам rootEl скрыт CSS-классом scans-block-collapsed (без «линии»).
+    toggleEl.style.display = collapsed ? 'flex' : 'none'
 
     document.body.appendChild(rootEl)
     document.body.appendChild(toggleEl)
