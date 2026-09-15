@@ -957,9 +957,12 @@ function createWindow(): void {
     })
     // Убираем дефолтное меню Electron (File/Edit/View) — в туларе свои кнопки
     win.setMenu(null)
-    pdfViewerDocs.set(win.webContents.id, { filePath: pdfPath, title })
+    // id забираем сразу: после 'closed' геттер win.webContents бросает
+    // «Object has been destroyed» (uncaughtException при закрытии окна).
+    const wcId = win.webContents.id
+    pdfViewerDocs.set(wcId, { filePath: pdfPath, title })
     win.on('closed', () => {
-      pdfViewerDocs.delete(win.webContents.id)
+      pdfViewerDocs.delete(wcId)
       for (const p of [pdfPath, htmlPath]) {
         try {
           if (p) unlinkSync(p)
