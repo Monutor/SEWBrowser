@@ -122,6 +122,56 @@
   }
 
   var dragId = null // id перетаскиваемого файла ( для подсветки зоны)
+  var dragSent = null // что положено в dataTransfer в dragstart (имя/размер/сам File)
+  var redispatching = false // guard от рекурсии при синтетическом redispatch drop
+
+  // Кэш готовых File для drag-n-drop в форму SEW: id -> File.
+  // Источник и цель лежат в одном документе гостевой страницы, поэтому
+  // dataTransfer.items.add(file) в dragstart доставляет настоящий файл
+  // в drop-обработчик SEW. Байты нужны СИНХРОННО в момент dragstart —
+  // греем кэш фоном после render + по hover/mousedown на строке.
+  var fileCache = {}
+  var PRELOAD_MAX_BYTES = 30 * 1024 * 1024
+  function storeFileInCache(id, name, mime, base64) {
+    if (!id || !base64 || fileCache[id]) return fileCache[id] || null
+    var blob = base64ToBlob(base64, mime)
+    if (!blob) return null
+    try {
+      var f = new File([blob], name || 'файл', { type: mime || 'application/octet-stream' })
+      fileCache[id] = f
+      return f
+    } catch (e) {
+      return null
+    }
+  }
+  function cachedFileFor(rec) {
+    if (!rec || !rec.id) return null
+    if (fileCache[rec.id]) return fileCache[rec.id]
+    var pc = pickedCache[rec.id]
+    if (pc && pc.base64) return storeFileInCache(rec.id, rec.name, pc.mime, pc.base64)
+    return null
+  }
+  // Асинхронно подтягивает байты через мост и кладёт File в кэш.
+  // Возвращает Promise<File|null>; вызывается фоном, не в dragstart.
+  function ensureFileCached(rec) {
+    var hit = cachedFileFor(rec)
+    if (hit) return Promise.resolve(hit)
+    if (!rec || !rec.id || isPicked(rec)) return Promise.resolve(null)
+    if (rec.bytes && rec.bytes > 100 * 1024 * 1024) return Promise.resolve(null)
+    return bridgeSend('read', rec.id).then(function (content) {
+      if (!content || !content.base64) return null
+      return storeFileInCache(rec.id, content.name || rec.name, content.mime, content.base64)
+    })
+  }
+  function preloadFiles(list) {
+    if (!Array.isArray(list)) return
+    list.forEach(function (rec) {
+      if (!rec || !rec.id || fileCache[rec.id]) return
+      if (rec.bytes && rec.bytes > PRELOAD_MAX_BYTES) return
+      if (isPicked(rec)) { cachedFileFor(rec); return }
+      ensureFileCached(rec)
+    })
+  }
 
   // --- отрисовка ------------------------------------------------------------
   var rootEl = null
@@ -190,6 +240,7 @@
       rmBtn.addEventListener('click', function (e) {
         e.stopPropagation()
         try { delete pickedCache[rec.id] } catch (err) {}
+        try { delete fileCache[rec.id] } catch (err2) {}
         render(files.filter(function (f) { return f.id !== rec.id }))
       })
       btns.appendChild(rmBtn)
@@ -225,6 +276,7 @@
       delBtn.addEventListener('click', function (e) {
         e.stopPropagation()
         bridgeSend('delete', rec.id).then(function (list) {
+          try { delete fileCache[rec.id] } catch (err) {}
           if (Array.isArray(list)) render(list)
           else doList()
         })
@@ -234,17 +286,33 @@
 
     row.appendChild(btns)
 
-    // Drag-n-drop: помечаем перетаскиваемый файл и подсвечиваем зону.
+    // Drag-n-drop в форму SEW: кладём настоящий File (кэш прогрет фоном),
+    // text/plain — только фолбэк. Байты в dragstart взять неоткуда
+    // (мост асинхронный), поэтому без кэша просим потянуть ещё раз.
+    row.addEventListener('mouseenter', function () { ensureFileCached(rec) })
+    row.addEventListener('mousedown', function () { ensureFileCached(rec) })
     row.addEventListener('dragstart', function (e) {
       dragId = rec.id
+      dragSent = null
       try {
         e.dataTransfer.effectAllowed = 'copy'
+        var f = cachedFileFor(rec)
+        if (f) {
+          try { e.dataTransfer.items.add(f); dragSent = { name: f.name, size: f.size, file: f } } catch (addErr) {}
+        } else {
+          ensureFileCached(rec)
+        }
         e.dataTransfer.setData('text/plain', rec.name)
       } catch (err) {}
+      try { console.log('[scans-block] dragstart: ' + rec.name + ' — ' + (dragSent ? ('файл ' + dragSent.size + ' Б') : 'БЕЗ файла (кэш пуст)')) } catch (logErr) {}
+      if (!cachedFileFor(rec)) {
+        setStatus('файл готовится — потяните ещё раз через секунду')
+      }
       addDropzoneHighlight()
     })
     row.addEventListener('dragend', function () {
       dragId = null
+      dragSent = null
       removeDropzoneHighlight()
     })
 
@@ -274,6 +342,7 @@
     files.forEach(function (rec) {
       listEl.appendChild(renderItem(rec))
     })
+    preloadFiles(files)
   }
 
   function setStatus(text) {
@@ -438,14 +507,84 @@
       })
     })
 
-    // Глобальные обработчики drag: подсветка зоны на странице и подсказка.
-    // ВАЖНО: в Chromium/Electron нельзя программно положить synthetic File в
-    // dataTransfer.files третьего drop-обработчика (ограничение безопасности —
-    // защита от кражи локальных файлов). Поэтому «перенос в SEW» перетаскиванием
-    // из нашего блока технически не доставляет файл в форму SEW. Реальные пути:
-    //   - перетащить файл из проводника/рабочего стола ПРЯМО НАШ БЛОК (см. ниже)
-    //     или нажать «Выбрать файл» (нативный диалog main);
-    //   - форма SEW принимает файлы только через свой нативный дроп/диалог.
+    // Глобальные обработчики drag: подсветка зоны + прикрепление файла.
+    // ВАЖНО: Chromium выкидывает File из dataTransfer при нативном drag
+    // (проверено: dragstart items=1 types=[Files] -> drop types=[text/plain],
+    // files=0) — долететь файл перетаскиванием НЕ может физически, даже в
+    // пределах одного документа. Поэтому жест «отпустить над формой» ловим
+    // здесь (capture drop) и прикрепляем файл программно: ищем input[type=file]
+    // рядом с точкой дропа и кладём файл туда + dispatch change; если инпута
+    // нет — шлём элементу под курсором синтетический drop уже С файлами
+    // (синтетике файлы видны — нет нативного round-trip, который их режет).
+    // Отдельно в наш блок можно дропнуть файл из проводника (см. ниже).
+    // Ищем input[type=file] рядом с точкой дропа: сам элемент, label[for],
+    // затем первый инпут внутри ближайших предков (слот «АКТ МХ-14» и т.п.).
+    function findFileInputAtPoint(x, y) {
+      var t = null
+      try { t = document.elementFromPoint(x, y) } catch (err) { t = null }
+      if (!t || t === document.documentElement) return null
+      try {
+        if (t.tagName === 'INPUT' && t.type === 'file') return t
+        var node = t
+        for (var depth = 0; depth < 6 && node && node !== document.body; depth++) {
+          if (node.tagName === 'LABEL' && node.htmlFor) {
+            var labelled = document.getElementById(node.htmlFor)
+            if (labelled && labelled.tagName === 'INPUT' && labelled.type === 'file') return labelled
+          }
+          var q = null
+          try { q = node.querySelector ? node.querySelector('input[type="file"]') : null } catch (qErr) { q = null }
+          if (q) return q
+          node = node.parentNode
+        }
+      } catch (err) {}
+      return null
+    }
+    function fireChange(input) {
+      try {
+        var ev = null
+        try { ev = new Event('change', { bubbles: true }) } catch (ctorErr) {
+          ev = document.createEvent('Event'); ev.initEvent('change', true, true)
+        }
+        input.dispatchEvent(ev)
+      } catch (err) {}
+      try {
+        var ev2 = null
+        try { ev2 = new Event('input', { bubbles: true }) } catch (ctorErr2) {
+          ev2 = document.createEvent('Event'); ev2.initEvent('input', true, true)
+        }
+        input.dispatchEvent(ev2)
+      } catch (err2) {}
+    }
+    function attachFileToInputAtPoint(file, x, y) {
+      var input = findFileInputAtPoint(x, y)
+      if (!input) return false
+      try {
+        var dt = new DataTransfer()
+        dt.items.add(file)
+        input.files = dt.files
+        fireChange(input)
+        return true
+      } catch (err) {
+        return false
+      }
+    }
+    function redispatchDropWithFiles(file, x, y) {
+      var t = null
+      try { t = document.elementFromPoint(x, y) } catch (err) { t = null }
+      if (!t) return false
+      try {
+        var dt = new DataTransfer()
+        dt.items.add(file)
+        var ev = new DragEvent('drop', { bubbles: true, cancelable: true, clientX: x, clientY: y, dataTransfer: dt })
+        redispatching = true
+        t.dispatchEvent(ev)
+        redispatching = false
+        return true
+      } catch (err) {
+        redispatching = false
+        return false
+      }
+    }
     document.addEventListener('dragover', function (e) {
       if (dragId === null) return
       e.preventDefault()
@@ -453,10 +592,32 @@
       moveDropzoneHighlight(e.clientX, e.clientY)
     })
     document.addEventListener('drop', function (e) {
+      if (redispatching) return
       if (dragId === null) return
+      var file = dragSent && dragSent.file ? dragSent.file : null
+      var fileName = dragSent && dragSent.name ? dragSent.name : ''
       dragId = null
+      dragSent = null
       removeDropzoneHighlight()
-      setStatus('перетащите файл из проводника в наш блок или «Выбрать файл»')
+      if (!file) {
+        setStatus('файл готовится — потяните ещё раз через секунду')
+        return
+      }
+      // Нативный пакет всегда пуст (см. комментарий выше) — прикрепляем сами.
+      var x = e.clientX, y = e.clientY
+      if (attachFileToInputAtPoint(file, x, y)) {
+        try { e.preventDefault(); e.stopPropagation() } catch (stopErr) {}
+        try { console.log('[scans-block] прикреплено в SEW через input: ' + fileName) } catch (logErr) {}
+        setStatus('прикреплено в SEW: ' + fileName)
+        return
+      }
+      if (redispatchDropWithFiles(file, x, y)) {
+        try { e.preventDefault(); e.stopPropagation() } catch (stopErr2) {}
+        try { console.log('[scans-block] передан синтетический drop с файлом: ' + fileName) } catch (logErr2) {}
+        setStatus('передано в зону SEW: ' + fileName)
+        return
+      }
+      setStatus('не нашли зону SEW под курсором — отпустите файл точнее над слотом')
     }, true)
   }
 
