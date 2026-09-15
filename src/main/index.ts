@@ -820,7 +820,9 @@ function createWindow(): void {
 
   /** Сборка HTML-страницы PDF-просмотра: тулбар с кнопками «Скачать»/«Печать» + embed viewer'а.
    *  pdfSrc — file:// URL временного PDF (не data:, иначе большие файлы рвут лимиты URL).
-   *  Сам HTML маленький, его грузим через data:text/html как раньше. */
+   *  Саму обёртку тоже грузим через file:// из temp, а не через data:text/html:
+   *  страницу data: Chromium считает opaque origin и режет в ней file:// сабресурсы
+   *  («Not allowed to load local resource») — embed оставался пустым серым полем. */
   function buildPdfViewerHtml(pdfSrc: string, title: string): string {
     const safeTitle = htmlEscape(title || 'Документ')
     const safeSrc = htmlEscape(pdfSrc)
@@ -920,8 +922,21 @@ function createWindow(): void {
       // Даём спулеру забрать задание, затем гасим скрытое окно
       setTimeout(cleanup, 2000)
     }
-    printWin.webContents.once('did-finish-load', () => {
-      // PDF-плагину нужно время на инициализацию после did-finish-load
+    printWin.webContents.on('did-finish-load', () => {
+      if (printWin.isDestroyed() || done) return
+      // Отсекаем чужие finish (стартовый about:blank и т.п.) — печатаем
+      // только когда загрузился именно наш PDF.
+      let url = ''
+      try {
+        url = printWin.webContents.getURL()
+      } catch {
+        return
+      }
+      if (!url.startsWith('file:')) return
+      // PDF-плагину нужно время на инициализацию и первую отрисовку после
+      // did-finish-load (готовность через DOM не отследить — хост-страница
+      // вьювера в main-мире пуста). Печать раньше даёт пустой белый лист,
+      // особенно при холодном старте вьювера на медленной машине.
       setTimeout(() => {
         if (printWin.isDestroyed() || done) return
         try {
@@ -930,7 +945,7 @@ function createWindow(): void {
           console.warn('[shell] pdf print failed:', err)
           finish()
         }
-      }, 800)
+      }, 2500)
     })
     printWin.webContents.once('did-fail-load', (_e, code, desc) => {
       console.warn('[shell] pdf print load failed:', code, desc)
@@ -943,10 +958,16 @@ function createWindow(): void {
 
   function openPdfViewer(pdf: Buffer, title: string): void {
     // Пишем во временный файл: data: URL с base64 рвал лимиты на больших PDF.
-    let filePath = ''
+    // Обёртку кладём рядом (.html) и грузим через file:// — data:-страница
+    // не может показать file:// embed (см. buildPdfViewerHtml).
+    let pdfPath = ''
+    let htmlPath = ''
     try {
-      filePath = join(getPdfTempDir(), `${randomUUID()}.pdf`)
-      writeFileSync(filePath, pdf)
+      const base = join(getPdfTempDir(), randomUUID())
+      pdfPath = `${base}.pdf`
+      htmlPath = `${base}.html`
+      writeFileSync(pdfPath, pdf)
+      writeFileSync(htmlPath, buildPdfViewerHtml(pathToFileURL(pdfPath).toString(), title), 'utf-8')
     } catch (err) {
       console.warn('[shell] pdf viewer failed (temp write):', err)
       return
@@ -966,18 +987,18 @@ function createWindow(): void {
     })
     // Убираем дефолтное меню Electron (File/Edit/View) — в туларе свои кнопки
     win.setMenu(null)
-    pdfViewerDocs.set(win.webContents.id, { filePath, title })
+    pdfViewerDocs.set(win.webContents.id, { filePath: pdfPath, title })
     win.on('closed', () => {
       pdfViewerDocs.delete(win.webContents.id)
-      try {
-        if (filePath) unlinkSync(filePath)
-      } catch {
-        // temp подчистит ОС
+      for (const p of [pdfPath, htmlPath]) {
+        try {
+          if (p) unlinkSync(p)
+        } catch {
+          // temp подчистит ОС
+        }
       }
     })
-    const fileUrl = pathToFileURL(filePath).toString()
-    const html = buildPdfViewerHtml(fileUrl, title)
-    void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+    void win.loadURL(pathToFileURL(htmlPath).toString())
   }
 
   async function downloadGuestUrl(guest: WebContents, url: string): Promise<void> {
