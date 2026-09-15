@@ -15,6 +15,7 @@ interface ShellConfigLike {
   zoom: Record<string, number>
   clearOnExit: 'none' | 'cache' | 'all'
   tabs: NavTabLike[]
+  scanFolders: ScanFolderLike[]
 }
 
 interface DownloadEventLike {
@@ -76,6 +77,18 @@ interface ScanFileLike {
   bytes: number
   ext: string
   modifiedAt: string
+  /** ID папки из настроек (для группировки по папкам) */
+  folderId?: string
+  /** Относительный путь внутри папки, '/'-сепаратор ('sub/dir/file', у корня '') */
+  relPath?: string
+  /** Корневая папка (из scanFolders) — для заголовка раздела в блоке. */
+  folderPath?: string
+}
+
+/** Папка со сканами из настроек оболочки */
+interface ScanFolderLike {
+  id: string
+  path: string
 }
 
 /** Содержимое файла сканов в base64 — для предосмотра и drag-n-drop в госте */
@@ -152,8 +165,10 @@ const api = {
     ipcRenderer.invoke('tabs:export', { content, name }),
   /** Запустить внешний софт сканера (напр. HP) по его пути из настроек */
   launchScannerApp: (): Promise<boolean> => ipcRenderer.invoke('scans:launch'),
-  /** Список файлов в папке «Сканы» — новые в начале */
+  /** Список файлов в папках «Сканы» (рекурсивно) — новые в начале */
   listScans: (): Promise<ScanFileLike[]> => ipcRenderer.invoke('scans:list'),
+  /** Папки со сканами из настроек оболочки */
+  listScanFolders: (): Promise<ScanFolderLike[]> => ipcRenderer.invoke('scans:folders'),
   /** Удалить файл из папки «Сканы» (возвращает обновлённый список) */
   deleteScan: (id: string): Promise<ScanFileLike[]> => ipcRenderer.invoke('scans:delete', id),
   /** Открыть файл приложением по умолчанию */

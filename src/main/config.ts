@@ -8,6 +8,24 @@ export interface NavTab {
   url: string;
 }
 
+/** Детерминированный id папки из пути (стабильный через рестарты). */
+function folderIdFor(path: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < path.length; i++) {
+    h ^= path.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return 'sf_' + (h >>> 0).toString(36)
+}
+
+/** Одна папка со сканами. id стабилен через рестарты (детерминирован из path). */
+export interface ScanFolder {
+  /** Уникальный идентификатор папки (для UI/удаления), не привязан к пути. */
+  id: string
+  /** Абсолютный путь к папке со сканами на диске. */
+  path: string
+}
+
 export interface SewConfig {
   startUrl: string;
   debug: boolean;
@@ -23,8 +41,10 @@ export interface SewConfig {
   scannerAppPath: string;
   /** Аргументы запуска софта сканера (напр. HP G3110 требует -mg3110) */
   scannerAppArgs: string;
-  /** Папка, куда HP-софт сохраняет отсканированные файлы — мониторится на новые файлы */
-  scanFolder: string;
+  /** Папки, куда HP-софт сохраняет отсканированные файлы — мониторятся на новые файлы */
+  scanFolders: ScanFolder[];
+  /** Устаревшее одиночное поле (миграция со старых конфигов). Не используется как источник истины. */
+  scanFolder?: string;
 }
 
 const DEFAULTS: SewConfig = {
@@ -41,9 +61,9 @@ const DEFAULTS: SewConfig = {
   zoom: {},
    clearOnExit: 'none',
    tabs: [],
-   scannerAppPath: '',
-   scannerAppArgs: '',
-   scanFolder: '',
+    scannerAppPath: '',
+    scannerAppArgs: '',
+    scanFolders: [],
 }
 
 function configFile(): string {
@@ -97,6 +117,29 @@ function sanitizeConfig(user: Partial<SewConfig>): SewConfig {
       )
       .slice(0, 500)
   }
+  // Папки со сканами: валидные {id,path}. Явно заданный массив (даже пустой) —
+  // источник истины. Устаревшее одиночное scanFolder мигрируем ТОЛЬКО когда
+  // поля scanFolders в файле вообще нет (старый конфиг); иначе удалённая
+  // последняя папка воскресала бы из legacy при каждом чтении.
+  const pickScanFolders = (v: unknown): ScanFolder[] => {
+    if (Array.isArray(v)) {
+      const out: ScanFolder[] = []
+      const seen = new Set<string>()
+      for (const item of v) {
+        if (item && typeof item === 'object' && typeof (item as ScanFolder).path === 'string') {
+          const path = (item as ScanFolder).path.trim()
+          if (!path || seen.has(path.toLowerCase())) continue
+          seen.add(path.toLowerCase())
+          out.push({ id: typeof (item as ScanFolder).id === 'string' ? (item as ScanFolder).id : folderIdFor(path), path })
+        }
+      }
+      return out
+    }
+    // legacy-миграция: одна папка из старого поля scanFolder
+    const legacy = typeof user.scanFolder === 'string' ? user.scanFolder.trim() : ''
+    if (legacy) return [{ id: folderIdFor(legacy), path: legacy }]
+    return DEFAULTS.scanFolders
+  }
   return {
     startUrl: pickString(user.startUrl, DEFAULTS.startUrl) || DEFAULTS.startUrl,
     debug: typeof user.debug === 'boolean' ? user.debug : DEFAULTS.debug,
@@ -108,7 +151,7 @@ function sanitizeConfig(user: Partial<SewConfig>): SewConfig {
     tabs: pickTabs(user.tabs),
     scannerAppPath: pickString(user.scannerAppPath, ''),
     scannerAppArgs: pickString(user.scannerAppArgs, ''),
-    scanFolder: pickString(user.scanFolder, ''),
+    scanFolders: pickScanFolders(user.scanFolders),
   }
 }
 
@@ -129,6 +172,9 @@ export function saveConfig(partial: Partial<SewConfig>): SewConfig {
     plugins: { ...(current.plugins ?? {}), ...(validPartial.plugins ?? {}) },
     zoom: { ...(current.zoom ?? {}), ...(validPartial.zoom ?? {}) },
   }
+  // Раз список папок явно перезаписали — legacy-поле больше не нужно,
+  // иначе оно вечно хранится в config.json мёртвым грузом.
+  if ('scanFolders' in validPartial) delete merged.scanFolder
   try {
     writeFileSync(configFile(), JSON.stringify(merged, null, 2), 'utf-8')
   } catch (err) {

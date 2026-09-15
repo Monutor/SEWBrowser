@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync, statSync, unlinkSync, watch, type FSWatcher } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync, unlinkSync, watch, type FSWatcher, type Stats } from 'node:fs'
 import { basename, extname, join } from 'node:path'
 
 /** Минимальный маппинг расширения в MIME — достаточно для создания File в госте. */
@@ -33,44 +33,80 @@ export interface ScanFile {
   ext: string
   /** ISO-строка даты изменения */
   modifiedAt: string
+  /** К какой настроенной папке относится (из scanFolders). Пусто для «выбранных» файлов. */
+  folderId?: string
+  /** Относительный путь внутри папки через '/' — '' у корня, 'sub/dir/file' глубже. Для дерева в блоке. */
+  relPath?: string
+  /** Корневая папка (из scanFolders) — для заголовка раздела в блоке «Сканы». */
+  folderPath?: string
 }
 
 /** Расширения, которые считаем результатом сканирования. */
 const SCAN_EXTENSIONS = new Set(['.pdf', '.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff'])
 
 /** Сортировка — новые в начале (по дате изменения, по убыванию). */
-export function listScanFiles(folder: string): ScanFile[] {
-  if (!existsSync(folder)) return []
-  let entries: string[]
+/**
+ * Рекурсивно собрать все файлы сканов из папки (включая подпапки) с пометкой
+ * folderId (к какой настроенной папке относится) и relPath — путь относительно
+ * корня папки через '/' (для дерева в блоке «Сканы»). Пустые/«горящих» файлы
+ * пропущены. Сортировка: по папкам, затем по имени пути, затем — новые в начале.
+ */
+export function collectScanFiles(rootFolder: string, folderId: string): ScanFile[] {
+  if (!folderId || !existsSync(rootFolder)) return []
+  const out: ScanFile[] = []
+  const walk = (dir: string, relSoFar: string): void => {
+    let entries: string[]
+    try {
+      entries = readdirSync(dir)
+    } catch {
+      return
+    }
+    for (const entry of entries.sort()) {
+      const full = join(dir, entry)
+      const rel = relSoFar ? `${relSoFar}/${entry}` : entry
+      let stats: Stats
+      try {
+        stats = statSync(full)
+      } catch {
+        continue
+      }
+      if (stats.isDirectory()) {
+        walk(full, rel)
+        continue
+      }
+      if (!stats.isFile()) continue
+      const ext = extname(entry).toLowerCase()
+      if (!SCAN_EXTENSIONS.has(ext)) continue
+      // Пропускаем «горящих» файлы: HP-софт пишет PDF не мгновенно.
+      if (stats.size === 0) continue
+      out.push({
+        id: full,
+        name: entry,
+        path: full,
+        bytes: stats.size,
+        ext: ext.slice(1),
+        modifiedAt: stats.mtime.toISOString(),
+        folderId,
+        relPath: rel,
+        folderPath: rootFolder,
+      })
+    }
+  }
   try {
-    entries = readdirSync(folder)
+    if (!statSync(rootFolder).isDirectory()) return []
   } catch {
     return []
   }
-  const files: ScanFile[] = []
-  for (const entry of entries) {
-    if (!SCAN_EXTENSIONS.has(extname(entry).toLowerCase())) continue
-    const full = join(folder, entry)
-    let stats
-    try {
-      stats = statSync(full)
-    } catch {
-      continue
-    }
-    if (!stats.isFile()) continue
-    // Пропускаем «горящие» файлы: HP-софт пишет PDF не мгновенно,
-    // иначе на секунду в списке появится нулевой файл.
-    if (stats.size === 0) continue
-    files.push({
-      id: full,
-      name: entry,
-      path: full,
-      bytes: stats.size,
-      ext: extname(entry).slice(1).toLowerCase(),
-      modifiedAt: stats.mtime.toISOString(),
-    })
-  }
-  return files.sort((a, b) => (a.modifiedAt < b.modifiedAt ? 1 : -1))
+  walk(rootFolder, '')
+  return out.sort((a, b) => {
+    const fa = a.folderId ?? ''
+    const fb = b.folderId ?? ''
+    if (fa !== fb) return fa < fb ? -1 : 1
+    const ra = a.relPath ?? ''
+    const rb = b.relPath ?? ''
+    if (ra !== rb) return ra < rb ? -1 : 1
+    return a.modifiedAt < b.modifiedAt ? 1 : -1
+  })
 }
 
 /** Удалить файл по пути. false — если файла нет или удаление упало. */
@@ -136,6 +172,7 @@ export function launchScannerApp(appPath: string, appArgs = ''): boolean {
  */
 export function createScanWatcher(
   folder: string,
+  folderId: string,
   onChange: (files: ScanFile[]) => void,
   onError?: (err: unknown) => void,
 ): FSWatcher | null {
@@ -148,7 +185,7 @@ export function createScanWatcher(
   let timer: ReturnType<typeof setTimeout> | null = null
   const notify = (): void => {
     if (timer) clearTimeout(timer)
-    timer = setTimeout(() => onChange(listScanFiles(folder)), 700)
+    timer = setTimeout(() => onChange(collectScanFiles(folder, folderId)), 700)
   }
   let watcher: FSWatcher
   try {
@@ -172,7 +209,7 @@ export function createScanWatcher(
     } catch {}
   })
   // Первоначальный список — сразу, чтобы окно не ждалo первого события.
-  onChange(listScanFiles(folder))
+  onChange(collectScanFiles(folder, folderId))
   return watcher
 }
 

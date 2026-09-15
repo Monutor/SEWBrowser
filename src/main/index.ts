@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { autoUpdater } from 'electron-updater'
-import { getConfig, isDebugMode, saveConfig } from './config'
+import { getConfig, isDebugMode, saveConfig, type ScanFolder } from './config'
 import { loadPlugins, listAllPlugins } from './plugins/loader'
 import { getPluginData, removePluginData, setPluginData } from './plugins/store'
 import { getAccountSecrets, getLastUsedAccountId, listAccounts, removeAccount, saveAccount, setLastUsedAccountId } from './credentials/store'
@@ -15,7 +15,7 @@ import {
   createScanWatcher,
   deleteScanFile,
   launchScannerApp,
-  listScanFiles,
+  collectScanFiles,
   readScanFile,
   stopScanWatcher,
   type ScanFile,
@@ -23,8 +23,8 @@ import {
 } from './scans'
 
 let mainWindow: BrowserWindow | null = null
-// Мониторинг папки HP-софта (создаётся один раз из scanFolder в настройках).
-let scanWatcher: ReturnType<typeof createScanWatcher> | null = null
+// Мониторинг папок HP-софта (по одной на каждую папку из scanFolders в настройках).
+let scanWatchers: ReturnType<typeof createScanWatcher>[] = []
 
 // Периодическая проверка обновлений (только в собранном приложении).
 const UPDATER_CHECK_INTERVAL_MS = 2 * 60 * 60 * 1000 // раз в 2 часа
@@ -102,23 +102,43 @@ function isAllowedUrl(url: string): boolean {
 }
 
 /** Пересоздать вотчер папки сканов из актуального конфига и слать 'scans:changed' в shell-UI */
-function restartScanWatcher(): void {
-  stopScanWatcher(scanWatcher)
-  scanWatcher = null
-  scanWatcher = createScanWatcher(
-    getConfig().scanFolder,
-    (files: ScanFile[]) => {
-      if (getConfig().debug) console.log(`[shell] в папке сканов: ${files.length} файл(ов)`)
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('scans:changed', files)
-      }
-    },
-    (err: unknown) => {
-      // Папка стала недоступна уже после подписки (удалили, отвалилась сеть,
+
+/** Собрать все файлы сканов из всех настроенных папок (рекурсивно с подпапками). */
+function collectAllScans(): ScanFile[] {
+  const folders = getConfig().scanFolders
+  if (!Array.isArray(folders)) return []
+  const out: ScanFile[] = []
+  for (const folder of folders) {
+    if (!folder || typeof folder.path !== 'string' || !folder.path || !folder.id) continue
+    out.push(...collectScanFiles(folder.path, folder.id))
+  }
+  return out
+}
+
+/** Пересобрать список и расслать 'scans:changed' в shell-UI (по любому изменению любой папки). */
+function broadcastScans(): void {
+  const files = collectAllScans()
+  if (getConfig().debug) console.log(`[shell] в папках сканов: ${files.length} файл(ов)`)
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('scans:changed', files)
+  }
+}
+
+/** Пересоздать вотчеры всех папок из актуального конфига. */
+function restartAllWatchers(): void {
+  for (const w of scanWatchers) stopScanWatcher(w)
+  scanWatchers = []
+  const folders = getConfig().scanFolders
+  if (!Array.isArray(folders)) return
+  for (const folder of folders) {
+    if (!folder || typeof folder.path !== 'string' || !folder.path || !folder.id) continue
+    const w = createScanWatcher(folder.path, folder.id, () => broadcastScans(), (err: unknown) => {
+      // Папка стала недоступна уже после подписки (удалили, отвалась сеть,
       // заблокировал антивирус) — живые обновления выключаем, приложение живёт.
       console.warn('[shell] scan watcher error (папка недоступна, live-обновления выкл):', err)
-    },
-  )
+    })
+    if (w) scanWatchers.push(w)
+  }
 }
 
 function createWindow(): void {
@@ -182,10 +202,17 @@ function createWindow(): void {
   ipcMain.handle('config:get', () => ({ ...getConfig(), debug }))
   ipcMain.handle('shell:getVersion', () => app.getVersion())
   ipcMain.handle('config:set', (_event, patch) => {
-    const prevFolder = getConfig().scanFolder
+        const prevFolders = getConfig().scanFolders
     const next = saveConfig((patch ?? {}) as Parameters<typeof saveConfig>[0])
-    // Смена папки сканов применяется сразу, без рестарта оболочки.
-    if (next.scanFolder !== prevFolder) restartScanWatcher()
+    // Смена списка папок сканов применяется сразу, без рестарта оболочки.
+    if (
+      prevFolders.length !== next.scanFolders.length ||
+      prevFolders.some(
+        (f, i) => f.id !== next.scanFolders[i]?.id || f.path !== next.scanFolders[i]?.path,
+      )
+    ) {
+      restartAllWatchers()
+    }
     return next
   })
   ipcMain.handle('plugins:list', () =>
@@ -513,11 +540,12 @@ function createWindow(): void {
     // launch — запустить софт по пути из настроек; list — файлы в scanFolder;
     // delete/open/show — операции с файлами; scans:changed — рассылка окну «Сканы».
     ipcMain.handle('scans:launch', () => launchScannerApp(getConfig().scannerAppPath, getConfig().scannerAppArgs ?? ''))
-    ipcMain.handle('scans:list', () => listScanFiles(getConfig().scanFolder))
+    ipcMain.handle('scans:list', () => collectAllScans())
+    ipcMain.handle('scans:folders', () => getConfig().scanFolders)
     ipcMain.handle('scans:delete', (_event, id: unknown) => {
       if (typeof id !== 'string') return []
       deleteScanFile(id)
-      return listScanFiles(getConfig().scanFolder)
+      return collectAllScans()
     })
     ipcMain.handle('scans:open', async (_event, filePath: unknown) => {
       if (typeof filePath !== 'string') return false
@@ -586,7 +614,7 @@ function createWindow(): void {
     // Мониторинг папки HP-софта: новые файлы пересылаем в shell-UI
     // событием 'scans:changed' (renderer форвардит его в гостя),
     // а renderer по нему же может обновить окно «Сканы».
-    restartScanWatcher()
+    restartAllWatchers()
 
   ipcMain.on('window:max', () => {
     if (!mainWindow) return
@@ -1306,8 +1334,8 @@ app.on('window-all-closed', () => {
     clearInterval(updaterInterval)
     updaterInterval = null
   }
-  stopScanWatcher(scanWatcher)
-  scanWatcher = null
+  for (const w of scanWatchers) stopScanWatcher(w)
+  scanWatchers = []
   void (async () => {
     const mode = getConfig().clearOnExit
     try {

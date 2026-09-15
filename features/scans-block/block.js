@@ -352,6 +352,164 @@
     return row
   }
 
+  var INDENT_PX = 16
+  // Свёрнутость разделов папок (folderId -> true). В отличие от узлов дерева,
+  // которые пересоздаются при каждом render, здесь состояние переживает
+  // живые обновления списка от вотчера.
+  var collapsedSections = {}
+  // Собрать из плоского списка файлов дерева подпапок одной папки. Корневые
+  // файлы (relPath '') — прямо в корне; подпапки — рекурсивно по '/'.
+  function buildTree(files) {
+    var root = { children: {}, files: [] }
+    for (var i = 0; i < files.length; i++) {
+      var rec = files[i]
+      var rel = typeof rec.relPath === 'string' ? rec.relPath : ''
+      if (!rel) { root.files.push(rec); continue }
+      var parts = rel.split('/')
+      var node = root
+      for (var j = 0; j < parts.length - 1; j++) {
+        var dn = parts[j]
+        if (!node.children[dn]) node.children[dn] = { children: {}, files: [], name: dn }
+        node = node.children[dn]
+      }
+      node.files.push(rec)
+    }
+    return root
+  }
+  function countFiles(node) {
+    var n = node.files.length
+    var keys = Object.keys(node.children)
+    for (var k = 0; k < keys.length; k++) n += countFiles(node.children[keys[k]])
+    return n
+  }
+  function countDirs(node) {
+    var keys = Object.keys(node.children)
+    var n = keys.length
+    for (var m = 0; m < keys.length; m++) n += countDirs(node.children[keys[m]])
+    return n
+  }
+  // Строка файла с отступом по глубине дерева. Переиспользует renderItem
+  // (кнопки open/show/del/preview + drag-n-drop), только добавляем indent.
+  function appendFileRow(rec, depth) {
+    var row = renderItem(rec)
+    if (depth > 0) row.style.paddingLeft = (depth * INDENT_PX) + 'px'
+    return row
+  }
+  // Заголовок подпапки с раскрыванием + её содержимое (вложенные папки и файлы).
+  function renderDir(node, depth) {
+    var wrap = el('div', 'scans-block-dir')
+    wrap.style.paddingLeft = ((depth + 1) * INDENT_PX) + 'px'
+    node._expanded = node._expanded !== false
+    var head = el('div', 'scans-block-dir-head')
+    var toggle = el('span', 'scans-block-dir-toggle')
+    head.appendChild(toggle)
+    var label = el('span', 'scans-block-dir-name')
+    label.textContent = node.name
+    head.appendChild(label)
+    var cnt = el('span', 'scans-block-dir-count')
+    var body = el('div', 'scans-block-dir-body')
+    wrap.appendChild(head)
+    wrap.appendChild(body)
+    function refresh() {
+      toggle.textContent = node._expanded ? '▾' : '▸'
+      cnt.textContent = countFiles(node) + ' · ' + countDirs(node) + ' подпапок'
+      body.style.display = node._expanded ? '' : 'none'
+      body.innerHTML = ''
+      var dirNames = Object.keys(node.children).sort()
+      for (var d = 0; d < dirNames.length; d++) {
+        body.appendChild(renderDir(node.children[dirNames[d]], depth + 1))
+      }
+      for (var f = 0; f < node.files.length; f++) {
+        body.appendChild(appendFileRow(node.files[f], depth + 1))
+      }
+    }
+    refresh()
+    head.addEventListener('click', function () {
+      node._expanded = !node._expanded
+      refresh()
+    })
+    return wrap
+  }
+  // Раздел одной папки: сворачиваемый заголовок (путь) + дерево по folderId/relPath.
+  function renderFolderSection(container, folderId, files) {
+    var section = el('div', 'scans-block-section')
+    section.dataset.folderId = folderId
+    var fp = (files[0] && files[0].folderPath) || folderId || ''
+    var collapsed = collapsedSections[folderId] === true
+    var title = el('div', 'scans-block-section-title scans-block-section-head')
+    title.title = fp
+    var toggle = el('span', 'scans-block-section-toggle')
+    title.appendChild(toggle)
+    var label = el('span', 'scans-block-section-label')
+    label.textContent = fp
+    title.appendChild(label)
+    var cnt = el('span', 'scans-block-section-count')
+    cnt.textContent = files.length + ' ' + plural(files.length, 'файл', 'файла', 'файлов')
+    title.appendChild(cnt)
+    section.appendChild(title)
+    var body = el('div', 'scans-block-section-body')
+    section.appendChild(body)
+    var tree = buildTree(files)
+    var names = Object.keys(tree.children).sort()
+    for (var i = 0; i < names.length; i++) {
+      body.appendChild(renderDir(tree.children[names[i]], 0))
+    }
+    for (var j = 0; j < tree.files.length; j++) {
+      body.appendChild(appendFileRow(tree.files[j], 0))
+    }
+    function refresh() {
+      toggle.textContent = collapsed ? '▸' : '▾'
+      body.style.display = collapsed ? 'none' : ''
+    }
+    refresh()
+    title.addEventListener('click', function () {
+      collapsed = !collapsed
+      collapsedSections[folderId] = collapsed
+      refresh()
+    })
+    container.appendChild(section)
+  }
+  // Раздел выбранных файлов — плоско, отдельной секцией внизу (тоже сворачиваемый).
+  function renderPickedSection(container, picked) {
+    var section = el('div', 'scans-block-section')
+    section.className = 'scans-block-section scans-block-picked-section'
+    var key = '__picked__'
+    var collapsed = collapsedSections[key] === true
+    var title = el('div', 'scans-block-section-title scans-block-section-head')
+    var toggle = el('span', 'scans-block-section-toggle')
+    title.appendChild(toggle)
+    var label = el('span', 'scans-block-section-label')
+    label.textContent = '📎 Выбранные файлы'
+    title.appendChild(label)
+    var cnt = el('span', 'scans-block-section-count')
+    cnt.textContent = picked.length + ' ' + plural(picked.length, 'файл', 'файла', 'файлов')
+    title.appendChild(cnt)
+    section.appendChild(title)
+    var body = el('div', 'scans-block-section-body')
+    section.appendChild(body)
+    for (var i = 0; i < picked.length; i++) {
+      body.appendChild(renderItem(picked[i]))
+    }
+    function refresh() {
+      toggle.textContent = collapsed ? '▸' : '▾'
+      body.style.display = collapsed ? 'none' : ''
+    }
+    refresh()
+    title.addEventListener('click', function () {
+      collapsed = !collapsed
+      collapsedSections[key] = collapsed
+      refresh()
+    })
+    container.appendChild(section)
+  }
+  function plural(n, one, few, many) {
+    var m = Math.abs(n) % 100
+    var d = m % 10
+    if (m > 10 && m < 20) return many
+    if (d > 1 && d < 5) return few
+    if (d === 1) return one
+    return many
+  }
   function render(list) {
     if (!listEl) return
     // Список от вотчера/main содержит только файлы папки — picked-записи
@@ -360,9 +518,21 @@
     var picked = files.filter(function (f) { return isPicked(f) })
     var seen = {}
     incoming.forEach(function (r) { if (r && r.id) seen[r.id] = true })
-    files = incoming.concat(picked.filter(function (f) { return !seen[f.id] }))
+    // Группируем файлы по папкам — каждая папка свой раздел с деревом.
+    var byFolder = {}
+    var folderOrder = []
+    incoming.forEach(function (r) {
+      if (!r || !r.id) return
+      var fid = typeof r.folderId === 'string' && r.folderId ? r.folderId : '__root__'
+      if (!byFolder[fid]) { byFolder[fid] = []; folderOrder.push(fid) }
+      byFolder[fid].push(r)
+    })
+    var flat = []
+    folderOrder.forEach(function (fid) { byFolder[fid].forEach(function (r) { flat.push(r) }) })
+    files = flat.concat(picked.filter(function (f) { return !seen[f.id] }))
     listEl.innerHTML = ''
-    if (files.length === 0) {
+    var hasMain = folderOrder.length > 0
+    if (!hasMain && picked.length === 0) {
       var empty = el('div', 'scans-block-empty')
       empty.innerHTML =
         'Нет файлов.<br>' +
@@ -372,10 +542,15 @@
       listEl.appendChild(empty)
       return
     }
-    files.forEach(function (rec) {
-      listEl.appendChild(renderItem(rec))
+    // Разделы по папкам — дерево по folderId/relPath.
+    folderOrder.forEach(function (fid) {
+      renderFolderSection(listEl, fid, byFolder[fid])
     })
-    preloadFiles(files)
+    // Выбранные файлы — отдельный раздел внизу (плоско).
+    if (picked.length > 0) {
+      renderPickedSection(listEl, picked)
+    }
+    preloadFiles(flat.concat(picked))
   }
 
   function setStatus(text) {

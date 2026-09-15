@@ -687,6 +687,65 @@ body {
   background: rgba(229, 83, 75, 0.12);
 }
 
+/* Папки автосохранения сканов */
+.scan-folders-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.scan-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #1a1b1e;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 6px 6px 6px 10px;
+}
+
+.scan-folder-path {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 12px;
+  user-select: text;
+}
+
+.scan-folder-empty {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.scan-folder-remove {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.scan-folder-remove:hover {
+  color: var(--danger);
+  background: rgba(229, 83, 75, 0.12);
+}
+
+.scan-folder-remove:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .settings-row select {
   background: #1a1b1e;
   border: 1px solid transparent;

@@ -27,9 +27,9 @@ const setCookies = document.getElementById('set-cookies') as HTMLElement | null
 const setClearOnExit = document.getElementById('set-clear-on-exit') as HTMLSelectElement | null
 const setScannerApp = document.getElementById('set-scanner-app') as HTMLInputElement | null
 const setScannerArgs = document.getElementById('set-scanner-args') as HTMLInputElement | null
-const setScanFolder = document.getElementById('set-scan-folder') as HTMLInputElement | null
 const setScannerAppBrowse = document.getElementById('set-scanner-app-browse') as HTMLButtonElement | null
-const setScanFolderBrowse = document.getElementById('set-scan-folder-browse') as HTMLButtonElement | null
+const setScanFolderAdd = document.getElementById('set-scan-folder-add') as HTMLButtonElement | null
+const setScanFoldersList = document.getElementById('set-scan-folders') as HTMLElement | null
 
 // Загрузки
 const downloadsEl = document.getElementById('downloads') as HTMLElement | null
@@ -759,7 +759,7 @@ function openSettings(): void {
   if (setClearOnExit) setClearOnExit.value = config.clearOnExit
   if (setScannerApp) setScannerApp.value = config.scannerAppPath ?? ''
   if (setScannerArgs) setScannerArgs.value = (config as ShellConfig).scannerAppArgs ?? ''
-  if (setScanFolder) setScanFolder.value = config.scanFolder ?? ''
+  void renderScanFolders()
   settingsOverlay.hidden = false
   void refreshStoragePanel()
 }
@@ -787,7 +787,6 @@ async function saveSettings(): Promise<void> {
     clearOnExit: (setClearOnExit?.value as ShellConfig['clearOnExit']) ?? config.clearOnExit,
     scannerAppPath: setScannerApp?.value.trim() ?? config.scannerAppPath,
     scannerAppArgs: setScannerArgs?.value.trim() ?? (config as ShellConfig).scannerAppArgs ?? '',
-    scanFolder: setScanFolder?.value.trim() ?? config.scanFolder,
   }
   try {
     const oldStartUrl = config.startUrl
@@ -817,6 +816,41 @@ async function clearSessionAndLogout(): Promise<void> {
   }
 }
 
+async function renderScanFolders(): Promise<void> {
+  if (!setScanFoldersList) return
+  setScanFoldersList.innerHTML = ''
+  const folders = config?.scanFolders ?? []
+  if (folders.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'scan-folder-empty'
+    empty.textContent = 'Папки не добавлены — нажмите «Добавить папку»'
+    setScanFoldersList.append(empty)
+    return
+  }
+  for (const folder of folders) {
+    const row = document.createElement('div')
+    row.className = 'scan-folder-row'
+    const pathEl = document.createElement('div')
+    pathEl.className = 'scan-folder-path'
+    pathEl.textContent = folder.path
+    pathEl.title = folder.path
+    const removeBtn = document.createElement('button')
+    removeBtn.type = 'button'
+    removeBtn.className = 'scan-folder-remove'
+    removeBtn.textContent = '✕'
+    removeBtn.title = 'Удалить папку'
+    removeBtn.setAttribute('aria-label', `Удалить папку ${folder.path}`)
+    removeBtn.addEventListener('click', async () => {
+      if (!window.confirm(`Удалить папку со сканами ${folder.path}?`)) return
+      const next = (config?.scanFolders ?? []).filter((f) => f.id !== folder.id)
+      config = await window.shell.setConfig({ scanFolders: next })
+      void renderScanFolders()
+    })
+    row.append(pathEl, removeBtn)
+    setScanFoldersList.append(row)
+  }
+}
+
 function wireSettings(): void {
   document.getElementById('btn-settings')?.addEventListener('click', openSettings)
   document.getElementById('set-save')?.addEventListener('click', () => void saveSettings())
@@ -829,10 +863,17 @@ function wireSettings(): void {
       console.warn('[shell] scans:browse-app failed:', err)
     }
   })
-  document.getElementById('set-scan-folder-browse')?.addEventListener('click', async () => {
+  document.getElementById('set-scan-folder-add')?.addEventListener('click', async () => {
     try {
       const path = await window.shell.browseScanFolder()
-      if (path && setScanFolder) setScanFolder.value = path
+      if (!path) return
+      const current = config?.scanFolders ?? []
+      if (current.some((f) => f.path.toLowerCase() === path.toLowerCase())) {
+        setStatus('папка уже добавлена')
+        return
+      }
+      config = await window.shell.setConfig({ scanFolders: [...current, { path }] })
+      void renderScanFolders()
     } catch (err) {
       console.warn('[shell] scans:browse-folder failed:', err)
     }

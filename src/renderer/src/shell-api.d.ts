@@ -62,7 +62,14 @@ interface ShellConfig {
   tabs: NavTab[]
   scannerAppPath: string
   scannerAppArgs: string
-  scanFolder: string
+  scanFolders: ScanFolder[]
+}
+
+/** Папка со сканами из настроек оболочки */
+interface ScanFolder {
+  /** Стабильный id (из настроек); рендерер шлёт без него — main проставляет. */
+  id?: string
+  path: string
 }
 
 interface PluginInfo {
@@ -142,6 +149,12 @@ interface ScanFile {
   bytes: number
   ext: string
   modifiedAt: string
+  /** ID папки из настроек (для группировки по папкам) */
+  folderId?: string
+  /** Относительный путь внутри папки, '/'-сепаратор ('sub/dir/file', у корня '') */
+  relPath?: string
+  /** Корневая папка (из scanFolders) — для заголовка раздела в блоке. */
+  folderPath?: string
 }
 
 /** Содержимое файла сканов в base64 — для предосмотра и drag-n-drop в госте */
@@ -214,8 +227,10 @@ interface ShellApi {
   saveTabsFile(content: string, name: string): Promise<boolean>
   /** Запустить внешний софт сканера (напр. HP) по его пути из настроек */
   launchScannerApp(): Promise<boolean>
-  /** Список файлов в папке «Сканы» — новые в начале */
+  /** Список файлов в папках «Сканы» (рекурсивно) — новые в начале */
   listScans(): Promise<ScanFile[]>
+  /** Папки со сканами из настроек оболочки */
+  listScanFolders(): Promise<ScanFolder[]>
   /** Удалить файл из папки «Сканы» (возвращает обновлённый список) */
   deleteScan(id: string): Promise<ScanFile[]>
   /** Открыть файл приложением по умолчанию */

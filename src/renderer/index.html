@@ -92,11 +92,13 @@
               Аргументы запуска (напр. HP G3110 требует -mg3110)
               <input id="set-scanner-args" spellcheck="false" autocomplete="off" placeholder="Напр. -mg3110" />
             </label>
-            <label class="settings-row">
-              Папка автосохранения сканов
-              <input id="set-scan-folder" spellcheck="false" autocomplete="off" placeholder="Напр. C:\Scans" />
-              <button type="button" id="set-scan-folder-browse">…</button>
-            </label>
+            <div class="settings-subblock">
+              Папки автосохранения сканов. Оболочка рекурсивно читает все файлы в папках и следит за изменениями. Нажмите «Добавить папку», выберите папку на диске.
+            </div>
+            <div class="settings-btn-row">
+              <button type="button" id="set-scan-folder-add">+ Добавить папку</button>
+            </div>
+            <div id="set-scan-folders" class="scan-folders-list"></div>
             <div class="settings-subblock">
               Нажмите «Сканировать (HP)» в блоке «Сканы», запустите программу — она положит файл в папку, оболочка его подхватит. Файлы можно перетащить в SEW или открыть кнопкой «Выбрать файл».
             </div>
