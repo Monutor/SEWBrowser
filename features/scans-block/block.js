@@ -153,6 +153,17 @@
   }
   // Асинхронно подтягивает байты через мост и кладёт File в кэш.
   // Возвращает Promise<File|null>; вызывается фоном, не в dragstart.
+  // Невидимый drag-образ: браузер по умолчанию таскает за курсором копию
+  // строки, из-за чего кажется, что файл можно бросить куда угодно.
+  var dragGhostEl = null
+  function dragGhost () {
+    if (!dragGhostEl) {
+      dragGhostEl = document.createElement('div')
+      dragGhostEl.style.cssText = 'position:fixed;left:-100px;top:-100px;width:1px;height:1px;opacity:0;pointer-events:none;'
+      document.body.appendChild(dragGhostEl)
+    }
+    return dragGhostEl
+  }
   function ensureFileCached(rec) {
     var hit = cachedFileFor(rec)
     if (hit) return Promise.resolve(hit)
@@ -296,6 +307,7 @@
       dragSent = null
       try {
         e.dataTransfer.effectAllowed = 'copy'
+        try { e.dataTransfer.setDragImage(dragGhost(), 0, 0) } catch (ghostErr) {}
         var f = cachedFileFor(rec)
         if (f) {
           try { e.dataTransfer.items.add(f); dragSent = { name: f.name, size: f.size, file: f } } catch (addErr) {}
