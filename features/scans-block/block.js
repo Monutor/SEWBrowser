@@ -404,17 +404,51 @@
   }
 
   // --- подсветка зоны дропа на странице SEW --------------------------------
+  // Ищем input[type=file] рядом с точкой: сам элемент, label[for],
+  // затем первый инпут внутри ближайших предков (слот «АКТ МХ-14» и т.п.).
+  function findFileInputAtPoint(x, y) {
+    var t = null
+    try { t = document.elementFromPoint(x, y) } catch (err) { t = null }
+    if (!t || t === document.documentElement) return null
+    try {
+      if (t.tagName === 'INPUT' && t.type === 'file') return t
+      var node = t
+      for (var depth = 0; depth < 6 && node && node !== document.body; depth++) {
+        if (node.tagName === 'LABEL' && node.htmlFor) {
+          var labelled = document.getElementById(node.htmlFor)
+          if (labelled && labelled.tagName === 'INPUT' && labelled.type === 'file') return labelled
+        }
+        var q = null
+        try { q = node.querySelector ? node.querySelector('input[type="file"]') : null } catch (qErr) { q = null }
+        if (q) return q
+        node = node.parentNode
+      }
+    } catch (err) {}
+    return null
+  }
   var zoneEl = null
   function addDropzoneHighlight() {
     if (zoneEl) return
     zoneEl = el('div', 'scans-block-dropzone')
     document.body.appendChild(zoneEl)
   }
+  // Подсвечиваем ТОЛЬКО реальные слоты приёма файлов: если рядом с курсором
+  // нет input[type=file] — подсветку прячем, чтобы не казалось, что бросить
+  // можно куда угодно.
   function moveDropzoneHighlight(x, y) {
     if (!zoneEl) return
-    var target = document.elementFromPoint(x, y)
-    if (!target) { removeDropzoneHighlight(); return }
-    var r = target.getBoundingClientRect()
+    var input = findFileInputAtPoint(x, y)
+    if (!input) { removeDropzoneHighlight(); return }
+    var r = null
+    try { r = input.getBoundingClientRect() } catch (rectErr) { r = null }
+    if (!r || (r.width < 4 && r.height < 4)) {
+      // Инпут скрыт — обводим видимый слот под курсором.
+      var target = null
+      try { target = document.elementFromPoint(x, y) } catch (pointErr) { target = null }
+      if (!target) { removeDropzoneHighlight(); return }
+      try { r = target.getBoundingClientRect() } catch (rectErr2) { r = null }
+    }
+    if (!r || (r.width < 2 && r.height < 2)) { removeDropzoneHighlight(); return }
     zoneEl.style.left = r.left + 'px'
     zoneEl.style.top = r.top + 'px'
     zoneEl.style.width = r.width + 'px'
@@ -529,28 +563,7 @@
     // нет — шлём элементу под курсором синтетический drop уже С файлами
     // (синтетике файлы видны — нет нативного round-trip, который их режет).
     // Отдельно в наш блок можно дропнуть файл из проводника (см. ниже).
-    // Ищем input[type=file] рядом с точкой дропа: сам элемент, label[for],
-    // затем первый инпут внутри ближайших предков (слот «АКТ МХ-14» и т.п.).
-    function findFileInputAtPoint(x, y) {
-      var t = null
-      try { t = document.elementFromPoint(x, y) } catch (err) { t = null }
-      if (!t || t === document.documentElement) return null
-      try {
-        if (t.tagName === 'INPUT' && t.type === 'file') return t
-        var node = t
-        for (var depth = 0; depth < 6 && node && node !== document.body; depth++) {
-          if (node.tagName === 'LABEL' && node.htmlFor) {
-            var labelled = document.getElementById(node.htmlFor)
-            if (labelled && labelled.tagName === 'INPUT' && labelled.type === 'file') return labelled
-          }
-          var q = null
-          try { q = node.querySelector ? node.querySelector('input[type="file"]') : null } catch (qErr) { q = null }
-          if (q) return q
-          node = node.parentNode
-        }
-      } catch (err) {}
-      return null
-    }
+    // Поиск input[type=file] рядом с точкой дропа — см. findFileInputAtPoint выше.
     function fireChange(input) {
       try {
         var ev = null
@@ -618,13 +631,17 @@
       // Нативный пакет всегда пуст (см. комментарий выше) — прикрепляем сами.
       var x = e.clientX, y = e.clientY
       if (attachFileToInputAtPoint(file, x, y)) {
-        try { e.preventDefault(); e.stopPropagation() } catch (stopErr) {}
+        // preventDefault — чтобы браузер не навигировал на подсунутый
+        // text/plain; stopPropagation НЕ зовём специально: собственный
+        // drop-хендлер SEW должен тоже отработать (пустой пакет проигнорирует)
+        // и спрятать свою синюю зону дропа, иначе она остаётся висеть.
+        try { e.preventDefault() } catch (stopErr) {}
         try { console.log('[scans-block] прикреплено в SEW через input: ' + fileName) } catch (logErr) {}
         setStatus('прикреплено в SEW: ' + fileName)
         return
       }
       if (redispatchDropWithFiles(file, x, y)) {
-        try { e.preventDefault(); e.stopPropagation() } catch (stopErr2) {}
+        try { e.preventDefault() } catch (stopErr2) {}
         try { console.log('[scans-block] передан синтетический drop с файлом: ' + fileName) } catch (logErr2) {}
         setStatus('передано в зону SEW: ' + fileName)
         return
