@@ -133,21 +133,46 @@ export function launchScannerApp(appPath: string, appArgs = ''): boolean {
  * событие (в т.ч. когда файл ещё пишется) ждём короткую паузу и перечитываем
  * папку целиком: так в списке появляется уже готовый, ненулевой файл.
  */
-export function createScanWatcher(folder: string, onChange: (files: ScanFile[]) => void): FSWatcher | null {
+export function createScanWatcher(
+  folder: string,
+  onChange: (files: ScanFile[]) => void,
+  onError?: (err: unknown) => void,
+): FSWatcher | null {
   if (!folder || !existsSync(folder)) return null
+  try {
+    if (!statSync(folder).isDirectory()) return null
+  } catch {
+    return null
+  }
   let timer: ReturnType<typeof setTimeout> | null = null
   const notify = (): void => {
     if (timer) clearTimeout(timer)
     timer = setTimeout(() => onChange(listScanFiles(folder)), 700)
   }
+  let watcher: FSWatcher
   try {
-    const watcher = watch(folder, { persistent: true }, () => notify())
-    // Первоначальный список — сразу, чтобы окно не ждалo первого события.
-    onChange(listScanFiles(folder))
-    return watcher
+    watcher = watch(folder, { persistent: true }, () => notify())
   } catch {
     return null
   }
+  // Асинхронные ошибки вотчера (папку удалили, отвалилась сеть, антивирус/DLP
+  // заблокировал ReadDirectoryChangesW) без слушателя 'error' превращаются
+  // в uncaughtException в main-процессе («UNKNOWN: unknown error, watch»).
+  watcher.on('error', (err: unknown) => {
+    if (timer) {
+      clearTimeout(timer)
+      timer = null
+    }
+    try {
+      watcher.close()
+    } catch {}
+    try {
+      onError?.(err)
+    } catch {}
+  })
+  // Первоначальный список — сразу, чтобы окно не ждалo первого события.
+  onChange(listScanFiles(folder))
+  return watcher
 }
 
 /** Результат чтения файла сканов как base64 — для предосмотра/переноса в страницу. */

@@ -105,12 +105,20 @@ function isAllowedUrl(url: string): boolean {
 function restartScanWatcher(): void {
   stopScanWatcher(scanWatcher)
   scanWatcher = null
-  scanWatcher = createScanWatcher(getConfig().scanFolder, (files: ScanFile[]) => {
-    if (getConfig().debug) console.log(`[shell] в папке сканов: ${files.length} файл(ов)`)
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('scans:changed', files)
-    }
-  })
+  scanWatcher = createScanWatcher(
+    getConfig().scanFolder,
+    (files: ScanFile[]) => {
+      if (getConfig().debug) console.log(`[shell] в папке сканов: ${files.length} файл(ов)`)
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('scans:changed', files)
+      }
+    },
+    (err: unknown) => {
+      // Папка стала недоступна уже после подписки (удалили, отвалилась сеть,
+      // заблокировал антивирус) — живые обновления выключаем, приложение живёт.
+      console.warn('[shell] scan watcher error (папка недоступна, live-обновления выкл):', err)
+    },
+  )
 }
 
 function createWindow(): void {
