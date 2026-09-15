@@ -818,11 +818,13 @@ function createWindow(): void {
   const htmlEscape = (value: string): string =>
     value.replace(/[<>&"']/g, (ch) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[ch]!))
 
-  /** Сборка HTML-страницы PDF-просмотра: тулбар с кнопками «Скачать»/«Печать» + embed viewer'а.
+  /** Сборка HTML-страницы PDF-просмотра: только embed viewer'а на всё окно.
    *  pdfSrc — file:// URL временного PDF (не data:, иначе большие файлы рвут лимиты URL).
    *  Саму обёртку тоже грузим через file:// из temp, а не через data:text/html:
    *  страницу data: Chromium считает opaque origin и режет в ней file:// сабресурсы
-   *  («Not allowed to load local resource») — embed оставался пустым серым полем. */
+   *  («Not allowed to load local resource») — embed оставался пустым серым полем.
+   *  Своего тулбара нет: у встроенного viewer'а Chromium свои кнопки
+   *  «Скачать»/«Печать», дублей не делаем. */
   function buildPdfViewerHtml(pdfSrc: string, title: string): string {
     const safeTitle = htmlEscape(title || 'Документ')
     const safeSrc = htmlEscape(pdfSrc)
@@ -833,44 +835,12 @@ function createWindow(): void {
 <title>${safeTitle}</title>
 <style>
   * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; display: flex; flex-direction: column; background: #3c3f41; }
-  #toolbar {
-    flex: 0 0 auto; height: 46px; display: flex; align-items: center; gap: 8px;
-    padding: 0 12px; background: #2b2d2e; color: #e9e9e9;
-    font: 13px/1 -apple-system, "Segoe UI", Roboto, sans-serif;
-  }
-  #toolbar .name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.85; }
-  #toolbar button {
-    background: #3e6dd5; color: #fff; border: 0; padding: 6px 14px; border-radius: 4px;
-    cursor: pointer; font: inherit;
-  }
-  #toolbar button:hover { background: #4a7ae0; }
-  #embed { flex: 1 1 auto; width: 100%; height: 100%; border: 0; display: block; }
-  /* Ctrl+P в окне просмотра: тулбар в печать не тянем (сам документ
-     печатается кнопкой «Печать» через скрытое окно — см. printPdfDocument) */
-  @media print {
-    #toolbar { display: none; }
-    html, body { background: #fff; }
-  }
+  html, body { height: 100%; margin: 0; background: #3c3f41; }
+  #embed { width: 100%; height: 100%; border: 0; display: block; }
 </style>
 </head>
 <body>
-<div id="toolbar">
-  <span class="name">${safeTitle}</span>
-  <button id="saveBtn" type="button">Скачать</button>
-  <button id="printBtn" type="button">Печать</button>
-</div>
 <embed id="embed" type="application/pdf" src="${safeSrc}"></embed>
-<script>
-(function () {
-  document.getElementById('saveBtn').addEventListener('click', function () {
-    window.shell.saveCurrentPdf();
-  });
-  document.getElementById('printBtn').addEventListener('click', function () {
-    window.shell.printPdf();
-  });
-})();
-</script>
 </body>
 </html>`
   }
