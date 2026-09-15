@@ -4,7 +4,8 @@ import { basename, extname, join } from 'node:path'
 
 /** Минимальный маппинг расширения в MIME — достаточно для создания File в госте. */
 function guessMime(ext: string): string {
-  switch (ext.toLowerCase()) {
+  // extname отдаёт расширение С точкой ('.pdf') — точку срезаем.
+  switch (ext.toLowerCase().replace(/^\./, '')) {
     case 'pdf':
       return 'application/pdf'
     case 'png':

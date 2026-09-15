@@ -132,12 +132,33 @@
   // греем кэш фоном после render + по hover/mousedown на строке.
   var fileCache = {}
   var PRELOAD_MAX_BYTES = 30 * 1024 * 1024
-  function storeFileInCache(id, name, mime, base64) {
+  // MIME по расширению — страховка, если мост отдал пустой или generic тип
+  // (иначе SEW не подбирает иконку превью и слот остаётся белым).
+  function mimeFromExt(name) {
+    var m = /\.([a-z0-9]+)$/i.exec(name || '')
+    switch ((m && m[1] || '').toLowerCase()) {
+      case 'pdf': return 'application/pdf'
+      case 'png': return 'image/png'
+      case 'jpg':
+      case 'jpeg': return 'image/jpeg'
+      case 'gif': return 'image/gif'
+      case 'webp': return 'image/webp'
+      case 'bmp': return 'image/bmp'
+      case 'tif':
+      case 'tiff': return 'image/tiff'
+      default: return ''
+    }
+  }
+  function storeFileInCache(id, name, mime, base64, modifiedAt) {
     if (!id || !base64 || fileCache[id]) return fileCache[id] || null
+    if (!mime || mime === 'application/octet-stream') mime = mimeFromExt(name) || mime
     var blob = base64ToBlob(base64, mime)
     if (!blob) return null
     try {
-      var f = new File([blob], name || 'файл', { type: mime || 'application/octet-stream' })
+      var opts = { type: mime || 'application/octet-stream' }
+      var ts = Date.parse(modifiedAt || '')
+      if (!isNaN(ts)) opts.lastModified = ts
+      var f = new File([blob], name || 'файл', opts)
       fileCache[id] = f
       return f
     } catch (e) {
@@ -148,7 +169,7 @@
     if (!rec || !rec.id) return null
     if (fileCache[rec.id]) return fileCache[rec.id]
     var pc = pickedCache[rec.id]
-    if (pc && pc.base64) return storeFileInCache(rec.id, rec.name, pc.mime, pc.base64)
+    if (pc && pc.base64) return storeFileInCache(rec.id, rec.name, pc.mime, pc.base64, rec.modifiedAt)
     return null
   }
   // Асинхронно подтягивает байты через мост и кладёт File в кэш.
@@ -171,7 +192,7 @@
     if (rec.bytes && rec.bytes > 100 * 1024 * 1024) return Promise.resolve(null)
     return bridgeSend('read', rec.id).then(function (content) {
       if (!content || !content.base64) return null
-      return storeFileInCache(rec.id, content.name || rec.name, content.mime, content.base64)
+      return storeFileInCache(rec.id, content.name || rec.name, content.mime, content.base64, rec.modifiedAt)
     })
   }
   function preloadFiles(list) {
