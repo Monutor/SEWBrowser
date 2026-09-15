@@ -192,6 +192,136 @@ body {
   border-bottom-color: var(--accent);
 }
 
+/* Шапка группы вкладок по папкам в ленте. При отсутствии папок не рендерится. */
+.tab-group-header {
+  flex-shrink: 0;
+  height: 24px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tab-group-header:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+
+.tab-group-chevron {
+  font-size: 9px;
+  line-height: 1;
+}
+
+.tab-group-name {
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-group-count {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+/* Выпадающий список вкладок папки под лентой (раскрытие как у групп Chrome/Edge). */
+#tab-group-panel {
+  position: absolute;
+  top: 112px;
+  z-index: 30;
+  width: 100%;
+  max-width: 430px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--chrome-bg);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+#tab-group-panel[hidden] {
+  display: none;
+}
+
+.tg-section + .tg-section {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.tg-section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.04);
+  position: sticky;
+  top: 0;
+}
+
+.tg-section-head .tg-count {
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.tg-list {
+  display: flex;
+  flex-direction: column;
+  /* padding: 4px 8px; */
+}
+
+.tg-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
+  /* border-radius: 6px; */
+  cursor: pointer;
+  position: relative;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.08);
+}
+
+.tg-row:hover {
+  background: rgba(74, 158, 255, 0.12);
+}
+
+.tg-row.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+}
+
+.tg-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tg-url {
+  font-size: 10px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 240px;
+}
+
 #tabstrip button#tab-add,
 #tabstrip button#tab-manage {
   flex-shrink: 0;
@@ -484,6 +614,100 @@ body {
   display: none;
 }
 
+/* Модальное окно ввода пароля папки (window.prompt недоступен в рендере Electron). */
+#password-prompt {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 31;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+#password-prompt[hidden] {
+  display: none;
+}
+
+.prompt-card {
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  padding: 20px;
+  background: var(--chrome-bg);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.prompt-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.prompt-subtitle {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.prompt-card input[type='password'] {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.prompt-card input[type='password']:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.prompt-error {
+  min-height: 16px;
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.prompt-actions button {
+  padding: 6px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: transparent;
+  color: var(--text);
+}
+
+.prompt-actions button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.prompt-actions #prompt-ok {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0b1a2b;
+  font-weight: 600;
+}
+
+.prompt-actions #prompt-ok:hover {
+  filter: brightness(1.05);
+}
+
 .settings-card {
   display: flex;
   flex-direction: column;
@@ -502,6 +726,12 @@ body {
   font-weight: 600;
 }
 
+#folder-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .settings-row {
   display: flex;
   flex-direction: column;
@@ -518,8 +748,62 @@ body {
   cursor: pointer;
 }
 
+/* Строка с галочкой «защитить папку»: чекбокс и текст в одну строку по центру. */
+.folder-pwd-toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+}
+
+/* Галочка «защитить папку» в форме папки — кастомная, под дизайн темы. */
+.folder-pwd-toggle input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  background: transparent;
+  position: relative;
+  cursor: pointer;
+}
+
+.folder-pwd-toggle input[type='checkbox']:hover {
+  border-color: var(--accent);
+}
+
+.folder-pwd-toggle input[type='checkbox']:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.folder-pwd-toggle input[type='checkbox']:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.folder-pwd-toggle input[type='checkbox']:checked::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+/* Поле пароля — скрыто по умолчанию, показывается при включённой галочке (атрибут hidden в JS). */
+.folder-pwd-field[hidden] {
+  display: none;
+}
+
 .settings-row input[type='text'],
 .settings-row input:not([type]),
+#folder-password,
 #set-starturl,
 #set-allowlist {
   background: #1a1b1e;
@@ -533,6 +817,7 @@ body {
   resize: vertical;
 }
 
+#folder-password:focus,
 #set-starturl:focus,
 #set-allowlist:focus {
   border-color: var(--accent);
@@ -902,16 +1187,21 @@ body {
 
 .settings-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
-  justify-content: flex-end;
+  justify-content: center;
 }
 
 .settings-actions button {
-  padding: 8px 20px;
+  padding: 6px 12px;
   border: none;
   border-radius: 6px;
   font-size: 13px;
   cursor: pointer;
+  flex: 1;
+  flex-basis: 150px;
+  background: #1a1b1e;
+  color: #fff;
 }
 
 #set-save {
@@ -1746,8 +2036,9 @@ body {
   color: var(--text-dim);
   font-size: 13px;
   cursor: pointer;
-  padding: 2px 6px;
+  padding: 2px 5px;
   border-radius: 4px;
+  flex-shrink: 0;
 }
 
 .tab-row button:hover {
@@ -1758,6 +2049,89 @@ body {
 .tab-row button.tab-del:hover {
   color: var(--danger);
   background: rgba(229, 83, 75, 0.12);
+}
+
+/* Секции папок в оверлее (появляются только при наличии пользовательских папок). */
+.folder-section {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.folder-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.folder-chevron {
+  font-size: 9px;
+  color: var(--text-dim);
+  line-height: 1;
+}
+
+.folder-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-count {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.folder-rename,
+.folder-del {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.folder-rename:hover {
+  color: var(--accent);
+  background: rgba(74, 158, 255, 0.12);
+}
+
+.folder-del:hover {
+  color: var(--danger);
+  background: rgba(229, 83, 75, 0.12);
+}
+
+/* Свёрнутая секция — скрывает вкладки внутри. */
+.folder-section.collapsed .folder-tabs {
+  display: none;
+}
+
+.folder-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+}
+
+/* Селектор папки в строке вкладки оверлея. */
+.tab-folder-select {
+  flex-shrink: 0;
+  max-width: 120px;
+  background: #232427;
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  cursor: pointer;
 }
 
 webview {

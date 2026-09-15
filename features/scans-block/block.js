@@ -264,18 +264,6 @@
         previewPicked(rec)
       })
       btns.appendChild(viewBtn)
-
-      var rmBtn = el('button')
-      rmBtn.className = 'scans-block-item-btn scans-block-del'
-      rmBtn.title = 'Убрать из списка'
-      rmBtn.textContent = '🗑'
-      rmBtn.addEventListener('click', function (e) {
-        e.stopPropagation()
-        try { delete pickedCache[rec.id] } catch (err) {}
-        try { delete fileCache[rec.id] } catch (err2) {}
-        render(files.filter(function (f) { return f.id !== rec.id }))
-      })
-      btns.appendChild(rmBtn)
     } else if (rec.path) {
       var openBtn = el('button')
       openBtn.className = 'scans-block-item-btn'
@@ -300,20 +288,6 @@
         })
       })
       btns.appendChild(inFolderBtn)
-
-      var delBtn = el('button')
-      delBtn.className = 'scans-block-item-btn scans-block-del'
-      delBtn.title = 'Удалить файл'
-      delBtn.textContent = '🗑'
-      delBtn.addEventListener('click', function (e) {
-        e.stopPropagation()
-        bridgeSend('delete', rec.id).then(function (list) {
-          try { delete fileCache[rec.id] } catch (err) {}
-          if (Array.isArray(list)) render(list)
-          else doList()
-        })
-      })
-      btns.appendChild(delBtn)
     }
 
     row.appendChild(btns)

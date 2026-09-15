@@ -49,6 +49,16 @@ interface NavTab {
   id: string
   name: string
   url: string
+  /** ID папки (NavFolder.id) или отсутствует — вкладка «без папки». */
+  folderId?: string
+}
+
+/** Папка для группировки вкладок. Один уровень вложенности. */
+interface NavFolder {
+  id: string
+  name: string
+  /** ID записи пароля в шифрохранилище ОС (main/credentials/folderPasswords.ts). Нет — папка без защиты. */
+  passwordId?: string
 }
 
 interface ShellConfig {
@@ -60,6 +70,7 @@ interface ShellConfig {
   zoom: Record<string, number>
   clearOnExit: 'none' | 'cache' | 'all'
   tabs: NavTab[]
+  folders: NavFolder[]
   scannerAppPath: string
   scannerAppArgs: string
   scanFolders: ScanFolder[]
@@ -255,6 +266,12 @@ interface ShellApi {
   saveAccount(input: SaveAccountInput): Promise<AccountInfo>
   removeAccount(id: string): Promise<boolean>
   getAccountSecrets(id: string): Promise<{ tabNum: string; password: string } | null>
+  /** Сохранить пароль папки (пустой — снятие защиты); возвращает id записи или null */
+  saveFolderPassword(folderId: string, password: string): Promise<string | null>
+  /** Снять защиту папки удалением записи с паролем */
+  clearFolderPassword(folderId: string): Promise<void>
+  /** Проверить пароль папки (шифрохранилище недоступно → false) */
+  verifyFolderPassword(folderId: string, password: string): Promise<boolean>
   pluginDataGet(plugin: string, keys?: string[]): Promise<Record<string, unknown>>
   pluginDataSet(plugin: string, obj: Record<string, unknown>): Promise<boolean>
   pluginDataRemove(plugin: string, keys: string[]): Promise<boolean>

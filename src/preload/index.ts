@@ -223,6 +223,15 @@ const api = {
   /** Расшифрованные секреты — только для автозаполнения формы входа */
   getAccountSecrets: (id: string): Promise<{ tabNum: string; password: string } | null> =>
     ipcRenderer.invoke('credentials:get', id),
+  /** Сохранить пароль папки (пустой пароль — снятие защиты); возвращает id записи или null */
+  saveFolderPassword: (folderId: string, password: string): Promise<string | null> =>
+    ipcRenderer.invoke('folder-passwords:save', { folderId, password }),
+  /** Снять защиту папки удалением записи с паролем */
+  clearFolderPassword: (folderId: string): Promise<void> =>
+    ipcRenderer.invoke('folder-passwords:clear', folderId),
+  /** Проверить пароль папки (шифрохранилище недоступно → false) */
+  verifyFolderPassword: (folderId: string, password: string): Promise<boolean> =>
+    ipcRenderer.invoke('folder-passwords:verify', { folderId, password }),
   /** Хранилище данных плагина (замена chrome.storage.local) */
   pluginDataGet: (plugin: string, keys?: string[]): Promise<Record<string, unknown>> =>
     ipcRenderer.invoke('plugin-data:get', plugin, keys),

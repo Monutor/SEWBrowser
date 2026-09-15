@@ -9,6 +9,7 @@ import { autoUpdater } from 'electron-updater'
 import { getConfig, isDebugMode, saveConfig, type ScanFolder } from './config'
 import { loadPlugins, listAllPlugins } from './plugins/loader'
 import { getPluginData, removePluginData, setPluginData } from './plugins/store'
+import { clearFolderPassword, isFolderPasswordEncryptionAvailable, saveFolderPassword, verifyFolderPassword } from './credentials/folderPasswords'
 import { getAccountSecrets, getLastUsedAccountId, listAccounts, removeAccount, saveAccount, setLastUsedAccountId } from './credentials/store'
 import { appendDownloadRecord, clearDownloadHistory, loadDownloadHistory, removeDownloadRecord } from './downloads/history'
 import {
@@ -352,13 +353,30 @@ function createWindow(): void {
     if (typeof id !== 'string' || !id) return false
     return removeAccount(id)
   })
-  ipcMain.handle('credentials:get', (_event, id: unknown) => {
-    if (typeof id !== 'string' || !id) return null
-    const secrets = getAccountSecrets(id)
-    // Аккаунт запросили для автовхода — запоминаем, кто сидит (для атрибуции загрузок)
-    if (secrets) setLastUsedAccountId(id)
-    return secrets
-  })
+   ipcMain.handle('credentials:get', (_event, id: unknown) => {
+     if (typeof id !== 'string' || !id) return null
+     const secrets = getAccountSecrets(id)
+     // Аккаунт запросили для автовхода — запоминаем, кто сидит (для атрибуции загрузок)
+     if (secrets) setLastUsedAccountId(id)
+     return secrets
+   })
+   // ---------- Пароли к папкам вкладок ----------
+   // Хранятся в шифрохранилище ОС (см. credentials/folderPasswords.ts).
+   ipcMain.handle('folder-passwords:save', (_event, input: unknown) => {
+     const v = (input ?? {}) as { folderId?: unknown; password?: unknown }
+     if (typeof v.folderId !== 'string' || !v.folderId) return null
+     return saveFolderPassword(v.folderId, typeof v.password === 'string' ? v.password : '')
+   })
+   ipcMain.handle('folder-passwords:clear', (_event, folderId: unknown) => {
+     if (typeof folderId !== 'string' || !folderId) return
+     clearFolderPassword(folderId)
+   })
+   ipcMain.handle('folder-passwords:verify', (_event, input: unknown) => {
+     const v = (input ?? {}) as { folderId?: unknown; password?: unknown }
+     if (typeof v.folderId !== 'string' || !v.folderId) return false
+     if (!isFolderPasswordEncryptionAvailable()) return false
+     return verifyFolderPassword(v.folderId, typeof v.password === 'string' ? v.password : '')
+   })
   ipcMain.on('window:min', () => mainWindow?.minimize())
   ipcMain.handle('shell:open-external', (_event, url: unknown) => {
     if (typeof url !== 'string' || !EXTERNAL_SCHEME_RE.test(url.trim())) return false

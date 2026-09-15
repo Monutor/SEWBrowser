@@ -6,6 +6,16 @@ export interface NavTab {
   id: string;
   name: string;
   url: string;
+  /** ID папки (NavFolder.id) или отсутствует — вкладка «без папки». */
+  folderId?: string;
+}
+
+/** Папка для группировки вкладок. Один уровень вложенности (папка → вкладки). */
+export interface NavFolder {
+  id: string;
+  name: string;
+  /** ID записи пароля в шифрохранилище ОС (credentials/folderPasswords.ts). Нет — папка без защиты. */
+  passwordId?: string;
 }
 
 /** Детерминированный id папки из пути (стабильный через рестарты). */
@@ -32,11 +42,13 @@ export interface SewConfig {
   allowlistEnabled: boolean;
   allowlist: string[];
   plugins: Record<string, boolean>;
-  /** Запомненный зум страниц: host -> zoom factor (1 = 100%) */
-  zoom: Record<string, number>;
-  /** Автоочистка при выходе: 'none' | 'cache' (только HTTP-кэш) | 'all' (кэш + все хранилища) */
-  clearOnExit: 'none' | 'cache' | 'all';
-  tabs: NavTab[];
+   /** Запомненный зум страниц: host -> zoom factor (1 = 100%) */
+   zoom: Record<string, number>;
+   /** Автоочистка при выходе: 'none' | 'cache' (только HTTP-кэш) | 'all' (кэш + все хранилища) */
+   clearOnExit: 'none' | 'cache' | 'all';
+   tabs: NavTab[];
+   /** Папки для группировки вкладок (один уровень). Связаны через NavTab.folderId. */
+   folders: NavFolder[];
   /** Путь до внешнего софта сканера (напр. HP) — запускается по кнопке «Сканы» */
   scannerAppPath: string;
   /** Аргументы запуска софта сканера (напр. HP G3110 требует -mg3110) */
@@ -59,8 +71,9 @@ const DEFAULTS: SewConfig = {
    allowlist: ['*.mvideoeldorado.ru', 'kc.tech.mvideo.ru', '*.mvideo.ru', '*.monutor.github.io'],
   plugins: {},
   zoom: {},
-   clearOnExit: 'none',
-   tabs: [],
+    clearOnExit: 'none',
+    tabs: [],
+    folders: [],
     scannerAppPath: '',
     scannerAppArgs: '',
     scanFolders: [],
@@ -115,7 +128,28 @@ function sanitizeConfig(user: Partial<SewConfig>): SewConfig {
         (t): t is NavTab =>
           !!t && typeof t === 'object' && typeof (t as NavTab).name === 'string' && typeof (t as NavTab).url === 'string' && typeof (t as NavTab).id === 'string',
       )
+      .map((t) => ({
+        id: (t as NavTab).id,
+        name: (t as NavTab).name,
+        url: (t as NavTab).url,
+        ...(typeof (t as NavTab).folderId === 'string' ? { folderId: (t as NavTab).folderId } : {}),
+      }))
       .slice(0, 500)
+  }
+  const pickFolders = (v: unknown): NavFolder[] => {
+    if (!Array.isArray(v)) return []
+    const out: NavFolder[] = []
+    const seen = new Set<string>()
+    for (const item of v) {
+      if (!item || typeof item !== 'object') continue
+      const name = typeof (item as NavFolder).name === 'string' ? (item as NavFolder).name.trim() : ''
+      const id = typeof (item as NavFolder).id === 'string' ? (item as NavFolder).id : ''
+      if (!name || !id || seen.has(id)) continue
+      seen.add(id)
+      const passwordId = typeof (item as NavFolder).passwordId === 'string' ? (item as NavFolder).passwordId : undefined
+      out.push({ id, name, ...(passwordId ? { passwordId } : {}) })
+    }
+    return out
   }
   // Папки со сканами: валидные {id,path}. Явно заданный массив (даже пустой) —
   // источник истины. Устаревшее одиночное scanFolder мигрируем ТОЛЬКО когда
@@ -140,6 +174,11 @@ function sanitizeConfig(user: Partial<SewConfig>): SewConfig {
     if (legacy) return [{ id: folderIdFor(legacy), path: legacy }]
     return DEFAULTS.scanFolders
   }
+  const folders = pickFolders(user.folders)
+  const folderIds = new Set(folders.map((f) => f.id))
+  const tabs = pickTabs(user.tabs).map((t) =>
+    t.folderId && !folderIds.has(t.folderId) ? { ...t, folderId: undefined } : t,
+  )
   return {
     startUrl: pickString(user.startUrl, DEFAULTS.startUrl) || DEFAULTS.startUrl,
     debug: typeof user.debug === 'boolean' ? user.debug : DEFAULTS.debug,
@@ -148,7 +187,8 @@ function sanitizeConfig(user: Partial<SewConfig>): SewConfig {
     plugins: { ...DEFAULTS.plugins, ...pickBoolMap(user.plugins) },
     zoom: { ...DEFAULTS.zoom, ...pickZoom(user.zoom) },
     clearOnExit: user.clearOnExit === 'cache' || user.clearOnExit === 'all' ? user.clearOnExit : 'none',
-    tabs: pickTabs(user.tabs),
+    folders,
+    tabs,
     scannerAppPath: pickString(user.scannerAppPath, ''),
     scannerAppArgs: pickString(user.scannerAppArgs, ''),
     scanFolders: pickScanFolders(user.scanFolders),
