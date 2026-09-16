@@ -130,9 +130,25 @@ function sewTasksShouldLearn(url) {
   if (/app-config\/?$/i.test(path)) return false;
   return true;
 }
+
+/**
+ * Текст auth-тоста с самодиагностикой: перехват видит статусы запросов самой
+ * страницы, наши опросы идут мимо него — по разнице видно, кто именно 401.
+ * appStatus: число (последний статус запросов страницы) или null (не видели).
+ */
+function sewTasksAuthBody(pollStatus, appStatus) {
+  var poll = pollStatus === 403 ? '403' : '401';
+  if (typeof appStatus === 'number' && appStatus >= 200 && appStatus < 300) {
+    return 'Запросы самой страницы: ' + appStatus + ', а наш фоновый опрос: ' + poll + '. Нажмите — обновим страницу и попробуем снова';
+  }
+  if (appStatus === 401 || appStatus === 403) {
+    return 'Страница тоже разлогинена (' + appStatus + ') — войдите заново, затем нажмите, чтобы обновить слежку';
+  }
+  return 'Страница разлогинилась — нажмите, чтобы обновить и продолжить слежку';
+}
 // node (тесты): только экспорт, браузерного bootstrap нет.
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { sewTasksExtractIds, sewTasksDiffKnown, sewTasksMergeEndpoints, sewTasksPrepareSave, sewTasksAuthNote, sewTasksShouldLearn };
+  module.exports = { sewTasksExtractIds, sewTasksDiffKnown, sewTasksMergeEndpoints, sewTasksPrepareSave, sewTasksAuthNote, sewTasksShouldLearn, sewTasksAuthBody };
 }
 
 // Гость: bootstrap один раз на документ.
@@ -204,6 +220,10 @@ if (typeof window !== 'undefined' && window.document && !window.__sewTasksNotify
     } catch (eSave) {}
   }
 
+  // Последний HTTP-статус запросов САМОЙ страницы по фиду (наши опросы идут
+  // через stnNativeFetch мимо перехвата — по разнице видно, кто именно 401).
+  var stnAppStatus = {};
+
   // Перехват fetch: учимся на GET-ответах с task-списками.
   try {
     var stnNativeFetch = window.fetch.bind(window);
@@ -212,7 +232,16 @@ if (typeof window !== 'undefined' && window.document && !window.__sewTasksNotify
       var method = (init && init.method) || (typeof input !== 'string' && input && input.method) || 'GET';
       var feedKey = stnFeedOf(window.location.href);
       if (feedKey) stnLearn(feedKey, u, method);
-      return stnNativeFetch(input, init);
+      var p = stnNativeFetch(input, init);
+      // Подслушиваем статус ответа страницы (поведение запроса не меняем).
+      try {
+        p.then(function (res) {
+          try {
+            if (feedKey && res && typeof res.status === 'number') stnAppStatus[feedKey] = res.status;
+          } catch (eTap) {}
+        }, function () {});
+      } catch (eTap2) {}
+      return p;
     };
   } catch (e) {}
 
@@ -225,20 +254,26 @@ if (typeof window !== 'undefined' && window.document && !window.__sewTasksNotify
         this.__stnUrl = url;
         this.__stnMethod = method;
         if (this.__stnFeed) stnLearn(this.__stnFeed, url, method);
+        var self = this;
+        this.addEventListener('load', function () {
+          try {
+            if (self.__stnFeed && typeof self.status === 'number') stnAppStatus[self.__stnFeed] = self.status;
+          } catch (eTap3) {}
+        });
       } catch (e2) {}
       return stnXhrOpen.apply(this, arguments);
     };
   } catch (e3) {}
 
   var stnAuth = {};
-  function stnQueueAuth(feed) {
+  function stnQueueAuth(feed, pollStatus) {
     try {
       window.__sewTasksReq = window.__sewTasksReq || [];
       window.__sewTasksReq.push({
         feed: feed.key,
         id: 'auth',
         title: 'SEW: сессия истекла',
-        body: 'Страница разлогинилась — нажмите, чтобы обновить и продолжить слежку',
+        body: sewTasksAuthBody(pollStatus, stnAppStatus[feed.key] ?? null),
         url: feed.url,
       });
     } catch (eAuth) {}
@@ -263,7 +298,7 @@ if (typeof window !== 'undefined' && window.document && !window.__sewTasksNotify
           if (!res || !res.ok) {
             // Сессия протухла: один тост на эпизод (клик обновит страницу),
             // дальше молчим до успеха. Остальные ошибки — тоже молча.
-            if (res && sewTasksAuthNote(stnAuth, feed.key, res.status)) stnQueueAuth(feed);
+            if (res && sewTasksAuthNote(stnAuth, feed.key, res.status)) stnQueueAuth(feed, res.status);
             return next(i + 1);
           }
           sewTasksAuthNote(stnAuth, feed.key, res.status);

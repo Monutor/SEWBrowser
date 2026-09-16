@@ -2,7 +2,7 @@
 // tasks.js грузится и в node (экспорт через module.exports), и в гостя как текст.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { sewTasksExtractIds, sewTasksDiffKnown, sewTasksMergeEndpoints, sewTasksPrepareSave, sewTasksAuthNote, sewTasksShouldLearn } = require('./tasks.js');
+const { sewTasksExtractIds, sewTasksDiffKnown, sewTasksMergeEndpoints, sewTasksPrepareSave, sewTasksAuthNote, sewTasksShouldLearn, sewTasksAuthBody } = require('./tasks.js');
 
 test('extractIds: плоский массив объектов с id', () => {
   assert.deepEqual(sewTasksExtractIds([{ id: 'a' }, { id: 'b' }]), ['a', 'b']);
@@ -82,4 +82,19 @@ test('shouldLearn: app-config и не-списки не учим', () => {
   assert.equal(sewTasksShouldLearn('/api/io-handover-v2-bff/app-config'), false);
   assert.equal(sewTasksShouldLearn('/api/io-handover-v2-bff/task?objectId=S187&status=CREATED'), true);
   assert.equal(sewTasksShouldLearn(null), false);
+});
+
+test('authBody: страница сама 200, а наш опрос 401 — так и пишем', () => {
+  const body = sewTasksAuthBody(401, 200);
+  assert.match(body, /страниц/i);
+  assert.match(body, /200/);
+  assert.match(body, /401/);
+});
+
+test('authBody: страница тоже 401 — просим войти заново', () => {
+  assert.match(sewTasksAuthBody(401, 401), /тоже/i);
+});
+
+test('authBody: статусов страницы нет — старый текст с кликом', () => {
+  assert.match(sewTasksAuthBody(401, null), /нажмите/i);
 });
