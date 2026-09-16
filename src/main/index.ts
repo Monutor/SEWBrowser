@@ -190,7 +190,7 @@ function createWindow(): void {
     for (const [combo, action] of Object.entries(hotkeys)) {
       try {
         globalShortcut.register(combo, () => {
-          new Notification({ title: action.title ?? combo, body: action.body ?? '' })
+          new Notification({ title: action.title ?? combo, body: action.body ?? '' }).show()
           console.log(`[plugins:${plugin.name}] hotkey ${combo} triggered`)
         })
       } catch (err) {
@@ -289,6 +289,32 @@ function createWindow(): void {
     } catch {
       return { ok: false, status: 0, data: null }
     }
+  })
+  // ---------- Уведомления о новых заданиях SEW (плагин sew-tasks-notify) ----------
+  // Гость складывает новинки в window.__sewTasksReq, renderer забирает и зовёт
+  // сюда. Клик по тосту — фокус окна + 'tasks:open' в renderer (навигация на
+  // страницу списка). URL строго из двух известных страниц заданий.
+  ipcMain.handle('notify:show', (_event, task: unknown) => {
+    const t = (task ?? {}) as { title?: unknown; body?: unknown; url?: unknown }
+    const title = typeof t.title === 'string' && t.title ? t.title : 'SEW: новое задание'
+    const body = typeof t.body === 'string' ? t.body : ''
+    const url = typeof t.url === 'string' ? t.url : ''
+    const allowed = [
+      'https://sew.mvideoeldorado.ru/v2/handover-v2/tasks',
+      'https://sew.mvideoeldorado.ru/v2/relocation/tasks',
+    ]
+    if (!allowed.includes(url)) return false
+    const notif = new Notification({ title, body })
+    notif.on('click', () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) mainWindow.restore()
+        mainWindow.show()
+        mainWindow.focus()
+        mainWindow.webContents.send('tasks:open', { url })
+      }
+    })
+    notif.show()
+    return true
   })
   // HTTP-кэш НЕ входит в clearStorageData — для него отдельный clearCache().
   ipcMain.handle('storage:usage', async () => {

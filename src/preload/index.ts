@@ -251,6 +251,16 @@ const api = {
   /** Уведомление об изменении данных плагина (для chrome.storage.onChanged) */
   onPluginDataChanged: (cb: (event: { plugin: string }) => void): void => {
     ipcRenderer.on('plugin-data:changed', (_event, payload: { plugin: string }) => cb(payload))
+  /** ОС-уведомление о новом задании SEW (показывает main-процесс; клик открывает страницу списка) */
+  notifyShow: (task: { title: string; body: string; url: string }): Promise<boolean> =>
+    ipcRenderer.invoke('notify:show', task),
+  /** Клик по уведомлению о задании: main просит renderer открыть страницу списка */
+  onTasksOpen: (cb: (event: { url: string }) => void): void => {
+    ipcRenderer.on('tasks:open', (_event, payload: { url: string }) => cb(payload))
+  },
+  onPluginDataChanged: (cb: (event: { plugin: string }) => void): (() => void) => {
+    return () => {
+    }
   },
 }
 

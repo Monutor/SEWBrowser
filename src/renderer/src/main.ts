@@ -596,6 +596,74 @@ async function pumpScansBridge(): Promise<boolean> {
   }
 }
 
+/**
+ * Мост уведомлений о заданиях SEW (плагин sew-tasks-notify): гость складывает
+ * новинки в window.__sewTasksReq, оболочка забирает их (splice — атомарно) и
+ * зовёт window.shell.notifyShow (ОС-тост показывает main). В отличие от
+ * BFF/scans-мостов при скрытом окне НЕ останавливаемся — уведомления нужны
+ * именно в фоне. IIFE заканчивается `()()` (ловушка 17).
+ */
+let tasksBridgeStarted = false
+let tasksDelay = 2000
+let tasksBusy = false
+function startTasksBridge(): void {
+  if (tasksBridgeStarted) return
+  tasksBridgeStarted = true
+  const tick = (): void => {
+    if (!tasksBusy) {
+      tasksBusy = true
+      void pumpTasksBridge()
+        .then((hadWork) => {
+          tasksDelay = hadWork ? 2000 : Math.min(10000, tasksDelay + 1000)
+        })
+        .catch(() => {
+          tasksDelay = Math.min(10000, tasksDelay + 1000)
+        })
+        .finally(() => {
+          tasksBusy = false
+        })
+    }
+    setTimeout(tick, tasksDelay)
+  }
+  setTimeout(tick, 2000)
+}
+
+async function pumpTasksBridge(): Promise<boolean> {
+  try {
+    if (!plugins.some((p) => p.name === 'sew-tasks-notify')) return false
+    const rawTake = await guestJS<string>(
+      'tasks-take',
+      '(function(){try{var q=window.__sewTasksReq;if(!Array.isArray(q))return "[]";' +
+        'try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})()',
+    )
+    let reqs: Array<{ title?: unknown; body?: unknown; url?: unknown }> = []
+    try {
+      const parsed: unknown = JSON.parse(typeof rawTake === 'string' ? rawTake : '[]')
+      if (Array.isArray(parsed)) reqs = parsed
+    } catch {
+      reqs = []
+    }
+    if (!Array.isArray(reqs) || reqs.length === 0) return false
+    for (const req of reqs) {
+      if (!req || typeof req !== 'object') continue
+      const title = typeof req.title === 'string' && req.title ? req.title : 'SEW: новое задание'
+      const body = typeof req.body === 'string' ? req.body : ''
+      const url = typeof req.url === 'string' ? req.url : ''
+      // Пустые URL main всё равно отбросит; здесь фильтруем мусор до IPC.
+      if (!url) continue
+      try {
+        await window.shell.notifyShow({ title, body, url })
+      } catch {
+        // main недоступен — пропускаем (дедуп уже на стороне гостя)
+      }
+    }
+    return true
+  } catch {
+    // webview не готов — молча ждём следующего тика
+    return false
+  }
+}
+
 function updateAddressBar(): void {
   if (!addressInput) return
   try {
@@ -2835,6 +2903,12 @@ async function init(): Promise<void> {
   startStatusPolling()
   startSewHelperBridge()
   startScansBridge()
+  startTasksBridge()
+  // Клик по ОС-уведомлению о задании: main прислал 'tasks:open' — ведём webview
+  // на страницу списка (navigate сам проверит allowlist).
+  window.shell.onTasksOpen(({ url }) => {
+    if (typeof url === 'string' && url) void navigate(url)
+  })
   // Данные плагинов меняются из оверлеев оболочки — перепушиваем снапшот в страницу
   window.shell.onPluginDataChanged(() => void pushPluginStores())
   // Живые обновления папки сканов: main шлёт 'scans:changed' при каждом изменении —
