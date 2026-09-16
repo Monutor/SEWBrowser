@@ -3,64 +3,83 @@
 
 .scans-block-root {
   position: fixed;
-  right: 20px;
-  bottom: 20px;
+  right: 0;
+  top: 50%;
+  transform: translate(0, -50%);
   z-index: 2147483647;
-  width: 340px;
-  max-width: calc(100vw - 40px);
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   font-size: 13px;
   line-height: 1.4;
   color: #e8e8ea;
-  background: #2b2d2e;
-  border: 1px solid #3c3f41;
-  border-radius: 10px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
-  overflow: hidden;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  overflow: visible;
   user-select: none;
+  transition: transform 0.25s ease;
 }
 
 .scans-block-root * {
   box-sizing: border-box;
 }
 
-/* Сворачиваемая кнопка-шторка */
-.scans-block-toggle {
-  position: fixed;
-  z-index: 2147483647;
-  right: 20px;
-  bottom: 20px;
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  border: none;
+/* Ярлык-стрелка, выглядывающий из-за правого края */
+.scans-block-tab {
+  flex: 0 0 auto;
+  width: 30px;
+  min-height: 96px;
+  align-self: center;
+  border: 1px solid #3c3f41;
+  border-right: none;
+  border-radius: 8px 0 0 8px;
   background: #3e6dd5;
   color: #fff;
-  font-size: 22px;
+  font-size: 18px;
   line-height: 1;
   cursor: pointer;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
-  display: none;
+  box-shadow: -4px 4px 14px rgba(0, 0, 0, 0.4);
+  display: flex;
   align-items: center;
   justify-content: center;
+  padding: 0;
+}
+
+.scans-block-tab:hover {
+  background: #4a7ae0;
+}
+
+/* Старая круглая кнопка больше не используется (осталась для совместимости) */
+.scans-block-toggle {
+  display: none !important;
 }
 
 .scans-block-root.scans-block-collapsed {
-  display: none !important;
-  visibility: hidden !important;
-  opacity: 0 !important;
-  pointer-events: none !important;
+  transform: translate(calc(100% - 30px), -50%);
 }
 
 .scans-block-root.scans-block-collapsed .scans-block-panel {
-  display: none;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* Панель */
 .scans-block-panel {
   display: flex;
   flex-direction: column;
-  max-height: 460px;
+  width: 340px;
+  max-width: calc(100vw - 50px);
+  max-height: 70vh;
+  background: #2b2d2e;
+  border: 1px solid #3c3f41;
+  border-right: none;
+  border-radius: 10px 0 0 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
 }
 
 .scans-block-head {
@@ -69,7 +88,7 @@
   gap: 8px;
   padding: 10px 12px;
   background: #3c3f41;
-  cursor: move;
+  cursor: default;
 }
 
 .scans-block-title {

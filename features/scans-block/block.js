@@ -210,8 +210,11 @@
   var panelEl = null
   var listEl = null
   var statusEl = null
-  var toggleEl = null
+  var toggleEl = null // ярлык-стрелка на правом краю (док-шторка)
   var collapsed = true
+  try {
+    collapsed = localStorage.getItem('scans-block:collapsed') !== '0'
+  } catch (e) {}
 
   function iconFor(rec) {
     var e = extOf(rec)
@@ -630,70 +633,25 @@
   }
 
   // --- навигация «свернуть/развернуть» -------------------------------------
-  // ВАЖНО: toggleEl — отдельный элемент (sibling rootEl в body), а не ребёнок
-  // rootEl, поэтому его видимостью управляем явно через JS. Сам rootEl в
-  // collapsed-состоянии полностью скрыт CSS (display:none), чтобы не оставалась
-  // «линия» от пустого контейнера с border/background.
+  // Док-шторка на правом краю: панель уезжает за экран (transform),
+  // снаружи остаётся только ярлык-стрелка toggleEl. Один клик и открывает,
+  // и закрывает.
+  function syncTab() {
+    if (!toggleEl) return
+    toggleEl.textContent = collapsed ? '❮' : '❯'
+    toggleEl.title = collapsed ? 'Открыть «Сканы»' : 'Закрыть «Сканы»'
+  }
   function toggleCollapsed() {
     collapsed = !collapsed
+    try { localStorage.setItem('scans-block:collapsed', collapsed ? '1' : '0') } catch (e) {}
+    if (!rootEl) return
     if (collapsed) {
       rootEl.classList.add('scans-block-collapsed')
-      if (toggleEl) toggleEl.style.display = 'flex'
     } else {
       rootEl.classList.remove('scans-block-collapsed')
-      if (toggleEl) toggleEl.style.display = 'none'
       doList()
     }
-  }
-
-  // --- перемещение панели за шапку ------------------------------------------
-  // Курсор move в CSS был, а логики не было. Таскаем за head (кроме кнопок),
-  // позицию запоминаем в localStorage — переживает перезагрузку страницы.
-  var panelPos = null
-  try { panelPos = JSON.parse(localStorage.getItem('scans-block:pos') || 'null') } catch (posErr) { panelPos = null }
-  function applyPanelPos() {
-    if (!rootEl || !panelPos) return
-    var left = parseInt(panelPos.left, 10), top = parseInt(panelPos.top, 10)
-    if (isNaN(left) || isNaN(top)) return
-    left = Math.min(Math.max(left, -300), Math.max(window.innerWidth - 60, 0))
-    top = Math.min(Math.max(top, 0), Math.max(window.innerHeight - 40, 0))
-    rootEl.style.left = left + 'px'
-    rootEl.style.top = top + 'px'
-    rootEl.style.right = 'auto'
-    rootEl.style.bottom = 'auto'
-  }
-  function enablePanelDrag(head) {
-    head.addEventListener('mousedown', function (e) {
-      if (e.button !== 0) return
-      try { if (e.target && e.target.closest && e.target.closest('button')) return } catch (closestErr) {}
-      e.preventDefault()
-      var r = rootEl.getBoundingClientRect()
-      // Уходим с якоря right/bottom на явные left/top.
-      rootEl.style.left = r.left + 'px'
-      rootEl.style.top = r.top + 'px'
-      rootEl.style.right = 'auto'
-      rootEl.style.bottom = 'auto'
-      var dx = e.clientX - r.left, dy = e.clientY - r.top
-      var w = r.width
-      function onMove(me) {
-        var nx = Math.min(Math.max(me.clientX - dx, -w + 60), window.innerWidth - 60)
-        var ny = Math.min(Math.max(me.clientY - dy, 0), window.innerHeight - 40)
-        rootEl.style.left = nx + 'px'
-        rootEl.style.top = ny + 'px'
-      }
-      function onUp() {
-        document.removeEventListener('mousemove', onMove)
-        document.removeEventListener('mouseup', onUp)
-        try {
-          localStorage.setItem('scans-block:pos', JSON.stringify({
-            left: parseInt(rootEl.style.left, 10) || 0,
-            top: parseInt(rootEl.style.top, 10) || 0,
-          }))
-        } catch (saveErr) {}
-      }
-      document.addEventListener('mousemove', onMove)
-      document.addEventListener('mouseup', onUp)
-    })
+    syncTab()
   }
 
   function buildUi() {
@@ -744,20 +702,13 @@
 
     rootEl.appendChild(panel)
 
-    toggleEl = el('button', 'scans-block-toggle')
-    toggleEl.textContent = '📚'
-    toggleEl.title = 'Сканы'
-    toggleEl.addEventListener('click', function () {
-      if (collapsed) toggleCollapsed()
-    })
-    // Начальное состояние: блок свёрнут -> показываем только кнопку,
-    // сам rootEl скрыт CSS-классом scans-block-collapsed (без «линии»).
-    toggleEl.style.display = collapsed ? 'flex' : 'none'
+    // Ярлык-стрелка слева от панели — всегда видим, открывает и закрывает.
+    toggleEl = el('button', 'scans-block-tab')
+    toggleEl.addEventListener('click', toggleCollapsed)
+    syncTab()
+    rootEl.insertBefore(toggleEl, panel)
 
     document.body.appendChild(rootEl)
-    document.body.appendChild(toggleEl)
-    enablePanelDrag(head)
-    applyPanelPos()
 
     // Нативный дроп из ОС в наш блок: перетаскиваемый файл с рабочего стола/
     // проводника — читаем через FileReader и добавляем как «picked».
