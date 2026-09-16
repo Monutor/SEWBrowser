@@ -37,8 +37,7 @@ function sewTasksExtractIds(data) {
  * (уведомлений по нему нет, иначе заспамит при каждом старте). Возвращает
  * только новые id и сразу добавляет их в known.
  */
-function sewTasksDiffKnown(known, ids) {
-  if (!(known instanceof Set)) return [];
+function sewTasksDiffKnown(known, ids) {  if (!(known instanceof Set)) return [];
   if (!Array.isArray(ids)) return [];
   if (known.size === 0) {
     for (var i = 0; i < ids.length; i++) known.add(ids[i]);
@@ -54,9 +53,57 @@ function sewTasksDiffKnown(known, ids) {
   return fresh;
 }
 
+var STN_FEED_KEYS = ['handover', 'relocation'];
+var STN_URL_CAP = 5;
+
+/** Почистить список URL: только непустые строки без дублей, кап на фид. */
+function sewTasksCleanList(value) {
+  if (!Array.isArray(value)) return [];
+  var out = [];
+  for (var i = 0; i < value.length; i++) {
+    var u = value[i];
+    if (typeof u !== 'string' || !u) continue;
+    if (out.indexOf(u) !== -1) continue;
+    out.push(u);
+    if (out.length >= STN_URL_CAP) break;
+  }
+  return out;
+}
+
+function sewTasksObjOrEmpty(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value;
+}
+
+/**
+ * Слияние сохранённых (диск) и выученных (перехват) эндпоинтов.
+ * Чужие фиды и мусор отбрасываются — брать можно только наши два списка.
+ */
+function sewTasksMergeEndpoints(persisted, learned) {
+  var p = sewTasksObjOrEmpty(persisted);
+  var l = sewTasksObjOrEmpty(learned);
+  var out = {};
+  for (var i = 0; i < STN_FEED_KEYS.length; i++) {
+    var feed = STN_FEED_KEYS[i];
+    var union = sewTasksCleanList(p[feed]).concat(sewTasksCleanList(l[feed]));
+    var dedup = [];
+    for (var j = 0; j < union.length; j++) {
+      if (dedup.indexOf(union[j]) === -1) dedup.push(union[j]);
+      if (dedup.length >= STN_URL_CAP) break;
+    }
+    if (dedup.length) out[feed] = dedup;
+  }
+  return out;
+}
+
+/** Объект для сохранения в plugin-data (гость сам писать на диск не может). */
+function sewTasksPrepareSave(learned) {
+  return { endpoints: sewTasksMergeEndpoints({}, learned) };
+}
+
 // node (тесты): только экспорт, браузерного bootstrap нет.
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { sewTasksExtractIds, sewTasksDiffKnown };
+  module.exports = { sewTasksExtractIds, sewTasksDiffKnown, sewTasksMergeEndpoints, sewTasksPrepareSave };
 }
 
 // Гость: bootstrap один раз на документ.
@@ -90,16 +137,41 @@ if (typeof window !== 'undefined' && window.document && !window.__sewTasksNotify
   }
 
   // Выученные GET-эндпоинты списков: feedKey -> [url]. Только same-origin GET —
-  // чужие POST/мутации повторять нельзя.
-  var stnLearned = {};
+  // чужие POST/мутации повторять нельзя. Стартуем с сохранённых на диске
+  // (снапшот plugin-data пушится ДО кода плагинов), поэтому повторный визит
+  // нужен только если адреса ещё ни разу не выучивались.
+  function stnReadPersisted() {
+    try {
+      var stores = window.__shellPluginStores;
+      if (!stores || typeof stores !== 'object') return {};
+      var mine = stores['sew-tasks-notify'];
+      if (!mine || typeof mine !== 'object' || Array.isArray(mine)) return {};
+      return mine.endpoints;
+    } catch (e0) {
+      return {};
+    }
+  }
+  var stnLearned = sewTasksMergeEndpoints(stnReadPersisted(), {});
   var stnKnown = {};
   function stnLearn(feedKey, url, method) {
     if (!feedKey || typeof url !== 'string') return;
     if (url.charAt(0) === '/' || url.indexOf(window.location.origin) === 0) {
       if (method && method.toUpperCase() !== 'GET') return;
       var list = stnLearned[feedKey] || (stnLearned[feedKey] = []);
-      if (list.indexOf(url) === -1 && list.length < 5) list.push(url);
+      if (list.indexOf(url) === -1 && list.length < STN_URL_CAP) {
+        list.push(url);
+        stnRequestSave();
+      }
     }
+  }
+
+  // Гость писать на диск не умеет (в webview нет window.shell) — кладём заявку
+  // в очередь, renderer заберёт и сохранит через pluginDataSet. Очередь из
+  // одного места: всегда только свежий слепок.
+  function stnRequestSave() {
+    try {
+      window.__sewTasksDataReq = [sewTasksPrepareSave(stnLearned)];
+    } catch (eSave) {}
   }
 
   // Перехват fetch: учимся на GET-ответах с task-списками.

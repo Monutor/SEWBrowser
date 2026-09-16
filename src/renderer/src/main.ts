@@ -606,6 +606,30 @@ async function pumpScansBridge(): Promise<boolean> {
 let tasksBridgeStarted = false
 let tasksDelay = 2000
 let tasksBusy = false
+const TASKS_FEEDS = ['handover', 'relocation'] as const
+/** Чистка заявки гостя на сохранение эндпоинтов (гость — недоверенный контекст). */
+function cleanTasksEndpoints(item: unknown): Record<string, string[]> | null {
+  if (!item || typeof item !== 'object') return null
+  const rec = (item as { endpoints?: unknown }).endpoints
+  if (!rec || typeof rec !== 'object') return null
+  const out: Record<string, string[]> = {}
+  for (const feed of TASKS_FEEDS) {
+    const v = (rec as Record<string, unknown>)[feed]
+    if (!Array.isArray(v)) continue
+    const list = [
+      ...new Set(
+        v.filter(
+          (u): u is string =>
+            typeof u === 'string' &&
+            !!u &&
+            (u.startsWith('/') || u.startsWith('https://sew.mvideoeldorado.ru/')),
+        ),
+      ),
+    ].slice(0, 5)
+    if (list.length) out[feed] = list
+  }
+  return Object.keys(out).length ? out : null
+}
 function startTasksBridge(): void {
   if (tasksBridgeStarted) return
   tasksBridgeStarted = true
@@ -631,6 +655,30 @@ function startTasksBridge(): void {
 async function pumpTasksBridge(): Promise<boolean> {
   try {
     if (!plugins.some((p) => p.name === 'sew-tasks-notify')) return false
+    // Сохранение выученных эндпоинтов: гость писать на диск не умеет (в webview
+    // нет window.shell), поэтому кладёт заявку в window.__sewTasksDataReq,
+    // а сохраняем мы через pluginDataSet. Гость недоверенный (контекст страницы),
+    // URL чистим: только наши фиды, same-origin или относительные, ≤5 на фид.
+    try {
+      const rawData = await guestJS<string>(
+        'tasks-data-take',
+        '(function(){try{var q=window.__sewTasksDataReq;if(!Array.isArray(q))return "[]";' +
+          'try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})()',
+      )
+      const parsedData: unknown = JSON.parse(typeof rawData === 'string' ? rawData : '[]')
+      const dataItems = Array.isArray(parsedData) ? parsedData : []
+      for (const item of dataItems) {
+        const clean = cleanTasksEndpoints(item)
+        if (!clean) continue
+        try {
+          await window.shell.pluginDataSet('sew-tasks-notify', { endpoints: clean })
+        } catch {
+          // main недоступен — гость повторит заявку при следующем обучении
+        }
+      }
+    } catch {
+      // webview не готов — попробуем на следующем тике
+    }
     const rawTake = await guestJS<string>(
       'tasks-take',
       '(function(){try{var q=window.__sewTasksReq;if(!Array.isArray(q))return "[]";' +
