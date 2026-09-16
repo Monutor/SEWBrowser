@@ -2,7 +2,7 @@
 // tasks.js грузится и в node (экспорт через module.exports), и в гостя как текст.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { sewTasksExtractIds, sewTasksDiffKnown, sewTasksMergeEndpoints, sewTasksPrepareSave } = require('./tasks.js');
+const { sewTasksExtractIds, sewTasksDiffKnown, sewTasksMergeEndpoints, sewTasksPrepareSave, sewTasksAuthNote, sewTasksShouldLearn } = require('./tasks.js');
 
 test('extractIds: плоский массив объектов с id', () => {
   assert.deepEqual(sewTasksExtractIds([{ id: 'a' }, { id: 'b' }]), ['a', 'b']);
@@ -55,4 +55,31 @@ test('prepareSave: готовит JSON-чистый объект для plugin-d
   const save = sewTasksPrepareSave({ handover: ['/a', '/b'], relocation: [] });
   assert.deepEqual(save, { endpoints: { handover: ['/a', '/b'] } });
   assert.deepEqual(JSON.parse(JSON.stringify(save)), save);
+});
+
+test('authNote: первый 401 в эпизоде — уведомить, повторы — молчать', () => {
+  const state = {};
+  assert.equal(sewTasksAuthNote(state, 'handover', 401), true);
+  assert.equal(sewTasksAuthNote(state, 'handover', 401), false);
+  assert.equal(sewTasksAuthNote(state, 'handover', 403), false);
+});
+
+test('authNote: успех сбрасывает эпизод, следующий 401 снова уведомляет', () => {
+  const state = {};
+  assert.equal(sewTasksAuthNote(state, 'relocation', 401), true);
+  assert.equal(sewTasksAuthNote(state, 'relocation', 200), false);
+  assert.equal(sewTasksAuthNote(state, 'relocation', 401), true);
+});
+
+test('authNote: не-auth ошибки (500, 0) не уведомляют', () => {
+  const state = {};
+  assert.equal(sewTasksAuthNote(state, 'handover', 500), false);
+  assert.equal(sewTasksAuthNote(state, 'handover', 0), false);
+  assert.deepEqual(state, {});
+});
+
+test('shouldLearn: app-config и не-списки не учим', () => {
+  assert.equal(sewTasksShouldLearn('/api/io-handover-v2-bff/app-config'), false);
+  assert.equal(sewTasksShouldLearn('/api/io-handover-v2-bff/task?objectId=S187&status=CREATED'), true);
+  assert.equal(sewTasksShouldLearn(null), false);
 });

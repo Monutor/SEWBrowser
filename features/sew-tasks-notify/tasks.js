@@ -56,13 +56,16 @@ function sewTasksDiffKnown(known, ids) {  if (!(known instanceof Set)) return []
 var STN_FEED_KEYS = ['handover', 'relocation'];
 var STN_URL_CAP = 5;
 
-/** Почистить список URL: только непустые строки без дублей, кап на фид. */
+/** Почистить список URL: только непустые строки без дублей, кап на фид.
+ * Заодно выкидывает известный мусор (app-config) — и из новых, и из ранее
+ * сохранённых: чистка при каждом слиянии лечит старые plugin-data. */
 function sewTasksCleanList(value) {
   if (!Array.isArray(value)) return [];
   var out = [];
   for (var i = 0; i < value.length; i++) {
     var u = value[i];
     if (typeof u !== 'string' || !u) continue;
+    if (!sewTasksShouldLearn(u)) continue;
     if (out.indexOf(u) !== -1) continue;
     out.push(u);
     if (out.length >= STN_URL_CAP) break;
@@ -101,9 +104,35 @@ function sewTasksPrepareSave(learned) {
   return { endpoints: sewTasksMergeEndpoints({}, learned) };
 }
 
+/**
+ * Эпизод протухшей auth: первый 401/403 фида — true (показать тост),
+ * повторы в том же эпизоде — false. Любой успех (2xx) закрывает эпизод.
+ * state — обычный объект { feedKey: true }, переживает только сессию страницы.
+ */
+function sewTasksAuthNote(state, feedKey, status) {
+  if (!state || typeof state !== 'object' || typeof feedKey !== 'string') return false;
+  if (status === 401 || status === 403) {
+    if (state[feedKey]) return false;
+    state[feedKey] = true;
+    return true;
+  }
+  if (status >= 200 && status < 300) delete state[feedKey];
+  return false;
+}
+
+/**
+ * Какие URL стоит учить как списки: app-config и прочий мусор — нет.
+ * Эвристика узкая (только известный мусор), чтобы не потерять неизвестные API.
+ */
+function sewTasksShouldLearn(url) {
+  if (typeof url !== 'string' || !url) return false;
+  var path = url.split('?')[0].split('#')[0];
+  if (/app-config\/?$/i.test(path)) return false;
+  return true;
+}
 // node (тесты): только экспорт, браузерного bootstrap нет.
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { sewTasksExtractIds, sewTasksDiffKnown, sewTasksMergeEndpoints, sewTasksPrepareSave };
+  module.exports = { sewTasksExtractIds, sewTasksDiffKnown, sewTasksMergeEndpoints, sewTasksPrepareSave, sewTasksAuthNote, sewTasksShouldLearn };
 }
 
 // Гость: bootstrap один раз на документ.
@@ -155,6 +184,7 @@ if (typeof window !== 'undefined' && window.document && !window.__sewTasksNotify
   var stnKnown = {};
   function stnLearn(feedKey, url, method) {
     if (!feedKey || typeof url !== 'string') return;
+    if (!sewTasksShouldLearn(url)) return;
     if (url.charAt(0) === '/' || url.indexOf(window.location.origin) === 0) {
       if (method && method.toUpperCase() !== 'GET') return;
       var list = stnLearned[feedKey] || (stnLearned[feedKey] = []);
@@ -200,6 +230,20 @@ if (typeof window !== 'undefined' && window.document && !window.__sewTasksNotify
     };
   } catch (e3) {}
 
+  var stnAuth = {};
+  function stnQueueAuth(feed) {
+    try {
+      window.__sewTasksReq = window.__sewTasksReq || [];
+      window.__sewTasksReq.push({
+        feed: feed.key,
+        id: 'auth',
+        title: 'SEW: сессия истекла',
+        body: 'Страница разлогинилась — нажмите, чтобы обновить и продолжить слежку',
+        url: feed.url,
+      });
+    } catch (eAuth) {}
+  }
+
   function stnQueue(feed, id) {
     try {
       window.__sewTasksReq = window.__sewTasksReq || [];
@@ -216,7 +260,13 @@ if (typeof window !== 'undefined' && window.document && !window.__sewTasksNotify
       if (i >= urls.length) return;
       stnNativeFetch(urls[i], { credentials: 'same-origin', headers: { Accept: 'application/json' } })
         .then(function (res) {
-          if (!res || !res.ok) return next(i + 1);
+          if (!res || !res.ok) {
+            // Сессия протухла: один тост на эпизод (клик обновит страницу),
+            // дальше молчим до успеха. Остальные ошибки — тоже молча.
+            if (res && sewTasksAuthNote(stnAuth, feed.key, res.status)) stnQueueAuth(feed);
+            return next(i + 1);
+          }
+          sewTasksAuthNote(stnAuth, feed.key, res.status);
           return res.json().then(function (data) {
             var fresh = sewTasksDiffKnown(known, sewTasksExtractIds(data));
             for (var k = 0; k < fresh.length; k++) stnQueue(feed, fresh[k]);
