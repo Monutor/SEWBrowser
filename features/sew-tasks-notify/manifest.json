@@ -1,0 +1,6 @@
+{
+  "name": "sew-tasks-notify",
+  "version": "0.1.0",
+  "description": "Уведомления о новых заданиях SEW: выдача (handover-v2/tasks) и перемещение (relocation/tasks). Фоново опрашивает выученный API-список, новинки — в ОС-тост.",
+  "renderer": "./tasks.js"
+}
