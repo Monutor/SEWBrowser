@@ -639,7 +639,7 @@
   function syncTab() {
     if (!toggleEl) return
     toggleEl.textContent = collapsed ? '❮' : '❯'
-    toggleEl.title = collapsed ? 'Открыть «Сканы»' : 'Закрыть «Сканы»'
+    toggleEl.title = (collapsed ? 'Открыть «Сканы»' : 'Закрыть «Сканы»') + ' • тяните вверх/вниз'
   }
   function toggleCollapsed() {
     collapsed = !collapsed
@@ -652,6 +652,56 @@
       doList()
     }
     syncTab()
+  }
+
+  // --- вертикальная позиция шторки ----------------------------------------
+  // Стрелка таскается вверх/вниз, top = центр дока. Храним долю от высоты
+  // вьюпорта (0.05..0.95), чтобы позиция переживала ресайз и перезагрузку.
+  var tabTopRatio = 0.5
+  try {
+    var savedTop = parseFloat(localStorage.getItem('scans-block:top') || '')
+    if (savedTop >= 0.05 && savedTop <= 0.95) tabTopRatio = savedTop
+  } catch (e) {}
+  function applyTabTop() {
+    if (!rootEl) return
+    rootEl.style.top = (tabTopRatio * 100) + '%'
+  }
+  // Клик и drag на одном элементе: порог 4px — меньше считаем кликом
+  // (открыть/закрыть), больше — перетаскиванием (клик подавляем флагом).
+  var tabDragMoved = false
+  function enableTabDrag(tab) {
+    tab.addEventListener('mousedown', function (e) {
+      if (e.button !== 0) return
+      e.preventDefault()
+      var startY = e.clientY
+      var startTopPx = tabTopRatio * window.innerHeight
+      tabDragMoved = false
+      function clampY(y) {
+        var h = 200
+        try { h = rootEl.getBoundingClientRect().height || 200 } catch (rectErr) {}
+        var minY = h / 2 + 8
+        var maxY = window.innerHeight - h / 2 - 8
+        if (!(maxY > minY)) { minY = 60; maxY = Math.max(window.innerHeight - 60, 61) }
+        return Math.min(Math.max(y, minY), maxY)
+      }
+      function onMove(me) {
+        var dy = me.clientY - startY
+        if (!tabDragMoved && Math.abs(dy) < 4) return
+        tabDragMoved = true
+        rootEl.style.top = clampY(startTopPx + dy) + 'px'
+      }
+      function onUp(mu) {
+        document.removeEventListener('mousemove', onMove)
+        document.removeEventListener('mouseup', onUp)
+        if (!tabDragMoved) return
+        var endY = clampY(startTopPx + (mu.clientY - startY))
+        tabTopRatio = endY / window.innerHeight
+        try { localStorage.setItem('scans-block:top', String(tabTopRatio)) } catch (saveErr) {}
+        applyTabTop()
+      }
+      document.addEventListener('mousemove', onMove)
+      document.addEventListener('mouseup', onUp)
+    })
   }
 
   function buildUi() {
@@ -704,9 +754,19 @@
 
     // Ярлык-стрелка слева от панели — всегда видим, открывает и закрывает.
     toggleEl = el('button', 'scans-block-tab')
-    toggleEl.addEventListener('click', toggleCollapsed)
+    toggleEl.addEventListener('click', function (e) {
+      if (tabDragMoved) {
+        // Это был drag, а не клик — панель не трогаем.
+        tabDragMoved = false
+        try { e.stopPropagation(); e.preventDefault() } catch (stopErr) {}
+        return
+      }
+      toggleCollapsed()
+    })
     syncTab()
     rootEl.insertBefore(toggleEl, panel)
+    applyTabTop()
+    enableTabDrag(toggleEl)
 
     document.body.appendChild(rootEl)
 

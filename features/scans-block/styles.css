@@ -1,4 +1,4 @@
-/* Блок «Сканы» — плавающая панель в правом нижнем углу гостевой страницы SEW.
+/* Блок «Сканы» — док-шторка на правом краю гостевой страницы SEW.
    Свой namespace через класс .scans-block-root, чтобы не конфликтовать с CSS SEW. */
 
 .scans-block-root {
@@ -26,7 +26,8 @@
   box-sizing: border-box;
 }
 
-/* Ярлык-стрелка, выглядывающий из-за правого края */
+/* Ярлык-стрелка, выглядывающий из-за правого края.
+   Клик — открыть/закрыть, drag — двигать вверх/вниз. */
 .scans-block-tab {
   flex: 0 0 auto;
   width: 30px;
@@ -39,12 +40,17 @@
   color: #fff;
   font-size: 18px;
   line-height: 1;
-  cursor: pointer;
+  cursor: grab;
+  touch-action: none;
   box-shadow: -4px 4px 14px rgba(0, 0, 0, 0.4);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
+}
+
+.scans-block-tab:active {
+  cursor: grabbing;
 }
 
 .scans-block-tab:hover {
