@@ -461,7 +461,7 @@ if (typeof window !== 'undefined' && window.document && !window.__sewTasksNotify
       var u = typeof input === 'string' ? input : input && input.url ? input.url : '';
       var method = (init && init.method) || (typeof input !== 'string' && input && input.method) || 'GET';
       var feedKey = stnFeedOf(window.location.href);
-      stnLogReq(feedKey, u, method);
+      stnLogReq(feedKey, u, method, init && init.headers);
       if (feedKey) stnLearn(feedKey, u, method, init && init.body);
       // Auth: заголовки запросов страницы подхватываем на любой странице
       // (сессия общая, пер-фид привязки нет).
@@ -548,10 +548,12 @@ if (typeof window !== 'undefined' && window.document && !window.__sewTasksNotify
   window.__sewTasksDiag = stnDiag;
   // DIAG-TEMP: безусловный лог ВСЕХ fetch/XHR-запросов вкладки (не только те
   // с feedKey) — чтобы увидеть, каким механизмом реально дёргает список.
-  function stnLogReq(feedKey, url, method) {
+  function stnLogReq(feedKey, url, method, headers) {
     try {
       if (!stnDiag.reqLog) stnDiag.reqLog = [];
-      stnDiag.reqLog.push({ f: feedKey || null, u: String(url || '').split(window.location.origin).pop(), m: String(method || 'GET') });
+      var authPresent = !!stnReadHdr(headers, 'authorization');
+      var ct = stnReadHdr(headers, 'content-type');
+      stnDiag.reqLog.push({ f: feedKey || null, u: String(url || '').split(window.location.origin).pop(), m: String(method || 'GET'), ap: authPresent, ct: ct });
       while (stnDiag.reqLog.length > 100) stnDiag.reqLog.shift();
     } catch (eReq) {}
   }
@@ -561,6 +563,20 @@ if (typeof window !== 'undefined' && window.document && !window.__sewTasksNotify
       for (var k in patch) cur[k] = patch[k];
       cur.at = Date.now();
     } catch (eDiag) {}
+  }
+  // DIAG-TEMP: достать заголовок из Headers-like или plain-объекта.
+  function stnReadHdr(headers, name) {
+    var v = '';
+    try {
+      if (headers && typeof headers.get === 'function') {
+        v = String(headers.get(name) || '');
+      } else if (headers && typeof headers === 'object') {
+        for (var k in headers) {
+          if (k.toLowerCase() === name.toLowerCase()) { v = String(headers[k] || ''); break; }
+        }
+      }
+    } catch (eH) {}
+    return v;
   }
 
   var stnAuth = {};
@@ -663,6 +679,12 @@ if (typeof window !== 'undefined' && window.document && !window.__sewTasksNotify
       if (uniqPollUrls.indexOf(puUrl) === -1) uniqPollUrls.push(puUrl);
     }
     // DIAG-TEMP: состав опроса + что выучено/записано — понять, есть ли GET-список.
+    var diagReq = []; // DIAG-TEMP: детали джобов текущего прохода (url+method+auth+ct)
+    for (var ri = 0; ri < jobs.length; ri++) {
+      var rAuth = stnReadHdr(jobs[ri].init && jobs[ri].init.headers, 'authorization');
+      var rCt = stnReadHdr(jobs[ri].init && jobs[ri].init.headers, 'content-type');
+      diagReq.push(ri + ':' + (jobs[ri].init && jobs[ri].init.method || 'GET') + ' auth=' + (!!rAuth) + '(' + rAuth.length + ') ct=' + rCt);
+    }
     stnDiagSet(feed.key, {
       urls: jobs.length,
       learnedUrls: urls.slice(),
@@ -673,6 +695,7 @@ if (typeof window !== 'undefined' && window.document && !window.__sewTasksNotify
       auth: !!stnAuthHeader,
       pollUrl: jobs[0] && jobs[0].url,
       pollUrls: uniqPollUrls,
+      reqDetail: diagReq,
       appStatus: stnAppStatus[feed.key] ?? null,
     }); // DIAG-TEMP
     var known = stnKnown[feed.key];
@@ -693,8 +716,10 @@ if (typeof window !== 'undefined' && window.document && !window.__sewTasksNotify
             if (res) {
               var respHd = {};
               try {
-                for (var rk in ['www-authenticate', 'server', 'allow', 'content-type']) {
-                  try { respHd[rk] = res.headers.get(rk); } catch (eRK) {}
+                var stnHdrNames = ['www-authenticate', 'server', 'allow', 'content-type'];
+                for (var _i = 0; _i < stnHdrNames.length; _i++) {
+                  var _rk = stnHdrNames[_i];
+                  try { respHd[_rk] = res.headers.get(_rk); } catch (eRK) {}
                 }
                 res.text().then(function (body) {
                   stnDiagSet(feed.key, {
