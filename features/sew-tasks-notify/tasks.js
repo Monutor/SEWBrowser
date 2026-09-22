@@ -499,8 +499,13 @@ if (typeof window !== 'undefined' && window.document && !window.__sewTasksNotify
     var stnXhrSetHeader = window.XMLHttpRequest.prototype.setRequestHeader;
     window.XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
       try {
-        if (typeof name === 'string' && name.toLowerCase() === 'authorization' && typeof value === 'string' && value) {
-          stnRememberAuth(value);
+        // DIAG-TEMP: собираем полный набор заголовков запроса по имени —
+        // кастомные (X-Api-Key и т.п.) покажут, чем POST /relocation/search
+        // от страницы отличается от нашего (причина 502). Токен — глобально.
+        if (typeof name === 'string' && typeof value === 'string') {
+          if (!this.__stnHeaders) this.__stnHeaders = {};
+          this.__stnHeaders[name.toLowerCase()] = value;
+          if (name.toLowerCase() === 'authorization') stnRememberAuth(value);
         }
       } catch (eHdr) {}
       return stnXhrSetHeader.apply(this, arguments);
@@ -516,6 +521,23 @@ if (typeof window !== 'undefined' && window.document && !window.__sewTasksNotify
           stnLearn(this.__stnFeed, this.__stnUrl, this.__stnMethod, body);
         }
       } catch (eSend) {}
+      // DIAG-TEMP: заголовки уже все установлены до send — фиксируем полный
+      // набор запроса страницы (маскируем токен/куки). Показывает кастомные
+      // заголовки POST /relocation/search, из-за которых у нас 502.
+      try {
+        if (this.__stnHeaders && Object.keys(this.__stnHeaders).length) {
+          var snap = {};
+          var hkeys = Object.keys(this.__stnHeaders);
+          for (var hk = 0; hk < hkeys.length; hk++) {
+            var hn = hkeys[hk];
+            var hv = this.__stnHeaders[hn];
+            snap[hn] = ((hn === 'authorization' || hn === 'cookie') && hv) ? '<len:' + String(hv.length) + '>' : String(hv);
+          }
+          if (!stnDiag.reqHdrs) stnDiag.reqHdrs = [];
+          stnDiag.reqHdrs.push({ u: (this.__stnUrl.split(window.location.origin) || [this.__stnUrl]).pop(), m: String(this.__stnMethod || 'GET'), h: snap });
+          while (stnDiag.reqHdrs.length > 30) stnDiag.reqHdrs.shift();
+        }
+      } catch (eHdrSnap) {}
       return stnXhrSend.apply(this, arguments);
     };
     window.XMLHttpRequest.prototype.open = function (method, url) {
