@@ -1,4 +1,4 @@
-﻿import './styles.css'
+import './styles.css'
 
 const webview = document.getElementById('site') as unknown as SewWebViewElement
 const addressInput = document.getElementById('address') as HTMLInputElement | null
@@ -132,6 +132,31 @@ function setStatus(text: string, toast = true): void {
   toastTimer = setTimeout(() => {
     if (toastEl) toastEl.hidden = true
   }, 3500)
+}
+
+/**
+ * Тост с кнопкой действия (напр. «Снимок сохранён» + «Копировать»).
+ * Собирается через DOM API (без innerHTML — текст безопасен).
+ */
+function setStatusAction(text: string, buttonLabel: string, onAction: () => void): void {
+  if (statusEl) statusEl.textContent = text
+  if (!toastEl || !text) return
+  toastEl.textContent = ''
+  const label = document.createElement('span')
+  label.textContent = text
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.textContent = buttonLabel
+  button.addEventListener('click', () => {
+    if (toastEl) toastEl.hidden = true
+    onAction()
+  })
+  toastEl.append(label, document.createTextNode(' '), button)
+  toastEl.hidden = false
+  if (toastTimer) clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => {
+    if (toastEl) toastEl.hidden = true
+  }, 5000)
 }
 
 /**
@@ -587,122 +612,6 @@ async function pumpScansBridge(): Promise<boolean> {
         )
       } catch {
         // страница ушла между опросом и ответом — гость повторит запрос сам
-      }
-    }
-    return true
-  } catch {
-    // webview не готов — молча ждём следующего тика
-    return false
-  }
-}
-
-/**
- * Мост уведомлений о заданиях SEW (плагин sew-tasks-notify): гость складывает
- * новинки в window.__sewTasksReq, оболочка забирает их (splice — атомарно) и
- * зовёт window.shell.notifyShow (ОС-тост показывает main). В отличие от
- * BFF/scans-мостов при скрытом окне НЕ останавливаемся — уведомления нужны
- * именно в фоне. IIFE заканчивается `()()` (ловушка 17).
- */
-let tasksBridgeStarted = false
-let tasksDelay = 2000
-let tasksBusy = false
-const TASKS_FEEDS = ['handover', 'relocation'] as const
-/** Чистка заявки гостя на сохранение эндпоинтов (гость — недоверенный контекст). */
-function cleanTasksEndpoints(item: unknown): Record<string, string[]> | null {
-  if (!item || typeof item !== 'object') return null
-  const rec = (item as { endpoints?: unknown }).endpoints
-  if (!rec || typeof rec !== 'object') return null
-  const out: Record<string, string[]> = {}
-  for (const feed of TASKS_FEEDS) {
-    const v = (rec as Record<string, unknown>)[feed]
-    if (!Array.isArray(v)) continue
-    const list = [
-      ...new Set(
-        v.filter(
-          (u): u is string =>
-            typeof u === 'string' &&
-            !!u &&
-            (u.startsWith('/') || u.startsWith('https://sew.mvideoeldorado.ru/')),
-        ),
-      ),
-    ].slice(0, 5)
-    if (list.length) out[feed] = list
-  }
-  return Object.keys(out).length ? out : null
-}
-function startTasksBridge(): void {
-  if (tasksBridgeStarted) return
-  tasksBridgeStarted = true
-  const tick = (): void => {
-    if (!tasksBusy) {
-      tasksBusy = true
-      void pumpTasksBridge()
-        .then((hadWork) => {
-          tasksDelay = hadWork ? 2000 : Math.min(10000, tasksDelay + 1000)
-        })
-        .catch(() => {
-          tasksDelay = Math.min(10000, tasksDelay + 1000)
-        })
-        .finally(() => {
-          tasksBusy = false
-        })
-    }
-    setTimeout(tick, tasksDelay)
-  }
-  setTimeout(tick, 2000)
-}
-
-async function pumpTasksBridge(): Promise<boolean> {
-  try {
-    if (!plugins.some((p) => p.name === 'sew-tasks-notify')) return false
-    // Сохранение выученных эндпоинтов: гость писать на диск не умеет (в webview
-    // нет window.shell), поэтому кладёт заявку в window.__sewTasksDataReq,
-    // а сохраняем мы через pluginDataSet. Гость недоверенный (контекст страницы),
-    // URL чистим: только наши фиды, same-origin или относительные, ≤5 на фид.
-    try {
-      const rawData = await guestJS<string>(
-        'tasks-data-take',
-        '(function(){try{var q=window.__sewTasksDataReq;if(!Array.isArray(q))return "[]";' +
-          'try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})()',
-      )
-      const parsedData: unknown = JSON.parse(typeof rawData === 'string' ? rawData : '[]')
-      const dataItems = Array.isArray(parsedData) ? parsedData : []
-      for (const item of dataItems) {
-        const clean = cleanTasksEndpoints(item)
-        if (!clean) continue
-        try {
-          await window.shell.pluginDataSet('sew-tasks-notify', { endpoints: clean })
-        } catch {
-          // main недоступен — гость повторит заявку при следующем обучении
-        }
-      }
-    } catch {
-      // webview не готов — попробуем на следующем тике
-    }
-    const rawTake = await guestJS<string>(
-      'tasks-take',
-      '(function(){try{var q=window.__sewTasksReq;if(!Array.isArray(q))return "[]";' +
-        'try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})()',
-    )
-    let reqs: Array<{ title?: unknown; body?: unknown; url?: unknown }> = []
-    try {
-      const parsed: unknown = JSON.parse(typeof rawTake === 'string' ? rawTake : '[]')
-      if (Array.isArray(parsed)) reqs = parsed
-    } catch {
-      reqs = []
-    }
-    if (!Array.isArray(reqs) || reqs.length === 0) return false
-    for (const req of reqs) {
-      if (!req || typeof req !== 'object') continue
-      const title = typeof req.title === 'string' && req.title ? req.title : 'SEW: новое задание'
-      const body = typeof req.body === 'string' ? req.body : ''
-      const url = typeof req.url === 'string' ? req.url : ''
-      // Пустые URL main всё равно отбросит; здесь фильтруем мусор до IPC.
-      if (!url) continue
-      try {
-        await window.shell.notifyShow({ title, body, url })
-      } catch {
-        // main недоступен — пропускаем (дедуп уже на стороне гостя)
       }
     }
     return true
@@ -1686,6 +1595,9 @@ async function handleShortcut(name: string): Promise<void> {
         setStatus('печать не удалась')
       }
       break
+    case 'screenshot':
+      void captureActiveTabScreenshot()
+      break
     case 'find':
       openFind()
       break
@@ -1740,15 +1652,48 @@ function shortcutFromEvent(event: KeyboardEvent): ShortcutName | null {
   if (mod && code === 'KeyL') return 'focus-address'
   if (mod && code === 'KeyF') return 'find'
   if (mod && code === 'KeyP') return 'print'
-  if (mod && (key === '=' || key === '+')) return 'zoom-in'
-  if (mod && (key === '-' || key === '_')) return 'zoom-out'
-  if (mod && key === '0') return 'zoom-reset'
+  if (mod && event.shiftKey && code === 'KeyS') return 'screenshot'
+  // Numpad: DOM-key зависит от NumLock/раскладки, поэтому ловим и по code
+  // (паритет с guestShortcutName в main, где numpad маппится явно).
+  if (mod && (key === '=' || key === '+' || code === 'NumpadAdd')) return 'zoom-in'
+  if (mod && (key === '-' || key === '_' || code === 'NumpadSubtract')) return 'zoom-out'
+  if (mod && (key === '0' || code === 'Numpad0')) return 'zoom-reset'
   if (mod && code === 'Comma') return 'settings'
   if (event.altKey && key === 'ArrowLeft') return 'back'
   if (event.altKey && key === 'ArrowRight') return 'forward'
   if (key === 'F11') return 'fullscreen'
   if (key === 'Escape') return 'escape'
   return null
+}
+
+/** Скриншот активной вкладки: файл + история в main, тост с кнопкой «Копировать» здесь */
+async function captureActiveTabScreenshot(): Promise<void> {
+  let guestId = 0
+  try {
+    guestId = webview.getWebContentsId()
+  } catch {
+    setStatus('нет активной вкладки')
+    return
+  }
+  try {
+    showScreenshotToast(await window.shell.captureScreenshot(guestId))
+  } catch {
+    setStatus('снимок не удался')
+  }
+}
+
+function showScreenshotToast(result: ScreenshotResult): void {
+  if (!result || !result.ok || !result.path) {
+    setStatus('снимок не удался')
+    return
+  }
+  const path = result.path
+  setStatusAction('Снимок сохранён', 'Копировать', () => {
+    window.shell
+      .copyScreenshotImage(path)
+      .then((ok) => setStatus(ok ? 'снимок в буфере обмена' : 'не удалось скопировать'))
+      .catch(() => setStatus('не удалось скопировать'))
+  })
 }
 
 function wireShortcuts(): void {
@@ -1764,6 +1709,8 @@ function wireShortcuts(): void {
     void handleShortcut(name)
   })
   window.shell.onShortcut((name) => void handleShortcut(name))
+  // Скриншот из контекстного меню main: результат прилетает событием.
+  window.shell.onScreenshotSaved((result) => showScreenshotToast(result))
 }
 
 function wireToolbar(): void {
@@ -1783,6 +1730,7 @@ function wireToolbar(): void {
     void navigate('https://monutor.github.io/DataBaseProducts/')
   })
   document.getElementById('btn-accounts')?.addEventListener('click', () => void openAccounts(true))
+  document.getElementById('btn-screenshot')?.addEventListener('click', () => void captureActiveTabScreenshot())
   // NB: btn-templates подписывается в wireTemplates() — дубль здесь давал
   // двойной openTemplates() и задвоенный список шаблонов.
 
@@ -1985,6 +1933,8 @@ async function loadTemplateItems(): Promise<TemplateItem[]> {
 
 /** chrome-совместимая прослойка для options.js расширения (выполняется в shell-окне) */
 function makeShellChrome(pluginName: string): unknown {
+  // Отписки onChanged: без карты removeListener не мог снять конкретный обработчик.
+  const changedUnsubs = new Map<(changes: Record<string, { newValue: unknown }>, area: string) => void, () => void>()
   const pickGet = (
     keys: unknown,
     cb?: (res: Record<string, unknown>) => void,
@@ -1993,6 +1943,13 @@ function makeShellChrome(pluginName: string): unknown {
     const p = window.shell.pluginDataGet(pluginName, list).then((all) => {
       if (keys === undefined || keys === null) return all
       if (typeof keys === 'string') return all[keys] !== undefined ? { [keys]: all[keys] } : {}
+      if (typeof keys === 'object' && !Array.isArray(keys)) {
+        // Форма { key: defaultValue }: отсутствующие ключи подменяются дефолтами (семантика Chrome).
+        const defaults = keys as Record<string, unknown>
+        const withDefaults: Record<string, unknown> = {}
+        for (const k of Object.keys(defaults)) withDefaults[k] = all[k] !== undefined ? all[k] : defaults[k]
+        return withDefaults
+      }
       const out: Record<string, unknown> = {}
       for (const k of list ?? []) out[k] = all[k]
       return out
@@ -2026,7 +1983,8 @@ function makeShellChrome(pluginName: string): unknown {
       },
       onChanged: {
         addListener: (fn: (changes: Record<string, { newValue: unknown }>, area: string) => void): void => {
-          window.shell.onPluginDataChanged(({ plugin }) => {
+          if (changedUnsubs.has(fn)) return // повторный add того же fn — не дублируем
+          const unsub = window.shell.onPluginDataChanged(({ plugin }) => {
             if (plugin !== pluginName) return
             try {
               fn({ sew_templates: { newValue: true } }, 'local')
@@ -2034,8 +1992,12 @@ function makeShellChrome(pluginName: string): unknown {
               // игнорируем
             }
           })
+          changedUnsubs.set(fn, unsub)
         },
-        removeListener: (): void => {},
+        removeListener: (fn: (changes: Record<string, { newValue: unknown }>, area: string) => void): void => {
+          changedUnsubs.get(fn)?.()
+          changedUnsubs.delete(fn)
+        },
       },
     },
     runtime: { lastError: undefined as undefined },
@@ -2250,7 +2212,6 @@ function renderStrip(): void {
   for (const group of orderedGroups()) {
     if (group.id === UNASSIGNED_FOLDER) continue
     const groupTabs = tabsInFolder(group.id)
-    if (!groupTabs.length) continue
     const header = document.createElement('button')
     header.type = 'button'
     header.className = 'tab-group-header'
@@ -2305,7 +2266,9 @@ function cancelFolderPasswordPrompt(): void {
  *  Возвращает введённый пароль (при верном) или null при отмене.
  *  Неверный пароль не закрывает диалог — показывает ошибку и ждёт повтора. */
 async function promptFolderPassword(folderId: string): Promise<string | null> {
-  if (!passwordPrompt || !promptPasswordEl || !promptFolderNameEl) return ''
+  // Без DOM диалог показать нельзя — трактуем как отмену (null), иначе пустая
+  // строка прошла бы проверку как успешная аутентификация.
+  if (!passwordPrompt || !promptPasswordEl || !promptFolderNameEl) return null
   const group = orderedGroups().find((g) => g.id === folderId)
   currentPromptFolderId = group?.id ?? folderId
   promptFolderNameEl.textContent = group ? `Папка «${group.name}»` : 'Введите пароль'
@@ -2390,10 +2353,6 @@ function renderGroupPanel(): void {
     return
   }
   const groupTabs = tabsInFolder(group.id)
-  if (!groupTabs.length) {
-    closeGroupPanel()
-    return
-  }
 
   tabGroupPanel.innerHTML = ''
   const section = document.createElement('div')
@@ -2410,6 +2369,12 @@ function renderGroupPanel(): void {
 
   const list = document.createElement('div')
   list.className = 'tg-list'
+  if (!groupTabs.length) {
+    const empty = document.createElement('div')
+    empty.className = 'tabs-empty-hint'
+    empty.textContent = 'Нет вкладок'
+    list.append(empty)
+  }
   const current = currentViewUrl()
   for (const tab of groupTabs) {
     const row = document.createElement('div')
@@ -2540,7 +2505,6 @@ function refreshTabsList(): void {
   for (const group of orderedGroups()) {
     if (group.id === UNASSIGNED_FOLDER) continue
     const groupTabs = tabsInFolder(group.id)
-    if (!groupTabs.length) continue
     const section = document.createElement('div')
     section.className = 'folder-section' + (collapsedFolders.has(group.id) ? ' collapsed' : '')
     section.dataset.folderId = group.id
@@ -2572,6 +2536,12 @@ function refreshTabsList(): void {
     section.append(header)
     const body = document.createElement('div')
     body.className = 'folder-tabs'
+    if (!groupTabs.length) {
+      const empty = document.createElement('div')
+      empty.className = 'tabs-empty-hint'
+      empty.textContent = 'Нет вкладок'
+      body.append(empty)
+    }
     for (const tab of groupTabs) body.append(createTabRow(tab))
     section.append(body)
     tabsList.append(section)
@@ -2692,14 +2662,16 @@ async function saveCurrentFolder(): Promise<void> {
     return
   }
   const protectChecked = folderProtect?.checked ?? false
-  const password = folderPassword?.value ?? ''
+  // Пароль тримим сразу: пробелы по краям не значимы (хранилище тоже тримит),
+  // иначе пароль из одних пробелов молча снимал бы защиту или лочил папку.
+  const password = (folderPassword?.value ?? '').trim()
   const folders = [...(config?.folders ?? [])]
   if (editingFolderId) {
     const i = folders.findIndex((f) => f.id === editingFolderId)
     if (i !== -1) {
       const existing = folders[i]
       // Снятие или смена пароля уже защищённой папки — только после проверки текущего пароля.
-      const touchesProtection = !protectChecked || Boolean(password.trim())
+      const touchesProtection = !protectChecked || Boolean(password)
       if (existing.passwordId && touchesProtection && !(await requireFolderPassword(existing.id))) return
       if (protectChecked && password) {
         // Задать или заменить пароль.
@@ -2714,8 +2686,9 @@ async function saveCurrentFolder(): Promise<void> {
         // Галочка включена, но пароль пустой — оставляем старый (редактирование имени).
         folders[i] = { ...existing, name }
       } else {
-        // Галочка включена, пароль пустой и раньше его не было — без защиты.
+        // Галочка включена, пароль пустой и раньше его не было — без защиты (с предупреждением).
         folders[i] = { ...existing, name, passwordId: undefined }
+        setStatus('Пароль пустой — папка сохранена без защиты')
       }
     }
   } else {
@@ -2725,6 +2698,8 @@ async function saveCurrentFolder(): Promise<void> {
       folders.push({ id, name, ...(pid ? { passwordId: pid } : {}) })
       if (!pid) setStatus('Шифрохранилище недоступно — папка без пароля')
     } else {
+      // Галка защиты с пустым паролем — папка без защиты, но не молча.
+      if (protectChecked) setStatus('Пароль пустой — папка создана без защиты')
       folders.push({ id, name })
     }
   }
@@ -2797,19 +2772,34 @@ function importTabs(file: File): void {
       if (!name || !urlRaw) continue
       tabs.push({ id: generateTabId(), name, url: normalizeUrl(urlRaw), ...(typeof (raw as NavTab).folderId === 'string' ? { folderId: (raw as NavTab).folderId } : {}) })
     }
-    // Папки из файла (v2): полная замена структуры. Коллизии id — пересоздаём.
+    // Папки из файла (v2): полная замена структуры. Коллизии id — пересоздаём,
+    // ссылки вкладок переписываем через карту ремаппинга (иначе повторный импорт
+    // разваливает раскладку: вкладки выпадают в «без папки»).
     const importedFolders: NavFolder[] = []
     const folderIds = new Set<string>()
+    const folderRemap = new Map<string, string>()
     if (Array.isArray(data.folders)) {
       for (const raw of data.folders) {
         if (!raw || typeof raw !== 'object') continue
         const fname = String((raw as NavFolder).name ?? '').trim()
         let fid = String((raw as NavFolder).id ?? '')
         if (!fname || !fid) continue
-        if (folderIds.has(fid) || (config?.folders ?? []).some((f) => f.id === fid)) fid = generateFolderId()
+        if ((config?.folders ?? []).some((f) => f.id === fid)) {
+          // Коллизия с текущей структурой — новый id + ремаппинг ссылок вкладок.
+          const nid = generateFolderId()
+          folderRemap.set(fid, nid)
+          fid = nid
+        } else if (folderIds.has(fid)) {
+          // Дубль внутри файла — новый id без ремаппинга (вкладки остаются у первой папки).
+          fid = generateFolderId()
+        }
         folderIds.add(fid)
         importedFolders.push({ id: fid, name: fname })
       }
+    }
+    // Переписываем ссылки вкладок на пересозданные папки, затем отсекаем «висячие».
+    for (const t of tabs) {
+      if (t.folderId) t.folderId = folderRemap.get(t.folderId) ?? t.folderId
     }
     // Отсекаем «висячие» ссылки на папки, которых нет в импортированном наборе.
     for (const t of tabs) {
@@ -2951,12 +2941,7 @@ async function init(): Promise<void> {
   startStatusPolling()
   startSewHelperBridge()
   startScansBridge()
-  startTasksBridge()
-  // Клик по ОС-уведомлению о задании: main прислал 'tasks:open' — ведём webview
-  // на страницу списка (navigate сам проверит allowlist).
-  window.shell.onTasksOpen(({ url }) => {
-    if (typeof url === 'string' && url) void navigate(url)
-  })
+
   // Данные плагинов меняются из оверлеев оболочки — перепушиваем снапшот в страницу
   window.shell.onPluginDataChanged(() => void pushPluginStores())
   // Живые обновления папки сканов: main шлёт 'scans:changed' при каждом изменении —

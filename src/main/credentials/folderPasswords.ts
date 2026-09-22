@@ -85,7 +85,9 @@ export function verifyFolderPassword(folderId: string, password: string): boolea
   if (!found || !isFolderPasswordEncryptionAvailable()) return false
   try {
     const plain = safeStorage.decryptString(Buffer.from(found.passwordEnc, 'base64'))
-    return plain === (password ?? '')
+    // Хранилище тримит при сохранении — тримим и при проверке, иначе пароль
+    // с пробелами по краям задать можно, а ввести уже нет.
+    return plain === (password ?? '').trim()
   } catch {
     return false
   }

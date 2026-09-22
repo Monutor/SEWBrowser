@@ -153,6 +153,16 @@ const api = {
   showDownload: (id: string): Promise<boolean> => ipcRenderer.invoke('downloads:show', id),
   /** Открыть файл из истории приложением по умолчанию */
   openDownloadFile: (id: string): Promise<boolean> => ipcRenderer.invoke('downloads:open', id),
+  /** Скриншот видимой области вкладки: PNG в папку загрузок + запись в историю */
+  captureScreenshot: (webContentsId: number): Promise<{ ok: boolean; path?: string }> =>
+    ipcRenderer.invoke('screenshot:capture', webContentsId),
+  /** Положить PNG скриншота (только из папки загрузок) в буфер обмена */
+  copyScreenshotImage: (filePath: string): Promise<boolean> =>
+    ipcRenderer.invoke('screenshot:copy-image', filePath),
+  /** Скриншот, запущенный из контекстного меню main (там нет возврата invoke) */
+  onScreenshotSaved: (cb: (result: { ok: boolean; path?: string }) => void): void => {
+    ipcRenderer.on('screenshot:saved', (_event, payload: { ok: boolean; path?: string }) => cb(payload))
+  },
   /** PDF-просмотр: сохранить документ в окно просмотра (диалог сохранения) */
   savePdf: (base64: string, name: string): Promise<boolean> =>
     ipcRenderer.invoke('pdf-viewer:save', { base64, name }),
@@ -248,18 +258,13 @@ const api = {
   /** Узкий fetch-мост для плагинов: только allowlist-URL (BFF mvideo — CORS режет из страницы) */
   netFetch: (url: string): Promise<{ ok: boolean; status: number; data: unknown }> =>
     ipcRenderer.invoke('net:fetch', url),
-  /** Уведомление об изменении данных плагина (для chrome.storage.onChanged) */
-  onPluginDataChanged: (cb: (event: { plugin: string }) => void): void => {
-    ipcRenderer.on('plugin-data:changed', (_event, payload: { plugin: string }) => cb(payload))
-  /** ОС-уведомление о новом задании SEW (показывает main-процесс; клик открывает страницу списка) */
-  notifyShow: (task: { title: string; body: string; url: string }): Promise<boolean> =>
-    ipcRenderer.invoke('notify:show', task),
-  /** Клик по уведомлению о задании: main просит renderer открыть страницу списка */
-  onTasksOpen: (cb: (event: { url: string }) => void): void => {
-    ipcRenderer.on('tasks:open', (_event, payload: { url: string }) => cb(payload))
-  },
+   /** Уведомление об изменении данных плагина (для chrome.storage.onChanged).
+   *  Возвращает функцию отписки — иначе повторные addListener копят обработчики. */
   onPluginDataChanged: (cb: (event: { plugin: string }) => void): (() => void) => {
+    const listener = (_event: unknown, payload: { plugin: string }): void => cb(payload)
+    ipcRenderer.on('plugin-data:changed', listener)
     return () => {
+      ipcRenderer.removeListener('plugin-data:changed', listener)
     }
   },
 }

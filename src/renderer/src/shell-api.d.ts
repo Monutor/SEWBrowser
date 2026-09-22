@@ -119,6 +119,12 @@ interface DownloadedFile {
   tabNum?: string
 }
 
+/** Результат скриншота вкладки (PNG уже лежит в папке загрузок) */
+interface ScreenshotResult {
+  ok: boolean
+  path?: string
+}
+
 /** Результат узкого fetch-моста main-процесса (только allowlist-URL) */
 interface NetFetchResult {
   ok: boolean
@@ -204,6 +210,7 @@ type ShortcutName =
   | 'forward'
   | 'fullscreen'
   | 'print'
+  | 'screenshot'
   | 'find'
   | 'zoom-in'
   | 'zoom-out'
@@ -231,6 +238,9 @@ interface ShellApi {
   removeDownload(id: string): Promise<DownloadedFile[]>
   showDownload(id: string): Promise<boolean>
   openDownloadFile(id: string): Promise<boolean>
+  captureScreenshot(webContentsId: number): Promise<ScreenshotResult>
+  copyScreenshotImage(filePath: string): Promise<boolean>
+  onScreenshotSaved(cb: (result: ScreenshotResult) => void): void
   savePdf(base64: string, name: string): Promise<boolean>
   saveCurrentPdf(): Promise<boolean>
   printPdf(): Promise<boolean>
@@ -280,11 +290,7 @@ interface ShellApi {
   pluginDataGetAll(): Promise<Record<string, Record<string, unknown>>>
   /** Узкий fetch-мост main-процесса (только allowlist-URL, напр. BFF mvideo) */
   netFetch(url: string): Promise<NetFetchResult>
-  onPluginDataChanged(cb: (event: { plugin: string }) => void): void
-  /** ОС-уведомление о новом задании SEW (показывает main-процесс; клик открывает страницу списка) */
-  notifyShow(task: { title: string; body: string; url: string }): Promise<boolean>
-  /** Клик по уведомлению о задании: main просит renderer открыть страницу списка */
-  onTasksOpen(cb: (event: { url: string }) => void): void
+   onPluginDataChanged(cb: (event: { plugin: string }) => void): () => void
   onUpdater(cb: (event: UpdaterEvent) => void): void
   downloadUpdate(): Promise<boolean>
   checkForUpdates(): Promise<boolean>

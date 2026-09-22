@@ -7,6 +7,9 @@
     "moduleResolution": "bundler",
     "strict": true,
     "types": ["node"],
+    // Тесты гоняются напрямую через node --test (type stripping):
+    // импорт './screenshot.ts' с расширением требует этого флага.
+    "allowImportingTsExtensions": true,
     "noEmit": true,
     "skipLibCheck": true
   },

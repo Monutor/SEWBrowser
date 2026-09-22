@@ -1,6 +1,6 @@
-import { app, BrowserWindow, Notification, globalShortcut, ipcMain, net, session, webContents, Menu, dialog, shell, clipboard } from 'electron'
+import { app, BrowserWindow, ClipboardItem, Notification, globalShortcut, ipcMain, net, session, webContents, Menu, dialog, shell, clipboard } from 'electron'
 import type { Input, MenuItemConstructorOptions, WebContents } from 'electron'
-import { join, basename } from 'node:path'
+import { dirname, join, basename } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
@@ -12,6 +12,7 @@ import { getPluginData, removePluginData, setPluginData } from './plugins/store'
 import { clearFolderPassword, isFolderPasswordEncryptionAvailable, saveFolderPassword, verifyFolderPassword } from './credentials/folderPasswords'
 import { getAccountSecrets, getLastUsedAccountId, listAccounts, removeAccount, saveAccount, setLastUsedAccountId } from './credentials/store'
 import { appendDownloadRecord, clearDownloadHistory, loadDownloadHistory, removeDownloadRecord } from './downloads/history'
+import { screenshotFileName } from './screenshot'
 import {
   createScanWatcher,
   deleteScanFile,
@@ -48,6 +49,7 @@ function guestShortcutName(input: Input): string | null {
   if (mod && code === 'KeyL') return 'focus-address'
   if (mod && code === 'KeyF') return 'find'
   if (mod && code === 'KeyP') return 'print'
+  if (mod && input.shift && code === 'KeyS') return 'screenshot'
   if (mod && (key === '=' || key === '+' || key === 'Add' || key === 'numadd')) return 'zoom-in'
   if (mod && (key === '-' || key === '_' || key === 'Subtract' || key === 'numsub')) return 'zoom-out'
   if (mod && key === '0') return 'zoom-reset'
@@ -290,32 +292,6 @@ function createWindow(): void {
       return { ok: false, status: 0, data: null }
     }
   })
-  // ---------- Уведомления о новых заданиях SEW (плагин sew-tasks-notify) ----------
-  // Гость складывает новинки в window.__sewTasksReq, renderer забирает и зовёт
-  // сюда. Клик по тосту — фокус окна + 'tasks:open' в renderer (навигация на
-  // страницу списка). URL строго из двух известных страниц заданий.
-  ipcMain.handle('notify:show', (_event, task: unknown) => {
-    const t = (task ?? {}) as { title?: unknown; body?: unknown; url?: unknown }
-    const title = typeof t.title === 'string' && t.title ? t.title : 'SEW: новое задание'
-    const body = typeof t.body === 'string' ? t.body : ''
-    const url = typeof t.url === 'string' ? t.url : ''
-    const allowed = [
-      'https://sew.mvideoeldorado.ru/v2/handover-v2/tasks',
-      'https://sew.mvideoeldorado.ru/v2/relocation/tasks',
-    ]
-    if (!allowed.includes(url)) return false
-    const notif = new Notification({ title, body })
-    notif.on('click', () => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        if (mainWindow.isMinimized()) mainWindow.restore()
-        mainWindow.show()
-        mainWindow.focus()
-        mainWindow.webContents.send('tasks:open', { url })
-      }
-    })
-    notif.show()
-    return true
-  })
   // HTTP-кэш НЕ входит в clearStorageData — для него отдельный clearCache().
   ipcMain.handle('storage:usage', async () => {
     const ses = session.defaultSession
@@ -430,11 +406,70 @@ function createWindow(): void {
    ipcMain.handle('downloads:open', async (_event, id: unknown) => {
      const rec = typeof id === 'string' ? loadDownloadHistory().find((r) => r.id === id) : undefined
      if (!rec || !rec.path || !existsSync(rec.path)) return false
-     await shell.openPath(rec.path)
-     return true
+     try {
+       const err = await shell.openPath(rec.path)
+       return err === ''
+     } catch (err) {
+       console.warn('[shell] downloads:open failed:', err)
+       return false
+     }
+   })
+   // ---------- Скриншот видимой области вкладки (PNG в папку загрузок + история) ----------
+   async function captureGuestScreenshot(guestId: unknown): Promise<{ ok: boolean; path?: string }> {
+     const guest = typeof guestId === 'number' ? webContents.fromId(guestId) : undefined
+     if (!guest || guest.isDestroyed()) return { ok: false }
+     let png: Buffer
+     try {
+       png = await guest.capturePage().then((image) => image.toPNG())
+     } catch (err) {
+       console.warn('[shell] screenshot capture failed:', err)
+       return { ok: false }
+     }
+     if (!png.length) return { ok: false }
+     const fileName = screenshotFileName()
+     const filePath = join(app.getPath('downloads'), fileName)
+     try {
+       writeFileSync(filePath, png)
+     } catch (err) {
+       console.warn('[shell] screenshot save failed:', err)
+       return { ok: false }
+     }
+     const now = new Date().toISOString()
+     try {
+       appendDownloadRecord({
+         id: randomUUID(),
+         name: fileName,
+         path: filePath,
+         bytes: png.length,
+         state: 'done',
+         startedAt: now,
+         finishedAt: now,
+         ...(await resolveAttribution(guest)),
+       })
+     } catch (err) {
+       console.warn('[shell] screenshot history failed:', err)
+     }
+     return { ok: true, path: filePath }
+   }
+   ipcMain.handle('screenshot:capture', (_event, guestId: unknown) => captureGuestScreenshot(guestId))
+   ipcMain.handle('screenshot:copy-image', async (_event, filePath: unknown) => {
+     // Путь прилетает из renderer — принимаем только нашу папку загрузок.
+     if (typeof filePath !== 'string' || !filePath) return false
+     try {
+       if (dirname(filePath) !== app.getPath('downloads')) return false
+       const png = readFileSync(filePath)
+       if (!png.length) return false
+       // Electron 44: синхронного clipboard.writeImage больше нет —
+       // только новый ClipboardItem-API (Blob вместо NativeImage).
+       await clipboard.write([new ClipboardItem({ 'image/png': new Blob([png], { type: 'image/png' }) })])
+       return true
+     } catch (err) {
+       console.warn('[shell] screenshot copy failed:', err)
+       return false
+     }
    })
    // ---------- PDF-просмотр (окно с кнопками «Скачать»/«Печать») ----------
-   ipcMain.handle('pdf-viewer:save', (_event, payload: unknown) => {
+    ipcMain.handle('pdf-viewer:save', async (_event, payload: unknown) => {
       if (!payload || typeof payload !== 'object') return false
       const { base64, name } = payload as { base64?: unknown; name?: unknown }
       if (typeof base64 !== 'string' || !base64 || typeof name !== 'string') return false
@@ -487,6 +522,8 @@ function createWindow(): void {
           state: 'done',
           startedAt: new Date().toISOString(),
           finishedAt: new Date().toISOString(),
+          // Сохранение инициировано из оболочки — геста нет, но аккаунт известен.
+          ...(await resolveAttribution()),
         })
         return true
       } catch (err) {
@@ -495,7 +532,7 @@ function createWindow(): void {
       }
     })
     // Экспорт вкладок в .json: диалог сохранения + запись на диск
-    ipcMain.handle('tabs:export', (_event, payload: unknown) => {
+    ipcMain.handle('tabs:export', async (_event, payload: unknown) => {
       if (!payload || typeof payload !== 'object') return false
       const { content, name } = payload as { content?: unknown; name?: unknown }
       if (typeof content !== 'string' || !content || typeof name !== 'string' || !name.trim()) return false
@@ -516,6 +553,8 @@ function createWindow(): void {
           state: 'done',
           startedAt: new Date().toISOString(),
           finishedAt: new Date().toISOString(),
+          // Экспорт инициирован из оболочки — геста нет, но аккаунт известен.
+          ...(await resolveAttribution()),
         })
         return true
       } catch (err) {
@@ -549,7 +588,7 @@ function createWindow(): void {
     })
     // Сохранение текущего PDF из окна просмотра (байты уже во временном файле —
     // base64 через IPC не гоняем, иначе большие файлы рвут лимиты).
-    ipcMain.handle('pdf-viewer:save-current', (_event) => {
+    ipcMain.handle('pdf-viewer:save-current', async (_event) => {
       const sender = _event.sender
       if (!sender || sender.isDestroyed()) return false
       const doc = pdfViewerDocs.get(sender.id)
@@ -573,6 +612,8 @@ function createWindow(): void {
           state: 'done',
           startedAt: new Date().toISOString(),
           finishedAt: new Date().toISOString(),
+          // Сохранение инициировано из оболочки — геста нет, но аккаунт известен.
+          ...(await resolveAttribution()),
         })
         return true
       } catch (err) {
@@ -804,6 +845,17 @@ function createWindow(): void {
         { label: 'Назад', enabled: nav.canGoBack(), click: () => { if (!guest.isDestroyed()) guest.goBack() } },
         { label: 'Вперёд', enabled: nav.canGoForward(), click: () => { if (!guest.isDestroyed()) guest.goForward() } },
         { label: 'Перезагрузить', click: () => { if (!guest.isDestroyed()) guest.reload() } },
+        {
+          label: 'Снимок вкладки',
+          click: () => {
+            if (guest.isDestroyed()) return
+            // Тост с кнопкой «Копировать» покажет renderer по событию.
+            void captureGuestScreenshot(guest.id).then((result) => {
+              if (!mainWindow || mainWindow.isDestroyed()) return
+              mainWindow.webContents.send('screenshot:saved', result)
+            })
+          },
+        },
         { type: 'separator' },
         { label: 'Печать…', click: () => { if (!guest.isDestroyed()) void guest.print({}) } },
         {
@@ -1291,6 +1343,9 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  // Windows: без AppUserModelId ОС-тосты (Notification) молча не показываются,
+  // особенно в dev. Id совпадает с appId из electron-builder.yml.
+  if (process.platform === 'win32') app.setAppUserModelId('com.sewbrowser.app')
   createWindow()
 
   // Автообновление через GitHub Releases (только в собранном приложении).
