@@ -4,6 +4,7 @@ release/
 *.log
 .DS_Store
 *.tsbuildinfo
+docs/
 
 # AI assistants — локальные конфиги, сессии, кэш (общий AGENTS.md остаётся в гите!)
 .opencode/
