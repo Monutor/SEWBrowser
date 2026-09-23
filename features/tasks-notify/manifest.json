@@ -1,0 +1,6 @@
+{
+  "name": "tasks-notify",
+  "version": "0.1.0",
+  "description": "Уведомления о новых заданиях relocation (опрос search API из страницы, OS Notification + звук)",
+  "renderer": ["./tasks-notify.js"]
+}
