@@ -82,6 +82,12 @@ function __tnSearch(settings) {
 
 function __tnTick() {
   if (__tnBusy) return;
+  // Bearer перехватывается из запросов самой SPA; пока она ничего не послала
+  // (первый тик после захода) — опрос пропускаем, иначе гарантированный 401
+  if (!__tnBearer) {
+    try { window.__tasksNotifyState = { lastTick: new Date().toISOString(), lastCount: 0, lastError: 'awaiting SPA auth' }; } catch (e) {}
+    return;
+  }
   __tnBusy = true;
   __tnGetSettings(function (st) {
     __tnSearch(st).then(function (items) {
