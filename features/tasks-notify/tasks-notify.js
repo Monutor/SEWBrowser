@@ -47,20 +47,15 @@ function __tnHookAuth() {
   try {
     var origOpen = XMLHttpRequest.prototype.open;
     var origSend = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.open = function (m, u) { this.__tnUrl = u; return origOpen.apply(this, arguments); };
-    XMLHttpRequest.prototype.send = function (b) {
-      try {
-        var self = this;
-        if (self.__tnUrl && String(self.__tnUrl).indexOf('/relocation/search') >= 0) {
-          var origSet = self.setRequestHeader;
-          self.setRequestHeader = function (k, v) {
-            try { if (String(k).toLowerCase() === 'authorization' && String(v).indexOf('Bearer ') === 0) __tnBearer = String(v); } catch (e) {}
-            return origSet.apply(self, arguments);
-          };
-        }
-      } catch (e) {}
-      return origSend.apply(this, arguments);
+    // setRequestHeader оборачиваем на уровне прототипа СРАЗУ: он всегда
+    // вызывается до send, обёртка внутри send опаздывала и Bearer терялся (-> 401)
+    var origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+    XMLHttpRequest.prototype.setRequestHeader = function (k, v) {
+      try { if (String(k).toLowerCase() === 'authorization' && String(v).indexOf('Bearer ') === 0) __tnBearer = String(v); } catch (e) {}
+      return origSetHeader.apply(this, arguments);
     };
+    XMLHttpRequest.prototype.open = function (m, u) { this.__tnUrl = u; return origOpen.apply(this, arguments); };
+    XMLHttpRequest.prototype.send = function (b) { return origSend.apply(this, arguments); };
   } catch (e) {}
 }
 
