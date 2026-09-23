@@ -818,6 +818,7 @@ body {
 }
 
 .settings-row input[type='text'],
+.settings-row input[type='number'],
 .settings-row input:not([type]),
 #folder-password,
 #set-starturl,
@@ -835,7 +836,8 @@ body {
 
 #folder-password:focus,
 #set-starturl:focus,
-#set-allowlist:focus {
+#set-allowlist:focus,
+.settings-row input[type='number']:focus {
   border-color: var(--accent);
 }
 
