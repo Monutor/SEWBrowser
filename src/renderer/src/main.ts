@@ -116,6 +116,27 @@ function isAllowed(url: string): boolean {
   })
 }
 
+/**
+ * Очередь tasks-notify несёт относительный путь ('/v2/relocation/tasks'):
+ * hostOf('') пуст → isAllowed режет. Резолвим против текущего URL геста,
+ * fallback — startUrl из конфига + путь.
+ */
+function resolveTasksUrl(url: string): string {
+  const raw = (url || '').trim() || '/v2/relocation/tasks'
+  if (/^https?:\/\//i.test(raw)) return raw
+  try {
+    const base = webview.getURL() || config?.startUrl || ''
+    return new URL(raw, base).href
+  } catch {
+    const start = config?.startUrl || ''
+    try {
+      return new URL(raw, start).href
+    } catch {
+      return start + (raw.startsWith('/') ? raw : `/${raw}`)
+    }
+  }
+}
+
 let toastTimer: ReturnType<typeof setTimeout> | null = null
 
 /**
@@ -657,7 +678,7 @@ async function pumpTasksNotify(): Promise<boolean> {
       }
       throw err
     })
-    let reqs: Array<{ id: number; title: string; body: string; url: string }> = []
+    let reqs: Array<{ id: number; title: string; body: string; url: string; sound?: boolean }> = []
     try {
       const parsed: unknown = JSON.parse(typeof rawTake === 'string' ? rawTake : '[]')
       if (Array.isArray(parsed)) reqs = parsed as typeof reqs
@@ -670,18 +691,24 @@ async function pumpTasksNotify(): Promise<boolean> {
     } catch (err) {
       console.warn('[tasks-notify] notifyTasks failed:', err)
     }
-    // Тост + звук в оболочке (первое из пачки; остальные — в OS Notification)
+    // Тост + звук в оболочке (первое из пачки; остальные — в OS Notification).
+    // sound:false из очереди (настройка sound гостя) глушит beep; дефолт — звук есть.
     const first = valid[0]
-    try {
-      const ctx = new AudioContext()
-      const osc = ctx.createOscillator()
-      const gain = ctx.createGain()
-      osc.connect(gain); gain.connect(ctx.destination)
-      osc.frequency.value = 880; gain.gain.value = 0.15
-      osc.start(); osc.stop(ctx.currentTime + 0.25)
-    } catch { /* без звука */ }
-    setStatusAction(`${first.title} (+${valid.length - 1})`, 'Перейти', () => {
-      void navigate(first.url || '/v2/relocation/tasks')
+    if (valid.some((r) => r.sound !== false)) {
+      try {
+        const ctx = new AudioContext()
+        const osc = ctx.createOscillator()
+        const gain = ctx.createGain()
+        osc.connect(gain); gain.connect(ctx.destination)
+        osc.frequency.value = 880; gain.gain.value = 0.15
+        osc.onended = (): void => { ctx.close().catch(() => undefined) }
+        osc.start(); osc.stop(ctx.currentTime + 0.25)
+        setTimeout(() => { ctx.close().catch(() => undefined) }, 1000)
+      } catch { /* без звука */ }
+    }
+    const toastText = valid.length > 1 ? `${first.title} (+${valid.length - 1})` : first.title
+    setStatusAction(toastText, 'Перейти', () => {
+      void navigate(resolveTasksUrl(first.url || '/v2/relocation/tasks'))
     })
     return true
   } catch {
@@ -3026,7 +3053,8 @@ async function init(): Promise<void> {
     })
   })
   // Клик по OS-уведомлению tasks-notify: main прислал URL — переходим в гесте
-  window.shell.onTasksOpen?.((url) => { void navigate(url) })
+  // (относительный путь резолвим против текущего URL, иначе allowlist режет)
+  window.shell.onTasksOpen?.((url) => { void navigate(resolveTasksUrl(url)) })
 
   if (addressInput) addressInput.value = config.startUrl
   lastAllowedUrl = config.startUrl

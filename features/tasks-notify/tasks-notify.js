@@ -103,7 +103,7 @@ function __tnTick() {
               var proc = (it.process && it.process.name) || 'перемещение';
               var src = (it.srcStock && it.srcStock.name) || '?';
               var dst = (it.dstStock && it.dstStock.name) || '?';
-              fresh.push({ id: id, title: 'Новое задание: ' + proc, body: '#' + id + ' · ' + src + ' → ' + dst, url: '/v2/relocation/tasks' });
+              fresh.push({ id: id, title: 'Новое задание: ' + proc, body: '#' + id + ' · ' + src + ' → ' + dst, url: '/v2/relocation/tasks', sound: st.sound !== false });
             }
           }
         });
