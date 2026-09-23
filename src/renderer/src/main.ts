@@ -25,6 +25,7 @@ const setPlugins = document.getElementById('set-plugins') as HTMLElement | null
 const setTnObjectId = document.getElementById('set-tn-objectid') as HTMLInputElement | null
 const setTnInterval = document.getElementById('set-tn-interval') as HTMLInputElement | null
 const setTnSound = document.getElementById('set-tn-sound') as HTMLInputElement | null
+const setTnSoundName = document.getElementById('set-tn-sound-name') as HTMLElement | null
 const setStorageUsage = document.getElementById('set-storage-usage') as HTMLElement | null
 const setCookies = document.getElementById('set-cookies') as HTMLElement | null
 const setClearOnExit = document.getElementById('set-clear-on-exit') as HTMLSelectElement | null
@@ -649,6 +650,44 @@ let tasksNotifyStarted = false
 let tasksNotifyDiagged = false
 let tasksNotifyDelay = 5000
 let tasksNotifyBusy = false
+/** Свой звук из настроек (soundFile/soundName в plugin-data tasks-notify); '' — стандартный бип */
+let tnSoundFile = ''
+/** Кэш Audio своего звука (ключ — soundFile); сбрасывается при смене/сбросе настройки */
+let tnCustomAudio: HTMLAudioElement | null = null
+let tnCustomAudioKey = ''
+
+/** Стандартный бип 880 Гц (дефолт, когда своего файла нет или он битый) */
+function playTnBeep(): void {
+  try {
+    const ctx = new AudioContext()
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.connect(gain); gain.connect(ctx.destination)
+    osc.frequency.value = 880; gain.gain.value = 0.15
+    osc.onended = (): void => { ctx.close().catch(() => undefined) }
+    osc.start(); osc.stop(ctx.currentTime + 0.25)
+    setTimeout(() => { ctx.close().catch(() => undefined) }, 1000)
+  } catch { /* без звука */ }
+}
+
+/** Свой файл — приоритет; любая неудача — молча стандартный бип */
+async function playTnSound(): Promise<void> {
+  if (tnSoundFile) {
+    try {
+      if (!tnCustomAudio || tnCustomAudioKey !== tnSoundFile) {
+        const data = await window.shell.getSound()
+        if (!data) throw new Error('no custom sound')
+        tnCustomAudio = new Audio(`data:${data.mime};base64,${data.base64}`)
+        tnCustomAudioKey = tnSoundFile
+      } else {
+        tnCustomAudio.currentTime = 0
+      }
+      await tnCustomAudio.play()
+      return
+    } catch { /* fallback ниже */ }
+  }
+  playTnBeep()
+}
 function startTasksNotifyBridge(): void {
   if (tasksNotifyStarted) return
   tasksNotifyStarted = true
@@ -695,19 +734,11 @@ async function pumpTasksNotify(): Promise<boolean> {
       console.warn('[tasks-notify] notifyTasks failed:', err)
     }
     // Тост + звук в оболочке (первое из пачки; остальные — в OS Notification).
-    // sound:false из очереди (настройка sound гостя) глушит beep; дефолт — звук есть.
+    // sound:false из очереди (настройка sound гостя) глушит звук; дефолт — звук есть.
+    // Свой файл (настройка soundFile) — приоритет, нет файла/битый — стандартный бип.
     const first = valid[0]
     if (valid.some((r) => r.sound !== false)) {
-      try {
-        const ctx = new AudioContext()
-        const osc = ctx.createOscillator()
-        const gain = ctx.createGain()
-        osc.connect(gain); gain.connect(ctx.destination)
-        osc.frequency.value = 880; gain.gain.value = 0.15
-        osc.onended = (): void => { ctx.close().catch(() => undefined) }
-        osc.start(); osc.stop(ctx.currentTime + 0.25)
-        setTimeout(() => { ctx.close().catch(() => undefined) }, 1000)
-      } catch { /* без звука */ }
+      void playTnSound()
     }
     const toastText = valid.length > 1 ? `${first.title} (+${valid.length - 1})` : first.title
     setStatusAction(toastText, 'Перейти', () => {
@@ -878,7 +909,7 @@ function wireErrorOverlay(): void {
 async function loadTnSettings(): Promise<void> {
   try {
     const data = await window.shell.pluginDataGet('tasks-notify', ['settings'])
-    const s = (data?.settings ?? {}) as { objectId?: unknown; intervalSec?: unknown; sound?: unknown }
+    const s = (data?.settings ?? {}) as { objectId?: unknown; intervalSec?: unknown; sound?: unknown; soundFile?: unknown; soundName?: unknown }
     if (setTnObjectId) setTnObjectId.value = typeof s.objectId === 'string' && s.objectId ? s.objectId : 'S187'
     if (setTnInterval) {
       setTnInterval.value = String(
@@ -886,6 +917,11 @@ async function loadTnSettings(): Promise<void> {
       )
     }
     if (setTnSound) setTnSound.checked = s.sound !== false
+    tnSoundFile = typeof s.soundFile === 'string' ? s.soundFile : ''
+    if (setTnSoundName) {
+      setTnSoundName.textContent =
+        tnSoundFile && typeof s.soundName === 'string' && s.soundName ? s.soundName : 'Стандартный звук'
+    }
   } catch (err) {
     console.warn('[shell] failed to load tasks-notify settings:', err)
   }
@@ -961,6 +997,8 @@ async function saveSettings(): Promise<void> {
           objectId: setTnObjectId?.value.trim() || 'S187',
           intervalSec: Number.isFinite(tnInterval) && tnInterval >= 15 ? tnInterval : 60,
           sound: setTnSound?.checked !== false,
+          soundFile: tnSoundFile,
+          soundName: setTnSoundName?.textContent ?? '',
         },
       })
     } catch (tnErr) {
@@ -1054,6 +1092,32 @@ function wireSettings(): void {
     } catch (err) {
       console.warn('[shell] scans:browse-folder failed:', err)
     }
+  })
+  document.getElementById('set-tn-sound-pick')?.addEventListener('click', async () => {
+    try {
+      const picked = await window.shell.pickSound()
+      if (!picked) return
+      tnSoundFile = picked.file
+      tnCustomAudio = null
+      tnCustomAudioKey = ''
+      if (setTnSoundName) setTnSoundName.textContent = picked.name
+    } catch (err) {
+      console.warn('[shell] sound:pick failed:', err)
+    }
+  })
+  document.getElementById('set-tn-sound-preview')?.addEventListener('click', () => {
+    void playTnSound()
+  })
+  document.getElementById('set-tn-sound-reset')?.addEventListener('click', async () => {
+    try {
+      await window.shell.clearSound()
+    } catch (err) {
+      console.warn('[shell] sound:clear failed:', err)
+    }
+    tnSoundFile = ''
+    tnCustomAudio = null
+    tnCustomAudioKey = ''
+    if (setTnSoundName) setTnSoundName.textContent = 'Стандартный звук'
   })
   document.getElementById('set-clear-session')?.addEventListener('click', () => void clearSessionAndLogout())
   document.getElementById('set-reload-app')?.addEventListener('click', () => {

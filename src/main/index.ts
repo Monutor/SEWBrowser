@@ -13,6 +13,8 @@ import { clearFolderPassword, isFolderPasswordEncryptionAvailable, saveFolderPas
 import { getAccountSecrets, getLastUsedAccountId, listAccounts, removeAccount, saveAccount, setLastUsedAccountId } from './credentials/store'
 import { appendDownloadRecord, clearDownloadHistory, loadDownloadHistory, removeDownloadRecord } from './downloads/history'
 import { screenshotFileName } from './screenshot'
+import { clearSoundFiles, mimeForSoundExt, readSoundFile, saveSoundFile } from './sounds/store'
+import { isSoundSizeOk, pickSoundExt } from './sounds/validate'
 import {
   createScanWatcher,
   deleteScanFile,
@@ -288,6 +290,42 @@ function createWindow(): void {
       showOne(`Новые задания: ${list.length}`, list.slice(0, 3).map((x) => x.title).join('\n'), '/v2/relocation/tasks')
     }
     try { mainWindow.flashFrame(true) } catch { /* ignore */ }
+    return true
+  })
+  // Пользовательский звук tasks-notify: выбор файла → userData/sounds/custom.<ext>.
+  // В plugin-data хранится только имя файла, бинарь — на диске (не раздувает JSON).
+  ipcMain.handle('sound:pick', async () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return null
+    const paths = await dialog.showOpenDialogSync(mainWindow, {
+      title: 'Выберите звук уведомления',
+      filters: [
+        { name: 'Аудио', extensions: ['mp3', 'wav', 'ogg'] },
+        { name: 'Все файлы', extensions: ['*'] },
+      ],
+      properties: ['openFile'],
+    })
+    if (!Array.isArray(paths) || paths.length === 0) return null
+    const src = paths[0]
+    const ext = pickSoundExt(basename(src))
+    if (!ext) return null
+    let bytes: Buffer
+    try {
+      bytes = readFileSync(src)
+    } catch {
+      return null
+    }
+    if (!isSoundSizeOk(bytes.length)) return null
+    const file = saveSoundFile(bytes, ext)
+    return { file, name: basename(src) }
+  })
+  // Байты сохранённого звука для проигрывания в renderer (dataURL собирает renderer).
+  ipcMain.handle('sound:get', () => {
+    const found = readSoundFile()
+    if (!found) return null
+    return { file: found.file, mime: mimeForSoundExt(found.ext), base64: found.base64 }
+  })
+  ipcMain.handle('sound:clear', () => {
+    clearSoundFiles()
     return true
   })
   // ---------- Узкий fetch-мост для плагинов (BFF mvideo) ----------
