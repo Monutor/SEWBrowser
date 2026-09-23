@@ -290,6 +290,8 @@ interface ShellApi {
   pluginDataGetAll(): Promise<Record<string, Record<string, unknown>>>
   /** Узкий fetch-мост main-процесса (только allowlist-URL, напр. BFF mvideo) */
   netFetch(url: string): Promise<NetFetchResult>
+  /** Уведомления tasks-notify: пачка новых заданий → OS Notification в main */
+  notifyTasks(items: { id: number; title: string; body: string; url: string }[]): Promise<boolean>
    onPluginDataChanged(cb: (event: { plugin: string }) => void): () => void
   onUpdater(cb: (event: UpdaterEvent) => void): void
   downloadUpdate(): Promise<boolean>

@@ -258,7 +258,10 @@ const api = {
   /** Узкий fetch-мост для плагинов: только allowlist-URL (BFF mvideo — CORS режет из страницы) */
   netFetch: (url: string): Promise<{ ok: boolean; status: number; data: unknown }> =>
     ipcRenderer.invoke('net:fetch', url),
-   /** Уведомление об изменении данных плагина (для chrome.storage.onChanged).
+   /** Уведомления tasks-notify: пачка новых заданий → OS Notification в main */
+  notifyTasks: (items: { id: number; title: string; body: string; url: string }[]): Promise<boolean> =>
+    ipcRenderer.invoke('notify:tasks', items),
+  /** Уведомление об изменении данных плагина (для chrome.storage.onChanged).
    *  Возвращает функцию отписки — иначе повторные addListener копят обработчики. */
   onPluginDataChanged: (cb: (event: { plugin: string }) => void): (() => void) => {
     const listener = (_event: unknown, payload: { plugin: string }): void => cb(payload)

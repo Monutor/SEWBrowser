@@ -621,6 +621,74 @@ async function pumpScansBridge(): Promise<boolean> {
   }
 }
 
+let tasksNotifyStarted = false
+let tasksNotifyDiagged = false
+let tasksNotifyDelay = 5000
+let tasksNotifyBusy = false
+function startTasksNotifyBridge(): void {
+  if (tasksNotifyStarted) return
+  tasksNotifyStarted = true
+  const tick = (): void => {
+    if (!tasksNotifyBusy) {
+      tasksNotifyBusy = true
+      void pumpTasksNotify()
+        .then((hadWork) => { tasksNotifyDelay = hadWork ? 5000 : Math.min(15000, tasksNotifyDelay + 1000) })
+        .catch(() => { tasksNotifyDelay = Math.min(15000, tasksNotifyDelay + 1000) })
+        .finally(() => { tasksNotifyBusy = false })
+    }
+    setTimeout(tick, tasksNotifyDelay)
+  }
+  setTimeout(tick, 5000)
+}
+
+async function pumpTasksNotify(): Promise<boolean> {
+  try {
+    if (!plugins.some((p) => p.name === 'tasks-notify')) return false
+    const rawTake = await guestJS<string>(
+      'tasks-take',
+      '(function(){try{var q=window.__tasksNotifyReq;if(!Array.isArray(q))return "[]";' +
+        'try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})()',
+    ).catch((err) => {
+      if (!tasksNotifyDiagged) {
+        tasksNotifyDiagged = true
+        try {
+          console.warn(`[guestjs:tasks-take] guest state: url=${webview.getURL()} loading=${webview.isLoading()} crashed=${webview.isCrashed()}`)
+        } catch { /* ignore */ }
+      }
+      throw err
+    })
+    let reqs: Array<{ id: number; title: string; body: string; url: string }> = []
+    try {
+      const parsed: unknown = JSON.parse(typeof rawTake === 'string' ? rawTake : '[]')
+      if (Array.isArray(parsed)) reqs = parsed as typeof reqs
+    } catch { reqs = [] }
+    if (!Array.isArray(reqs) || reqs.length === 0) return false
+    const valid = reqs.filter((r) => r && typeof r.id === 'number' && typeof r.title === 'string')
+    if (valid.length === 0) return false
+    try {
+      await window.shell.notifyTasks(valid)
+    } catch (err) {
+      console.warn('[tasks-notify] notifyTasks failed:', err)
+    }
+    // Тост + звук в оболочке (первое из пачки; остальные — в OS Notification)
+    const first = valid[0]
+    try {
+      const ctx = new AudioContext()
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.connect(gain); gain.connect(ctx.destination)
+      osc.frequency.value = 880; gain.gain.value = 0.15
+      osc.start(); osc.stop(ctx.currentTime + 0.25)
+    } catch { /* без звука */ }
+    setStatusAction(`${first.title} (+${valid.length - 1})`, 'Перейти', () => {
+      void navigate(first.url || '/v2/relocation/tasks')
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
 function updateAddressBar(): void {
   if (!addressInput) return
   try {
@@ -2941,6 +3009,7 @@ async function init(): Promise<void> {
   startStatusPolling()
   startSewHelperBridge()
   startScansBridge()
+  startTasksNotifyBridge()
 
   // Данные плагинов меняются из оверлеев оболочки — перепушиваем снапшот в страницу
   window.shell.onPluginDataChanged(() => void pushPluginStores())
