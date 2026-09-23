@@ -261,6 +261,10 @@ const api = {
    /** Уведомления tasks-notify: пачка новых заданий → OS Notification в main */
   notifyTasks: (items: { id: number; title: string; body: string; url: string }[]): Promise<boolean> =>
     ipcRenderer.invoke('notify:tasks', items),
+  /** Клик по OS-уведомлению tasks-notify: main шлёт 'tasks:open-url' — renderer переходит */
+  onTasksOpen: (cb: (url: string) => void): void => {
+    ipcRenderer.on('tasks:open-url', (_event, url: string) => cb(url))
+  },
   /** Уведомление об изменении данных плагина (для chrome.storage.onChanged).
    *  Возвращает функцию отписки — иначе повторные addListener копят обработчики. */
   onPluginDataChanged: (cb: (event: { plugin: string }) => void): (() => void) => {

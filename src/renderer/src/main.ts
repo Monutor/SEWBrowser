@@ -3025,6 +3025,8 @@ async function init(): Promise<void> {
       // страница не готова — гость подтянет список сам через bridgeSend('list')
     })
   })
+  // Клик по OS-уведомлению tasks-notify: main прислал URL — переходим в гесте
+  window.shell.onTasksOpen?.((url) => { void navigate(url) })
 
   if (addressInput) addressInput.value = config.startUrl
   lastAllowedUrl = config.startUrl

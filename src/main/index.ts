@@ -262,6 +262,34 @@ function createWindow(): void {
     for (const p of plugins) out[p.name] = getPluginData(p.name)
     return out
   })
+  // Уведомления tasks-notify: пачка за тик → одно OS-уведомление (или по одному при <=3)
+  ipcMain.handle('notify:tasks', (_event, items: unknown) => {
+    const list = Array.isArray(items) ? items.filter((x): x is { id: number; title: string; body: string; url: string } =>
+      !!x && typeof x === 'object' && typeof (x as {id:unknown}).id === 'number' && typeof (x as {title:unknown}).title === 'string') : []
+    if (list.length === 0 || !mainWindow || mainWindow.isDestroyed()) return false
+    const showOne = (title: string, body: string, url: string): void => {
+      const n = new Notification({ title, body })
+      n.on('click', () => {
+        try {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            if (mainWindow.isMinimized()) mainWindow.restore()
+            mainWindow.focus()
+            mainWindow.flashFrame(false)
+            const wc = mainWindow.webContents
+            wc.send('tasks:open-url', url || '/v2/relocation/tasks')
+          }
+        } catch { /* ignore */ }
+      })
+      n.show()
+    }
+    if (list.length <= 3) {
+      for (const it of list) showOne(it.title, typeof it.body === 'string' ? it.body : '', typeof it.url === 'string' ? it.url : '/v2/relocation/tasks')
+    } else {
+      showOne(`Новые задания: ${list.length}`, list.slice(0, 3).map((x) => x.title).join('\n'), '/v2/relocation/tasks')
+    }
+    try { mainWindow.flashFrame(true) } catch { /* ignore */ }
+    return true
+  })
   // ---------- Узкий fetch-мост для плагинов (BFF mvideo) ----------
   // Гость не может ходить в BFF напрямую: BFF отдаёт ACAO только www.mvideo.ru,
   // из страницы SEW запрос режется CORS. net.fetch CORS не подвержен, а куки
