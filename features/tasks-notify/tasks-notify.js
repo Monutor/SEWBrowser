@@ -37,7 +37,8 @@ function __tnHookAuth() {
   window.fetch = function (url, opts) {
     try {
       var u = typeof url === 'string' ? url : (url && url.url) || '';
-      if (u.indexOf('/v2/api/io-relocation-bff/relocation/search') >= 0) {
+      if (u.indexOf('/v2/api/io-relocation-bff/relocation/search') >= 0 ||
+          u.indexOf('/api/io-handover-v2-bff/task') >= 0) {
         grab(opts && opts.headers);
         grab(url && url.headers);
       }
@@ -80,6 +81,30 @@ function __tnSearch(settings) {
   });
 }
 
+function __tnHandover(settings) {
+  // GET с query-параметрами; строку статусов зеркалим с живой SPA (там "CREATED,%20IN_PROGRESS")
+  var url = '/api/io-handover-v2-bff/task?objectId=' + encodeURIComponent(settings.objectId) + '&status=CREATED,%20IN_PROGRESS';
+  var headers = {};
+  if (__tnBearer) headers['Authorization'] = __tnBearer;
+  return fetch(url, { method: 'GET', credentials: 'include', headers: headers }).then(function (r) {
+    if (!r.ok) throw new Error('handover http ' + r.status);
+    return r.json();
+  }).then(function (j) {
+    var list = j && j.responseBody && j.responseBody.tasks;
+    return Array.isArray(list) ? list : [];
+  });
+}
+
+/** TTL 7 дней + cap 2000 (общий для seen-карт перемещений и выдачи) */
+function __tnTrim(seen, now) {
+  var cutoff = now - 7 * 24 * 3600 * 1000;
+  var keys = Object.keys(seen).filter(function (k) { return seen[k] >= cutoff; });
+  keys.sort(function (a, b) { return seen[b] - seen[a]; });
+  var trimmed = {};
+  keys.slice(0, 2000).forEach(function (k) { trimmed[k] = seen[k]; });
+  return trimmed;
+}
+
 function __tnTick() {
   if (__tnBusy) return;
   // Bearer перехватывается из запросов самой SPA; пока она ничего не послала
@@ -90,13 +115,17 @@ function __tnTick() {
   }
   __tnBusy = true;
   __tnGetSettings(function (st) {
-    __tnSearch(st).then(function (items) {
-      chrome.storage.local.get(['seen'], function (res) {
+    __tnSearch(st).then(function (relocs) {
+      return __tnHandover(st).then(function (tasks) { return { relocs: relocs, tasks: tasks }; });
+    }).then(function (both) {
+      chrome.storage.local.get(['seen', 'seenHandover'], function (res) {
         var seen = (res && res.seen) || {};
+        var seenHo = (res && res.seenHandover) || {};
         var baseline = !res || !res.seen;
+        var baselineHo = !res || !res.seenHandover;
         var fresh = [];
         var now = Date.now();
-        items.forEach(function (it) {
+        both.relocs.forEach(function (it) {
           var id = it && it.relocationId;
           if (typeof id !== 'number') return;
           if (!Object.prototype.hasOwnProperty.call(seen, id)) {
@@ -109,16 +138,22 @@ function __tnTick() {
             }
           }
         });
-        // TTL 7 дней + cap 2000
-        var cutoff = now - 7 * 24 * 3600 * 1000;
-        var keys = Object.keys(seen).filter(function (k) { return seen[k] >= cutoff; });
-        keys.sort(function (a, b) { return seen[b] - seen[a]; });
-        var trimmed = {};
-        keys.slice(0, 2000).forEach(function (k) { trimmed[k] = seen[k]; });
-        chrome.storage.local.set({ seen: trimmed }, function () {
+        both.tasks.forEach(function (it) {
+          var id = it && it.taskId;
+          if (typeof id !== 'number') return;
+          if (!Object.prototype.hasOwnProperty.call(seenHo, id)) {
+            seenHo[id] = now;
+            if (!baselineHo) {
+              var desc = (it.type && (it.type.description || it.type.code)) || 'выдача';
+              var ord = it.orderNumber || ('#' + id);
+              fresh.push({ id: id, title: 'Новая выдача: ' + desc + ' №' + ord, body: '#' + id + ' · ' + (it.status || ''), url: '/v2/handover-v2/tasks', sound: st.sound !== false });
+            }
+          }
+        });
+        chrome.storage.local.set({ seen: __tnTrim(seen, now), seenHandover: __tnTrim(seenHo, now) }, function () {
           try {
             window.__tasksNotifyReq = (window.__tasksNotifyReq || []).concat(fresh);
-            window.__tasksNotifyState = { lastTick: new Date().toISOString(), lastCount: items.length, lastError: '' };
+            window.__tasksNotifyState = { lastTick: new Date().toISOString(), lastCount: both.relocs.length + both.tasks.length, lastError: '' };
           } catch (e) {}
           __tnBusy = false;
         });
