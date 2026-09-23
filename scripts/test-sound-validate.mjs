@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { pathToFileURL } from 'node:url'
 
 const outDir = process.argv[2] ?? ''
-const { pickSoundExt, isSoundSizeOk } = await import(pathToFileURL(outDir + '/validate.js').href)
+const { pickSoundExt, isSoundSizeOk, isSoundSlot } = await import(pathToFileURL(outDir + '/validate.js').href)
 
 test('разрешает mp3/wav/ogg независимо от регистра', () => {
   assert.equal(pickSoundExt('alarm.MP3'), 'mp3')
@@ -26,4 +26,12 @@ test('размер: 0 байт и больше 2 МБ — нельзя, гран
   assert.equal(isSoundSizeOk(1), true)
   assert.equal(isSoundSizeOk(2 * 1024 * 1024), true)
   assert.equal(isSoundSizeOk(2 * 1024 * 1024 + 1), false)
+})
+
+test('слоты звука: только rel и ho', () => {
+  assert.equal(isSoundSlot('rel'), true)
+  assert.equal(isSoundSlot('ho'), true)
+  assert.equal(isSoundSlot('custom'), false)
+  assert.equal(isSoundSlot(''), false)
+  assert.equal(isSoundSlot('../rel'), false)
 })

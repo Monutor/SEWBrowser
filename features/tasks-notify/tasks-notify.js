@@ -134,7 +134,7 @@ function __tnTick() {
               var proc = (it.process && it.process.name) || 'перемещение';
               var src = (it.srcStock && it.srcStock.name) || '?';
               var dst = (it.dstStock && it.dstStock.name) || '?';
-              fresh.push({ id: id, title: 'Новое задание: ' + proc, body: '#' + id + ' · ' + src + ' → ' + dst, url: '/v2/relocation/tasks', sound: st.sound !== false });
+              fresh.push({ id: id, kind: 'relocation', title: 'Новое задание: ' + proc, body: '#' + id + ' · ' + src + ' → ' + dst, url: '/v2/relocation/tasks', sound: st.sound !== false });
             }
           }
         });
@@ -146,7 +146,7 @@ function __tnTick() {
             if (!baselineHo) {
               var desc = (it.type && (it.type.description || it.type.code)) || 'выдача';
               var ord = it.orderNumber || ('#' + id);
-              fresh.push({ id: id, title: 'Новая выдача: ' + desc + ' №' + ord, body: '#' + id + ' · ' + (it.status || ''), url: '/v2/handover-v2/tasks', sound: st.sound !== false });
+              fresh.push({ id: id, kind: 'handover', title: 'Новая выдача: ' + desc + ' №' + ord, body: '#' + id + ' · ' + (it.status || ''), url: '/v2/handover-v2/tasks', sound: st.sound !== false });
             }
           }
         });

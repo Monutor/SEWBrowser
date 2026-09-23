@@ -265,14 +265,14 @@ const api = {
   onTasksOpen: (cb: (url: string) => void): void => {
     ipcRenderer.on('tasks:open-url', (_event, url: string) => cb(url))
   },
-  /** Выбрать свой звук уведомления (диалог → userData/sounds/); null — отмена/неподходящий файл */
-  pickSound: (): Promise<{ file: string; name: string } | null> =>
-    ipcRenderer.invoke('sound:pick'),
-  /** Байты сохранённого звука для проигрывания (null — нет своего файла) */
-  getSound: (): Promise<{ file: string; mime: string; base64: string } | null> =>
-    ipcRenderer.invoke('sound:get'),
-  /** Удалить свой звук (откат на стандартный бип) */
-  clearSound: (): Promise<boolean> => ipcRenderer.invoke('sound:clear'),
+  /** Выбрать свой звук уведомления для слота ('rel' | 'ho'); null — отмена/неподходящий файл */
+  pickSound: (slot: 'rel' | 'ho'): Promise<{ file: string; name: string } | null> =>
+    ipcRenderer.invoke('sound:pick', slot),
+  /** Байты сохранённого звука слота для проигрывания (null — нет своего файла) */
+  getSound: (slot: 'rel' | 'ho'): Promise<{ file: string; mime: string; base64: string } | null> =>
+    ipcRenderer.invoke('sound:get', slot),
+  /** Удалить свой звук слота (откат на стандартный бип) */
+  clearSound: (slot: 'rel' | 'ho'): Promise<boolean> => ipcRenderer.invoke('sound:clear', slot),
   /** Уведомление об изменении данных плагина (для chrome.storage.onChanged).
    *  Возвращает функцию отписки — иначе повторные addListener копят обработчики. */
   onPluginDataChanged: (cb: (event: { plugin: string }) => void): (() => void) => {

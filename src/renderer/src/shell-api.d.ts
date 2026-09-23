@@ -294,12 +294,12 @@ interface ShellApi {
   notifyTasks(items: { id: number; title: string; body: string; url: string }[]): Promise<boolean>
   /** Клик по OS-уведомлению tasks-notify: main шлёт 'tasks:open-url' — renderer переходит */
   onTasksOpen(cb: (url: string) => void): void
-  /** Выбрать свой звук уведомления (диалог → userData/sounds/); null — отмена/неподходящий файл */
-  pickSound(): Promise<{ file: string; name: string } | null>
-  /** Байты сохранённого звука для проигрывания (null — нет своего файла) */
-  getSound(): Promise<{ file: string; mime: string; base64: string } | null>
-  /** Удалить свой звук (откат на стандартный бип) */
-  clearSound(): Promise<boolean>
+  /** Выбрать свой звук уведомления для слота ('rel' | 'ho'); null — отмена/неподходящий файл */
+  pickSound(slot: 'rel' | 'ho'): Promise<{ file: string; name: string } | null>
+  /** Байты сохранённого звука слота для проигрывания (null — нет своего файла) */
+  getSound(slot: 'rel' | 'ho'): Promise<{ file: string; mime: string; base64: string } | null>
+  /** Удалить свой звук слота (откат на стандартный бип) */
+  clearSound(slot: 'rel' | 'ho'): Promise<boolean>
    onPluginDataChanged(cb: (event: { plugin: string }) => void): () => void
   onUpdater(cb: (event: UpdaterEvent) => void): void
   downloadUpdate(): Promise<boolean>

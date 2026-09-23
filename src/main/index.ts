@@ -13,8 +13,8 @@ import { clearFolderPassword, isFolderPasswordEncryptionAvailable, saveFolderPas
 import { getAccountSecrets, getLastUsedAccountId, listAccounts, removeAccount, saveAccount, setLastUsedAccountId } from './credentials/store'
 import { appendDownloadRecord, clearDownloadHistory, loadDownloadHistory, removeDownloadRecord } from './downloads/history'
 import { screenshotFileName } from './screenshot'
-import { clearSoundFiles, mimeForSoundExt, readSoundFile, saveSoundFile } from './sounds/store'
-import { isSoundSizeOk, pickSoundExt } from './sounds/validate'
+import { clearSoundFile, mimeForSoundExt, readSoundFile, saveSoundFile } from './sounds/store'
+import { isSoundSizeOk, isSoundSlot, pickSoundExt } from './sounds/validate'
 import {
   createScanWatcher,
   deleteScanFile,
@@ -292,9 +292,10 @@ function createWindow(): void {
     try { mainWindow.flashFrame(true) } catch { /* ignore */ }
     return true
   })
-  // Пользовательский звук tasks-notify: выбор файла → userData/sounds/custom.<ext>.
-  // В plugin-data хранится только имя файла, бинарь — на диске (не раздувает JSON).
-  ipcMain.handle('sound:pick', async () => {
+  // Пользовательский звук tasks-notify по слотам ('rel' — перемещение, 'ho' — выдача).
+  // Файлы: userData/sounds/custom-<slot>.<ext>. В plugin-data только имя файла, бинарь — на диске.
+  ipcMain.handle('sound:pick', async (_event, slot: unknown) => {
+    if (!isSoundSlot(slot)) return null
     if (!mainWindow || mainWindow.isDestroyed()) return null
     const paths = await dialog.showOpenDialogSync(mainWindow, {
       title: 'Выберите звук уведомления',
@@ -315,17 +316,19 @@ function createWindow(): void {
       return null
     }
     if (!isSoundSizeOk(bytes.length)) return null
-    const file = saveSoundFile(bytes, ext)
+    const file = saveSoundFile(bytes, ext, slot)
     return { file, name: basename(src) }
   })
-  // Байты сохранённого звука для проигрывания в renderer (dataURL собирает renderer).
-  ipcMain.handle('sound:get', () => {
-    const found = readSoundFile()
+  // Байты сохранённого звука слота для проигрывания в renderer (dataURL собирает renderer).
+  ipcMain.handle('sound:get', (_event, slot: unknown) => {
+    if (!isSoundSlot(slot)) return null
+    const found = readSoundFile(slot)
     if (!found) return null
     return { file: found.file, mime: mimeForSoundExt(found.ext), base64: found.base64 }
   })
-  ipcMain.handle('sound:clear', () => {
-    clearSoundFiles()
+  ipcMain.handle('sound:clear', (_event, slot: unknown) => {
+    if (!isSoundSlot(slot)) return false
+    clearSoundFile(slot)
     return true
   })
   // ---------- Узкий fetch-мост для плагинов (BFF mvideo) ----------

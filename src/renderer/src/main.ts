@@ -26,6 +26,7 @@ const setTnObjectId = document.getElementById('set-tn-objectid') as HTMLInputEle
 const setTnInterval = document.getElementById('set-tn-interval') as HTMLInputElement | null
 const setTnSound = document.getElementById('set-tn-sound') as HTMLInputElement | null
 const setTnSoundName = document.getElementById('set-tn-sound-name') as HTMLElement | null
+const setTnSoundHoName = document.getElementById('set-tn-sound-ho-name') as HTMLElement | null
 const setStorageUsage = document.getElementById('set-storage-usage') as HTMLElement | null
 const setCookies = document.getElementById('set-cookies') as HTMLElement | null
 const setClearOnExit = document.getElementById('set-clear-on-exit') as HTMLSelectElement | null
@@ -650,11 +651,14 @@ let tasksNotifyStarted = false
 let tasksNotifyDiagged = false
 let tasksNotifyDelay = 5000
 let tasksNotifyBusy = false
-/** Свой звук из настроек (soundFile/soundName в plugin-data tasks-notify); '' — стандартный бип */
-let tnSoundFile = ''
-/** Кэш Audio своего звука (ключ — soundFile); сбрасывается при смене/сбросе настройки */
-let tnCustomAudio: HTMLAudioElement | null = null
-let tnCustomAudioKey = ''
+/** Свой звук из настроек (soundFile/soundName — перемещение, soundFileHo/soundNameHo — выдача); '' — стандартный бип */
+let tnSoundFileRel = ''
+let tnSoundFileHo = ''
+/** Кэш Audio своих звуков по слотам (ключ — soundFile); сбрасывается при смене/сбросе настройки */
+const tnCustomAudio: Record<'rel' | 'ho', { audio: HTMLAudioElement | null; key: string }> = {
+  rel: { audio: null, key: '' },
+  ho: { audio: null, key: '' },
+}
 
 /** Стандартный бип 880 Гц (дефолт, когда своего файла нет или он битый) */
 function playTnBeep(): void {
@@ -670,19 +674,21 @@ function playTnBeep(): void {
   } catch { /* без звука */ }
 }
 
-/** Свой файл — приоритет; любая неудача — молча стандартный бип */
-async function playTnSound(): Promise<void> {
-  if (tnSoundFile) {
+/** Свой файл слота — приоритет; любая неудача — молча стандартный бип */
+async function playTnSound(slot: 'rel' | 'ho'): Promise<void> {
+  const file = slot === 'ho' ? tnSoundFileHo : tnSoundFileRel
+  if (file) {
     try {
-      if (!tnCustomAudio || tnCustomAudioKey !== tnSoundFile) {
-        const data = await window.shell.getSound()
+      const cached = tnCustomAudio[slot]
+      if (!cached.audio || cached.key !== file) {
+        const data = await window.shell.getSound(slot)
         if (!data) throw new Error('no custom sound')
-        tnCustomAudio = new Audio(`data:${data.mime};base64,${data.base64}`)
-        tnCustomAudioKey = tnSoundFile
+        cached.audio = new Audio(`data:${data.mime};base64,${data.base64}`)
+        cached.key = file
       } else {
-        tnCustomAudio.currentTime = 0
+        cached.audio.currentTime = 0
       }
-      await tnCustomAudio.play()
+      await cached.audio.play()
       return
     } catch { /* fallback ниже */ }
   }
@@ -720,7 +726,7 @@ async function pumpTasksNotify(): Promise<boolean> {
       }
       throw err
     })
-    let reqs: Array<{ id: number; title: string; body: string; url: string; sound?: boolean }> = []
+    let reqs: Array<{ id: number; kind?: string; title: string; body: string; url: string; sound?: boolean }> = []
     try {
       const parsed: unknown = JSON.parse(typeof rawTake === 'string' ? rawTake : '[]')
       if (Array.isArray(parsed)) reqs = parsed as typeof reqs
@@ -738,7 +744,7 @@ async function pumpTasksNotify(): Promise<boolean> {
     // Свой файл (настройка soundFile) — приоритет, нет файла/битый — стандартный бип.
     const first = valid[0]
     if (valid.some((r) => r.sound !== false)) {
-      void playTnSound()
+      void playTnSound(first.kind === 'handover' ? 'ho' : 'rel')
     }
     const toastText = valid.length > 1 ? `${first.title} (+${valid.length - 1})` : first.title
     setStatusAction(toastText, 'Перейти', () => {
@@ -909,7 +915,7 @@ function wireErrorOverlay(): void {
 async function loadTnSettings(): Promise<void> {
   try {
     const data = await window.shell.pluginDataGet('tasks-notify', ['settings'])
-    const s = (data?.settings ?? {}) as { objectId?: unknown; intervalSec?: unknown; sound?: unknown; soundFile?: unknown; soundName?: unknown }
+    const s = (data?.settings ?? {}) as { objectId?: unknown; intervalSec?: unknown; sound?: unknown; soundFile?: unknown; soundName?: unknown; soundFileHo?: unknown; soundNameHo?: unknown }
     if (setTnObjectId) setTnObjectId.value = typeof s.objectId === 'string' && s.objectId ? s.objectId : 'S187'
     if (setTnInterval) {
       setTnInterval.value = String(
@@ -917,10 +923,15 @@ async function loadTnSettings(): Promise<void> {
       )
     }
     if (setTnSound) setTnSound.checked = s.sound !== false
-    tnSoundFile = typeof s.soundFile === 'string' ? s.soundFile : ''
+    tnSoundFileRel = typeof s.soundFile === 'string' ? s.soundFile : ''
+    tnSoundFileHo = typeof s.soundFileHo === 'string' ? s.soundFileHo : ''
     if (setTnSoundName) {
       setTnSoundName.textContent =
-        tnSoundFile && typeof s.soundName === 'string' && s.soundName ? s.soundName : 'Стандартный звук'
+        tnSoundFileRel && typeof s.soundName === 'string' && s.soundName ? s.soundName : 'Стандартный звук'
+    }
+    if (setTnSoundHoName) {
+      setTnSoundHoName.textContent =
+        tnSoundFileHo && typeof s.soundNameHo === 'string' && s.soundNameHo ? s.soundNameHo : 'Стандартный звук'
     }
   } catch (err) {
     console.warn('[shell] failed to load tasks-notify settings:', err)
@@ -997,8 +1008,10 @@ async function saveSettings(): Promise<void> {
           objectId: setTnObjectId?.value.trim() || 'S187',
           intervalSec: Number.isFinite(tnInterval) && tnInterval >= 15 ? tnInterval : 60,
           sound: setTnSound?.checked !== false,
-          soundFile: tnSoundFile,
+          soundFile: tnSoundFileRel,
           soundName: setTnSoundName?.textContent ?? '',
+          soundFileHo: tnSoundFileHo,
+          soundNameHo: setTnSoundHoName?.textContent ?? '',
         },
       })
     } catch (tnErr) {
@@ -1093,32 +1106,43 @@ function wireSettings(): void {
       console.warn('[shell] scans:browse-folder failed:', err)
     }
   })
-  document.getElementById('set-tn-sound-pick')?.addEventListener('click', async () => {
-    try {
-      const picked = await window.shell.pickSound()
-      if (!picked) return
-      tnSoundFile = picked.file
-      tnCustomAudio = null
-      tnCustomAudioKey = ''
-      if (setTnSoundName) setTnSoundName.textContent = picked.name
-    } catch (err) {
-      console.warn('[shell] sound:pick failed:', err)
-    }
-  })
-  document.getElementById('set-tn-sound-preview')?.addEventListener('click', () => {
-    void playTnSound()
-  })
-  document.getElementById('set-tn-sound-reset')?.addEventListener('click', async () => {
-    try {
-      await window.shell.clearSound()
-    } catch (err) {
-      console.warn('[shell] sound:clear failed:', err)
-    }
-    tnSoundFile = ''
-    tnCustomAudio = null
-    tnCustomAudioKey = ''
-    if (setTnSoundName) setTnSoundName.textContent = 'Стандартный звук'
-  })
+  const wireTnSoundSlot = (
+    slot: 'rel' | 'ho',
+    pickId: string,
+    previewId: string,
+    resetId: string,
+    nameEl: HTMLElement | null,
+    setFile: (v: string) => void,
+  ): void => {
+    document.getElementById(pickId)?.addEventListener('click', async () => {
+      try {
+        const picked = await window.shell.pickSound(slot)
+        if (!picked) return
+        setFile(picked.file)
+        tnCustomAudio[slot] = { audio: null, key: '' }
+        if (nameEl) nameEl.textContent = picked.name
+      } catch (err) {
+        console.warn('[shell] sound:pick failed:', err)
+      }
+    })
+    document.getElementById(previewId)?.addEventListener('click', () => {
+      void playTnSound(slot)
+    })
+    document.getElementById(resetId)?.addEventListener('click', async () => {
+      try {
+        await window.shell.clearSound(slot)
+      } catch (err) {
+        console.warn('[shell] sound:clear failed:', err)
+      }
+      setFile('')
+      tnCustomAudio[slot] = { audio: null, key: '' }
+      if (nameEl) nameEl.textContent = 'Стандартный звук'
+    })
+  }
+  wireTnSoundSlot('rel', 'set-tn-sound-pick', 'set-tn-sound-preview', 'set-tn-sound-reset', setTnSoundName,
+    (v) => { tnSoundFileRel = v })
+  wireTnSoundSlot('ho', 'set-tn-sound-ho-pick', 'set-tn-sound-ho-preview', 'set-tn-sound-ho-reset', setTnSoundHoName,
+    (v) => { tnSoundFileHo = v })
   document.getElementById('set-clear-session')?.addEventListener('click', () => void clearSessionAndLogout())
   document.getElementById('set-reload-app')?.addEventListener('click', () => {
     // Ручная проверка обновлений на GitHub. Если версия есть — покажется

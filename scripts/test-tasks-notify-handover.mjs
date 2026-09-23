@@ -81,6 +81,7 @@ test('выдача: новое задание попадает в очередь
   const item = t.sandbox.window.__tasksNotifyReq[0]
   assert.equal(item.id, 381001)
   assert.equal(item.url, '/v2/handover-v2/tasks')
+  assert.equal(item.kind, 'handover')
   assert.ok(item.title.includes('4102571553'))
   // Повторный тик — дублей нет
   await t.tick()

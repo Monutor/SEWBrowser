@@ -17,3 +17,8 @@ export function pickSoundExt(fileName: string): string | null {
 export function isSoundSizeOk(bytes: number): boolean {
   return Number.isFinite(bytes) && bytes > 0 && bytes <= MAX_SOUND_BYTES
 }
+
+/** Слот звука tasks-notify: 'rel' (перемещение) | 'ho' (выдача) */
+export function isSoundSlot(slot: unknown): slot is 'rel' | 'ho' {
+  return slot === 'rel' || slot === 'ho'
+}
