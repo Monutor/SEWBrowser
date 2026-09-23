@@ -22,6 +22,9 @@ const setStartUrl = document.getElementById('set-starturl') as HTMLInputElement 
 const setAllowlistEnabled = document.getElementById('set-allowlist-enabled') as HTMLInputElement | null
 const setAllowlist = document.getElementById('set-allowlist') as HTMLTextAreaElement | null
 const setPlugins = document.getElementById('set-plugins') as HTMLElement | null
+const setTnObjectId = document.getElementById('set-tn-objectid') as HTMLInputElement | null
+const setTnInterval = document.getElementById('set-tn-interval') as HTMLInputElement | null
+const setTnSound = document.getElementById('set-tn-sound') as HTMLInputElement | null
 const setStorageUsage = document.getElementById('set-storage-usage') as HTMLElement | null
 const setCookies = document.getElementById('set-cookies') as HTMLElement | null
 const setClearOnExit = document.getElementById('set-clear-on-exit') as HTMLSelectElement | null
@@ -871,6 +874,23 @@ function wireErrorOverlay(): void {
 
 // ---------- Настройки ----------
 
+/** Настройки tasks-notify из plugin-data (тот же ключ 'settings', что читает гость каждый тик) */
+async function loadTnSettings(): Promise<void> {
+  try {
+    const data = await window.shell.pluginDataGet('tasks-notify', ['settings'])
+    const s = (data?.settings ?? {}) as { objectId?: unknown; intervalSec?: unknown; sound?: unknown }
+    if (setTnObjectId) setTnObjectId.value = typeof s.objectId === 'string' && s.objectId ? s.objectId : 'S187'
+    if (setTnInterval) {
+      setTnInterval.value = String(
+        typeof s.intervalSec === 'number' && s.intervalSec >= 15 ? Math.floor(s.intervalSec) : 60,
+      )
+    }
+    if (setTnSound) setTnSound.checked = s.sound !== false
+  } catch (err) {
+    console.warn('[shell] failed to load tasks-notify settings:', err)
+  }
+}
+
 function openSettings(): void {
   if (!config || !settingsOverlay) return
   if (setStartUrl) setStartUrl.value = config.startUrl
@@ -897,6 +917,7 @@ function openSettings(): void {
     }
   }
   if (setClearOnExit) setClearOnExit.value = config.clearOnExit
+  void loadTnSettings()
   if (setScannerApp) setScannerApp.value = config.scannerAppPath ?? ''
   if (setScannerArgs) setScannerArgs.value = (config as ShellConfig).scannerAppArgs ?? ''
   void renderScanFolders()
@@ -931,6 +952,22 @@ async function saveSettings(): Promise<void> {
   try {
     const oldStartUrl = config.startUrl
     config = await window.shell.setConfig(patch)
+    // Настройки tasks-notify — в plugin-data плагина; гость подхватит со следующего тика.
+    // Пишем отдельно: их падение не отменяет уже сохранённый основной конфиг.
+    try {
+      const tnInterval = Math.floor(Number(setTnInterval?.value))
+      await window.shell.pluginDataSet('tasks-notify', {
+        settings: {
+          objectId: setTnObjectId?.value.trim() || 'S187',
+          intervalSec: Number.isFinite(tnInterval) && tnInterval >= 15 ? tnInterval : 60,
+          sound: setTnSound?.checked !== false,
+        },
+      })
+    } catch (tnErr) {
+      console.warn('[shell] failed to save tasks-notify settings:', tnErr)
+      setStatus('настройки сохранены, но настройки уведомлений — нет')
+      return
+    }
     closeSettings()
     setStatus('настройки сохранены')
     if (config.startUrl !== oldStartUrl) {

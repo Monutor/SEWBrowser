@@ -158,6 +158,23 @@
         <div id="set-plugins"></div>
       </details>
       <details class="settings-row settings-details" open>
+        <summary>Уведомления о заданиях (применяются со следующего опроса, без перезагрузки)</summary>
+        <div class="settings-details-body">
+          <label class="settings-row">
+            Код объекта (напр. S187)
+            <input id="set-tn-objectid" spellcheck="false" autocomplete="off" placeholder="S187" />
+          </label>
+          <label class="settings-row">
+            Интервал опроса, секунд (минимум 15)
+            <input id="set-tn-interval" type="number" min="15" step="1" />
+          </label>
+          <label class="settings-row settings-check">
+            <input id="set-tn-sound" type="checkbox" />
+            Звук уведомления
+          </label>
+        </div>
+      </details>
+      <details class="settings-row settings-details" open>
         <summary>Сканирование</summary>
         <div class="settings-details-body">
           <label class="settings-row">
