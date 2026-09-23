@@ -60,12 +60,13 @@ function __tnHookAuth() {
 }
 
 function __tnSearch(settings) {
-  var body = {
+  // Сервер ждёт конверт {"requestBody": {...}} — голая внутренность даёт 400
+  var body = { requestBody: {
     objectId: [settings.objectId],
     status: ['CREATED', 'IN_PROGRESS'],
     processCode: [], srcStock: [], dstStock: [], salesChannel: [],
     createTimeFrom: '', createTimeTo: '',
-  };
+  } };
   var headers = { 'Content-Type': 'application/json' };
   if (__tnBearer) headers['Authorization'] = __tnBearer;
   return fetch('/v2/api/io-relocation-bff/relocation/search', {
