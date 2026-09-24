@@ -363,6 +363,101 @@ body {
   white-space: nowrap;
 }
 
+#task-alert {
+  position: fixed;
+  top: 92px;
+  left: 50%;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: min(560px, calc(100% - 24px));
+  padding: 14px 16px;
+  transform: translateX(-50%);
+  background: #3b160b;
+  border: 2px solid #ffb000;
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 176, 0, 0.25);
+  color: #fff7df;
+  animation: task-alert-pulse 1.2s ease-in-out infinite;
+}
+
+#task-alert[hidden] {
+  display: none;
+}
+
+.task-alert-content {
+  min-width: 0;
+  flex: 1;
+}
+
+.task-alert-title {
+  margin-bottom: 4px;
+  color: #ffd166;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.task-alert-text {
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.task-alert-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+#task-alert button {
+  padding: 7px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 6px;
+  background: #f59e0b;
+  color: #1f1300;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+#task-alert button:hover,
+#task-alert button:focus-visible {
+  background: #fbbf24;
+  outline: 2px solid #fff7df;
+  outline-offset: 2px;
+}
+
+#task-alert #task-alert-close {
+  padding: 4px 9px;
+  background: transparent;
+  color: #fff7df;
+  font-size: 21px;
+  line-height: 1;
+}
+
+#task-alert #task-alert-close:hover,
+#task-alert #task-alert-close:focus-visible {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+@keyframes task-alert-pulse {
+  0%,
+  100% {
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 176, 0, 0.25);
+  }
+  50% {
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.65), 0 0 0 5px rgba(255, 176, 0, 0.3);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #task-alert {
+    animation: none;
+  }
+}
+
 /* Всплывающее уведомление (разовые подсказки из setStatus) */
 #toast {
   position: fixed;

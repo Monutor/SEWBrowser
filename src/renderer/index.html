@@ -128,6 +128,18 @@
     <button id="update-close" title="Скрыть">&times;</button>
   </div>
 
+  <div id="task-alert" hidden role="alert" aria-live="assertive">
+    <div class="task-alert-content">
+      <div id="task-alert-title" class="task-alert-title">Новое задание</div>
+      <div id="task-alert-text" class="task-alert-text"></div>
+    </div>
+    <div class="task-alert-actions">
+      <button id="task-alert-open" type="button">Перейти</button>
+      <button id="task-alert-all" type="button" hidden>Все задания</button>
+      <button id="task-alert-close" type="button" title="Закрыть" aria-label="Закрыть">&times;</button>
+    </div>
+  </div>
+
   <div id="toast" hidden></div>
 
   <div id="error-overlay" hidden>

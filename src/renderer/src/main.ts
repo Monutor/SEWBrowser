@@ -1,9 +1,26 @@
 import './styles.css'
+import { createTaskAlert, formatTaskAlertText, getTaskAlertUrls } from './task-alert'
 
 const webview = document.getElementById('site') as unknown as SewWebViewElement
 const addressInput = document.getElementById('address') as HTMLInputElement | null
 const statusEl = document.getElementById('status') as HTMLElement | null
 const toastEl = document.getElementById('toast') as HTMLElement | null
+const taskAlertRoot = document.getElementById('task-alert') as HTMLElement | null
+const taskAlertTitle = document.getElementById('task-alert-title') as HTMLElement | null
+const taskAlertText = document.getElementById('task-alert-text') as HTMLElement | null
+const taskAlertOpen = document.getElementById('task-alert-open') as HTMLButtonElement | null
+const taskAlertAll = document.getElementById('task-alert-all') as HTMLButtonElement | null
+const taskAlertClose = document.getElementById('task-alert-close') as HTMLButtonElement | null
+const taskAlert = taskAlertRoot && taskAlertTitle && taskAlertText && taskAlertOpen && taskAlertAll && taskAlertClose
+  ? createTaskAlert({
+      root: taskAlertRoot,
+      title: taskAlertTitle,
+      text: taskAlertText,
+      open: taskAlertOpen,
+      all: taskAlertAll,
+      close: taskAlertClose,
+    })
+  : null
 const toolbar = document.getElementById('toolbar') as HTMLElement | null
 
 // Поиск по странице
@@ -739,17 +756,20 @@ async function pumpTasksNotify(): Promise<boolean> {
     } catch (err) {
       console.warn('[tasks-notify] notifyTasks failed:', err)
     }
-    // Тост + звук в оболочке (первое из пачки; остальные — в OS Notification).
-    // sound:false из очереди (настройка sound гостя) глушит звук; дефолт — звук есть.
-    // Свой файл (настройка soundFile) — приоритет, нет файла/битый — стандартный бип.
     const first = valid[0]
     if (valid.some((r) => r.sound !== false)) {
       void playTnSound(first.kind === 'handover' ? 'ho' : 'rel')
     }
-    const toastText = valid.length > 1 ? `${first.title} (+${valid.length - 1})` : first.title
-    setStatusAction(toastText, 'Перейти', () => {
-      void navigate(resolveTasksUrl(first.url || '/v2/relocation/tasks'))
-    })
+    const taskText = formatTaskAlertText(first)
+    const toastText = valid.length > 1 ? `${taskText} (+${valid.length - 1})` : taskText
+    const taskUrls = getTaskAlertUrls(first)
+    const openUrl = resolveTasksUrl(taskUrls.open)
+    const allUrl = taskUrls.all ? resolveTasksUrl(taskUrls.all) : undefined
+    taskAlert?.show(toastText, () => {
+      void navigate(openUrl)
+    }, allUrl ? () => {
+      void navigate(allUrl)
+    } : undefined)
     return true
   } catch {
     return false
