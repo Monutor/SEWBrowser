@@ -10,6 +10,7 @@
     "dev:watch": "electron-vite dev --watch",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "node --test \"src/**/*.test.ts\"",
     "package": "npm run build && electron-builder"
   },
   "devDependencies": {
