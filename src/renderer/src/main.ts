@@ -9,6 +9,7 @@ import {
   activeView,
   closeTab,
   cycleTab,
+  focusOrOpenTab,
   initTabs,
   isActiveTab,
   listTabs,
@@ -2760,7 +2761,7 @@ function renderStrip(): void {
     btn.dataset.url = tab.url
     btn.textContent = tab.name
     btn.title = tab.url
-    btn.addEventListener('click', () => void navigate(tab.url))
+    btn.addEventListener('click', () => focusOrOpenTab(tab.url))
     tabsEl.append(btn)
   }
   if (!hasUserFolders()) return
@@ -3531,9 +3532,11 @@ async function init(): Promise<void> {
       void guestJS<void>(tab, 'scans-push', '(function(list){try{window.dispatchEvent(new CustomEvent("scans-block:update",{detail:list}))}catch(e){}})(' + payload + ')').catch(() => {})
     }
   })
-  // Клик по OS-уведомлению tasks-notify: main прислал URL — переходим в гесте
+  // Клик по OS-уведомлению tasks-notify: main прислал URL — открываем вкладкой
   // (относительный путь резолвим против текущего URL, иначе allowlist режет)
-  window.shell.onTasksOpen?.((url) => { void navigate(resolveTasksUrl(url)) })
+  window.shell.onTasksOpen?.((url) => {
+    focusOrOpenTab(resolveTasksUrl(url))
+  })
   // window.open / target=_blank из гостя: открываем отдельной вкладкой справа
   window.shell.onOpenNewTab((url) => {
     openTab(url)
