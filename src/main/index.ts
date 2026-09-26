@@ -51,7 +51,8 @@ function guestShortcutName(input: Input): string | null {
     if (input.control || input.meta) return 'next-tab'
     return null
   }
-  if (mod && !input.shift && /^Digit[1-9]$/.test(code)) {
+  // !input.alt — паритет с shortcutFromEvent в renderer: Ctrl+1…9 без Alt.
+  if (mod && !input.shift && !input.alt && /^Digit[1-9]$/.test(code)) {
     return `tab-${code.slice(5)}` as 'tab-1'
   }
   if (mod && (key === 't' || code === 'KeyT') && !input.shift && !input.alt) return 'new-tab'
