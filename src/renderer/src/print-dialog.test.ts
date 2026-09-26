@@ -363,14 +363,24 @@ interface Harness {
   dialog: PrintDialogController
   printers: ShellPrinter[]
   printersFail: Error | null
+  /** Настоящее число страниц, которое «сообщает» pdf.js */
   pages: number
+  /** Сколько миниатюр хук реально рисует; null = рисует все доступные */
+  renderedPages: number | null
+  /** Заголовок документа; '' — фолбэк «Документ» */
+  title: string
   buildCalls: PrintSettings[]
   printCalls: PrintSettings[]
   saveCalls: Array<{ settings: PrintSettings; bytes: Uint8Array }>
   persisted: PrintSettings[]
+  /** Лимиты, с которыми звали renderThumbs */
+  renderCalls: number[]
   buildFail: Error | null
   renderFail: Error | null
   printFail: Error | null
+  /** Гейты держат хук, чтобы поймать busy-окно (Promise, который отпускает тест) */
+  buildGate: Promise<void> | null
+  printGate: Promise<void> | null
 }
 
 function setup(partial: Partial<Harness> = {}): Harness {
@@ -383,13 +393,18 @@ function setup(partial: Partial<Harness> = {}): Harness {
     printers: [{ name: 'HP', displayName: 'HP LaserJet', description: '' }],
     printersFail: null,
     pages: 3,
+    renderedPages: null,
+    title: 'Документ',
     buildCalls: [],
     printCalls: [],
     saveCalls: [],
     persisted: [],
+    renderCalls: [],
     buildFail: null,
     renderFail: null,
     printFail: null,
+    buildGate: null,
+    printGate: null,
     ...partial,
   }
   const elements = {} as Record<keyof PrintDialogElements, HTMLElement>
@@ -402,13 +417,18 @@ function setup(partial: Partial<Harness> = {}): Harness {
     buildPdf: async (settings) => {
       h.buildCalls.push(settings)
       if (h.buildFail) throw h.buildFail
+      if (h.buildGate) await h.buildGate
       return PDF_BYTES
     },
     renderThumbs: async (_bytes, limit) => {
       if (h.renderFail) throw h.renderFail
-      return Array.from({ length: Math.max(0, Math.min(limit, h.pages)) }, () => 'data:image/png;base64,AAA')
+      h.renderCalls.push(limit)
+      // pageCount — из pdf.js, количество нарисованных миниатюр может быть меньше
+      const count = Math.max(0, Math.min(limit, h.renderedPages ?? h.pages))
+      return { pageCount: h.pages, thumbs: Array.from({ length: count }, () => 'data:image/png;base64,AAA') }
     },
     doPrint: async (settings) => {
+      if (h.printGate) await h.printGate
       if (h.printFail) throw h.printFail
       h.printCalls.push(settings)
     },
@@ -416,7 +436,7 @@ function setup(partial: Partial<Harness> = {}): Harness {
       h.saveCalls.push({ settings, bytes })
       return true
     },
-    documentTitle: () => 'Документ',
+    documentTitle: () => h.title,
     persist: async (settings) => {
       h.persisted.push(settings)
     },
@@ -427,6 +447,8 @@ function setup(partial: Partial<Harness> = {}): Harness {
 
 const flush = async (): Promise<void> => {
   for (let i = 0; i < 8; i++) await Promise.resolve()
+  // macrotask-хвост: с гейтами цепочка успевает дойти до записи состояния
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
 }
 
 describe('диалог печати', () => {
@@ -577,5 +599,127 @@ describe('диалог печати', () => {
     assert.equal(h.el.marginBottom.value, '0')
     assert.equal(h.el.marginLeft.value, '0')
     assert.equal(h.el.marginRight.value, '0')
+  })
+
+  it('pageCount() берётся из pdf.js, а не из числа нарисованных миниатюр', async () => {
+    // pdf.js знает 12 страниц, а миниатюр хук нарисовал 3 — счётчик и подсказка
+    // обязаны считать от 12, иначе «из N» соврёт
+    const h = setup({ pages: 12, renderedPages: 3 })
+    await h.dialog.open(normalizePrintSettings({}))
+    assert.equal(h.dialog.pageCount(), 12)
+    assert.equal(h.el.thumbs.children.length, 3)
+    assert.equal(h.el.pageCounter.textContent, 'Страница 1 из 12')
+    assert.equal(h.el.thumbsNote.textContent, 'Показаны первые 3 из 12')
+    // первая отрисовка ограничена десятью страницами…
+    assert.deepEqual(h.renderCalls, [10])
+    // …а «Показать все» перезапрашивает все страницы по pageCount, не пересобирая PDF
+    assert.equal(h.buildCalls.length, 1)
+    fire(h.el.showAll, 'click')
+    await flush()
+    assert.deepEqual(h.renderCalls, [10, 12])
+    assert.equal(h.buildCalls.length, 1)
+  })
+
+  it('на время пересчёта превью кнопки заблокированы, печать и сохранение не срабатывают', async () => {
+    // Пока собирается новый PDF, в bytes лежит сборка по прежним настройкам —
+    // сохранив её, пользователь получил бы не тот документ
+    const h = setup()
+    await h.dialog.open(normalizePrintSettings({ destination: 'printer', deviceName: 'HP' }))
+    assert.equal(h.el.savePdf.disabled, false)
+    let release = (): void => {}
+    h.buildGate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const refreshing = h.dialog.refresh()
+    await flush()
+    assert.equal(h.dialog.isBusy(), true)
+    assert.equal(h.el.print.disabled, true)
+    assert.equal(h.el.savePdf.disabled, true)
+    assert.equal(h.el.cancel.disabled, true)
+    fire(h.el.print, 'click')
+    fire(h.el.savePdf, 'click')
+    await flush()
+    assert.equal(h.printCalls.length, 0)
+    assert.equal(h.saveCalls.length, 0)
+    release()
+    await refreshing
+    assert.equal(h.dialog.isBusy(), false)
+    assert.equal(h.el.savePdf.disabled, false)
+  })
+
+  it('во время печати close() и «Отмена» не закрывают, после успеха диалог закрывается', async () => {
+    // close() зовут Escape и клик по фону оверлея — мимо кнопки «Отмена»,
+    // поэтому прерывать печать нельзя (спека §6)
+    const h = setup()
+    await h.dialog.open(normalizePrintSettings({ destination: 'printer', deviceName: 'HP' }))
+    let release = (): void => {}
+    h.printGate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    fire(h.el.print, 'click')
+    await flush()
+    assert.equal(h.dialog.isBusy(), true)
+    h.dialog.close()
+    fire(h.el.cancel, 'click')
+    assert.equal(h.dialog.isOpen(), true)
+    assert.equal(h.el.overlay.hidden, false)
+    release()
+    await flush()
+    assert.equal(h.dialog.isOpen(), false)
+    assert.equal(h.el.overlay.hidden, true)
+    assert.equal(h.persisted.length, 1)
+    assert.equal(h.dialog.isBusy(), false)
+  })
+
+  it('при упавшем рендере pageCount() не ноль — печать по диапазону не уйдёт в весь документ', async () => {
+    // printPageRangesFor при pageCount = 0 отдаёт пустой массив, а пустой
+    // pageRanges в webview.print означает «печатать всё» (R-12)
+    const h = setup({ renderFail: new Error('битый PDF') })
+    await h.dialog.open(normalizePrintSettings({ rangeMode: 'current' }))
+    assert.equal(h.dialog.pageCount(), 1)
+    const ranges = printPageRangesFor(h.dialog.currentSettings(), h.dialog.pageCount(), h.dialog.currentPage())
+    assert.ok(ranges.length > 0)
+  })
+
+  it('previewBytes() отдаёт собранный PDF и null после сбоя сборки', async () => {
+    const h = setup()
+    await h.dialog.open(normalizePrintSettings({}))
+    assert.deepEqual(Array.from(h.dialog.previewBytes() ?? []), Array.from(PDF_BYTES))
+    h.buildFail = new Error('нет содержимого')
+    await h.dialog.refresh()
+    assert.equal(h.dialog.previewBytes(), null)
+  })
+
+  it('пустой заголовок документа подставляет «Документ»', async () => {
+    const h = setup({ title: '' })
+    await h.dialog.open(normalizePrintSettings({}))
+    assert.equal(h.el.title.textContent, 'Документ')
+  })
+
+  it('refresh синхронизирует видимость блока произвольного диапазона', async () => {
+    const h = setup()
+    await h.dialog.open(normalizePrintSettings({}))
+    assert.equal(h.el.rangeCustom.hidden, true)
+    h.el.rangeMode.value = 'custom'
+    await h.dialog.refresh()
+    assert.equal(h.el.rangeCustom.hidden, false)
+    h.el.rangeMode.value = 'all'
+    await h.dialog.refresh()
+    assert.equal(h.el.rangeCustom.hidden, true)
+  })
+
+  it('«Сохранить как PDF» без кэша собирает PDF заново', async () => {
+    const h = setup({ buildFail: new Error('нет содержимого') })
+    await h.dialog.open(normalizePrintSettings({}))
+    assert.equal(h.dialog.previewBytes(), null)
+    assert.equal(h.buildCalls.length, 1)
+    h.buildFail = null // вторая сборка уже удаётся — кэша нет, значит пересобираем
+    fire(h.el.savePdf, 'click')
+    await flush()
+    assert.equal(h.buildCalls.length, 2)
+    assert.equal(h.saveCalls.length, 1)
+    assert.deepEqual(Array.from(h.saveCalls[0].bytes), Array.from(PDF_BYTES))
+    assert.equal(h.persisted.length, 1)
+    assert.equal(h.el.overlay.hidden, true)
   })
 })

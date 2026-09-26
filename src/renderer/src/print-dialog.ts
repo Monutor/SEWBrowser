@@ -230,10 +230,11 @@ export interface PrintDialogHooks {
   listPrinters: () => Promise<ShellPrinter[]>
   /** Собрать PDF: view.printToPDF(printToPdfOptions(settings)) */
   buildPdf: (settings: PrintSettings) => Promise<Uint8Array>
-  /** PDF → data URL миниатюр. limit — сколько страниц нужно отрендерить;
-   *  контроллер просит ВСЕ (Number.MAX_SAFE_INTEGER), потому что общее число
-   *  страниц нужно для счётчика и подсказки «Показаны первые 10 из N» */
-  renderThumbs: (bytes: Uint8Array, limit: number) => Promise<string[]>
+  /** PDF → миниатюры. limit — сколько страниц нужно отрисовать: 10 при первом
+   *  рендере и pageCount по кнопке «Показать все». pageCount — настоящее число
+   *  страниц из pdf.js, thumbs при этом может быть короче limit. Хук вправе
+   *  вернуть все уже нарисованные страницы (накопление) — берём ответ как есть. */
+  renderThumbs: (bytes: Uint8Array, limit: number) => Promise<{ pageCount: number; thumbs: string[] }>
   /** Системная печать: view.print(printOptions(settings, …)) */
   doPrint: (settings: PrintSettings) => Promise<void>
   /** window.shell.savePdf(bytesToBase64(bytes), suggestedPdfName(title)) */
@@ -245,11 +246,16 @@ export interface PrintDialogHooks {
 
 export interface PrintDialogController {
   open: (settings: PrintSettings) => Promise<void>
+  /** Закрытие с проверкой busy: во время печати/сбора превью не закрывает */
   close: () => void
   isOpen: () => boolean
+  /** true — идёт печать, сохранение или сборка превью */
+  isBusy: () => boolean
   refresh: () => Promise<void>
   currentSettings: () => PrintSettings
   currentPage: () => number
+  /** Настоящее число страниц; никогда не 0 — иначе printPageRangesFor отдаст
+   *  пустой pageRanges, а это в webview.print означает «печатать весь документ» */
   pageCount: () => number
   previewBytes: () => Uint8Array | null
 }
@@ -257,6 +263,14 @@ export interface PrintDialogController {
 /** Миниатюр показываем по 10; остальное — по кнопке «Показать все» */
 const THUMB_LIMIT = 10
 const PDF_OPTION = 'pdf'
+
+/** Ответ хука миниатюр: pageCount — из pdf.js, thumbs может быть пустым */
+interface ThumbsPainted {
+  pageCount: number
+  thumbs: string[]
+  /** Хук упал: pageCount/thumbs недостоверны, состояние не обновляем */
+  failed: boolean
+}
 
 /**
  * Контроллер диалога печати. Не знает ни про Electron, ни про webview —
@@ -271,6 +285,8 @@ export function createPrintDialog(elements: PrintDialogElements, hooks: PrintDia
   let currentPage = 1
   let showAll = false
   let busy = false
+  /** Настоящее число страниц по последнему успешному рендеру; 0 = неизвестно */
+  let pageCount = 0
   /** Растёт на каждый refresh: результат устаревшей сборки игнорируется */
   let generation = 0
   /** Сообщение о принтерах: показывается один раз поверх успешного превью,
@@ -366,17 +382,20 @@ export function createPrintDialog(elements: PrintDialogElements, hooks: PrintDia
   }
 
   const paintThumbs = (): void => {
-    const limit = showAll ? thumbs.length : Math.min(THUMB_LIMIT, thumbs.length)
+    const shown = showAll
+      ? Math.min(pageCount, thumbs.length)
+      : Math.min(THUMB_LIMIT, pageCount, thumbs.length)
     const nodes: HTMLElement[] = []
-    for (let i = 0; i < limit; i++) {
+    for (let i = 0; i < shown; i++) {
       const page = i + 1
       const img = document.createElement('img')
       img.src = thumbs[i] ?? ''
       img.alt = `Страница ${page}`
-      img.dataset.page = String(page)
       img.className = page === currentPage ? 'print-thumb current' : 'print-thumb'
-      // Слушатель на самой миниатюре, а не на контейнере: контейнер перерисовывается
-      // целиком, делегирование в нём жило бы только до первой перерисовки
+      // Слушатель на самой миниатюре, а не на контейнере: контейнер целиком
+      // перерисовывается через replaceChildren, а fire() в тест-дубле не
+      // эмулирует всплытие, поэтому делегирование по контейнеру тестом не
+      // проверялось бы. В живом DOM клик по <img> доходит до обоих.
       img.addEventListener('click', () => {
         currentPage = page
         paintThumbs()
@@ -384,43 +403,70 @@ export function createPrintDialog(elements: PrintDialogElements, hooks: PrintDia
       nodes.push(img)
     }
     elements.thumbs.replaceChildren(...nodes)
-    if (thumbs.length > THUMB_LIMIT && !showAll) {
-      elements.thumbsNote.textContent = `Показаны первые ${THUMB_LIMIT} из ${thumbs.length}`
+    // Подсказка и счётчик считаются от настоящего pageCount, а не от длины
+    // массива миниатюр: pdf.js знает число страниц даже когда нарисованы не все
+    if (thumbs.length > 0 && pageCount > shown) {
+      elements.thumbsNote.textContent = `Показаны первые ${shown} из ${pageCount}`
       elements.showAll.hidden = false
     } else {
       elements.thumbsNote.textContent = ''
       elements.showAll.hidden = true
     }
-    elements.pageCounter.textContent = thumbs.length > 0 ? `Страница ${Math.min(currentPage, thumbs.length)} из ${thumbs.length}` : ''
+    elements.pageCounter.textContent =
+      thumbs.length > 0 && pageCount > 0 ? `Страница ${Math.min(currentPage, pageCount)} из ${pageCount}` : ''
+  }
+
+  /** Миниатюры из уже собранного PDF. null — ответ устарел, состояние не трогаем */
+  const renderThumbsFor = async (
+    data: Uint8Array,
+    my: number,
+    limit: number,
+  ): Promise<ThumbsPainted | null> => {
+    try {
+      const out = await hooks.renderThumbs(data, limit)
+      if (my !== generation || !open) return null
+      const n = Number(out?.pageCount)
+      const list = out?.thumbs
+      return {
+        failed: false,
+        pageCount: Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0,
+        thumbs: Array.isArray(list) ? list : [],
+      }
+    } catch (err) {
+      // Провал рендера миниатюр НЕ ломает печать: PDF уже есть, показываем
+      // заглушку и оставляем кнопки рабочими (спека §9).
+      console.warn('[print] не удалось построить миниатюры:', err)
+      return { failed: true, pageCount: 0, thumbs: [] }
+    }
+  }
+
+  const takePainted = (painted: ThumbsPainted): void => {
+    // При упавшем рендере pageCount оставляем прежним: число страниц нужно для
+    // печати по диапазону, и 0 там опаснее, чем слегка устаревшее значение
+    if (!painted.failed) pageCount = painted.pageCount
+    thumbs = painted.thumbs
+    if (pageCount > 0 && currentPage > pageCount) currentPage = pageCount
+    paintThumbs()
   }
 
   const refresh = async (): Promise<void> => {
     if (!open) return
     const my = ++generation
-    const settings = currentSettings()
+    // Новый пересчёт — снова показываем первые 10 миниатюр
+    showAll = false
     elements.rangeCustom.hidden = readValue(elements.rangeMode) !== 'custom'
+    const settings = currentSettings()
+    busy = true
+    syncButtons()
     setStatus('Готовим предпросмотр…')
     try {
       const built = await hooks.buildPdf(settings)
       if (my !== generation || !open) return
-      // Просим миниатюры ВСЕХ страниц одним вызовом: без общего числа страниц
-      // подсказку «Показаны первые 10 из N» и счётчик «Страница 1 из N» не собрать.
-      // В списке показываем 10, остальное — по кнопке «Показать все».
-      // Провал рендера миниатюр НЕ ломает печать: PDF уже есть, показываем
-      // заглушку и оставляем кнопки рабочими (спека §9).
-      let painted: string[] = []
-      try {
-        const out = await hooks.renderThumbs(built, Number.MAX_SAFE_INTEGER)
-        painted = Array.isArray(out) ? out : []
-      } catch (renderErr) {
-        console.warn('[print] не удалось построить миниатюры:', renderErr)
-      }
-      if (my !== generation || !open) return
+      const painted = await renderThumbsFor(built, my, THUMB_LIMIT)
+      if (painted === null) return
       bytes = built
-      thumbs = painted
-      if (currentPage > thumbs.length) currentPage = Math.max(1, thumbs.length)
-      paintThumbs()
-      setStatus(painted.length > 0 ? notice : 'Не удалось построить предпросмотр')
+      takePainted(painted)
+      setStatus(thumbs.length > 0 ? notice : 'Не удалось построить предпросмотр')
       notice = ''
     } catch (err) {
       if (my !== generation || !open) return
@@ -429,16 +475,39 @@ export function createPrintDialog(elements: PrintDialogElements, hooks: PrintDia
       paintThumbs()
       setStatus(`Не удалось построить предпросмотр: ${errText(err)}`)
       notice = ''
+    } finally {
+      // Пока пересчёт не наш, busy держит уже следующий вызов
+      if (my === generation) {
+        busy = false
+        syncButtons()
+      }
     }
-    syncButtons()
   }
 
-  const close = (): void => {
+  /** «Показать все»: PDF не пересобираем, только дорисовываем миниатюры до pageCount.
+   *  busy здесь не трогаем — он уже поднят вызывающим runAction. */
+  const renderAllThumbs = async (): Promise<void> => {
+    if (!open || bytes === null || pageCount <= 0) return
+    const my = ++generation
+    const painted = await renderThumbsFor(bytes, my, pageCount)
+    if (painted === null) return
+    takePainted(painted)
+  }
+
+  const closeNow = (): void => {
     if (!open) return
     open = false
     generation++
+    busy = false
     notice = ''
     elements.overlay.hidden = true
+  }
+
+  /** Публичное закрытие (Escape, клик по фону, «Отмена»): во время печати или
+   *  сборки превью не закрываем — сначала дождаться (спека §6) */
+  const close = (): void => {
+    if (busy) return
+    closeNow()
   }
 
   const runAction = async (action: () => Promise<void>): Promise<void> => {
@@ -457,10 +526,10 @@ export function createPrintDialog(elements: PrintDialogElements, hooks: PrintDia
 
   elements.cancel.addEventListener('click', close)
   elements.showAll.addEventListener('click', () => {
-    // Миниатюры всех страниц уже собраны — перерисовываем весь список,
-    // пересобирать PDF ради «показать все» незачем
-    showAll = true
-    paintThumbs()
+    void runAction(async () => {
+      showAll = true
+      await renderAllThumbs()
+    })
   })
   elements.noMargins.addEventListener('click', () => {
     fill(elements.marginTop, 0)
@@ -477,7 +546,8 @@ export function createPrintDialog(elements: PrintDialogElements, hooks: PrintDia
         throw new Error(`Печать не удалась: ${errText(err)}`)
       }
       await hooks.persist(settings)
-      close()
+      // closeNow, а не close: мы внутри runAction, busy ещё true, а закрыть надо
+      closeNow()
     })
   })
   elements.savePdf.addEventListener('click', () => {
@@ -498,7 +568,7 @@ export function createPrintDialog(elements: PrintDialogElements, hooks: PrintDia
         throw new Error(`Не удалось сохранить PDF: ${errText(err)}`)
       }
       await hooks.persist(settings)
-      close()
+      closeNow()
     })
   })
 
@@ -509,8 +579,10 @@ export function createPrintDialog(elements: PrintDialogElements, hooks: PrintDia
     open = true
     bytes = null
     thumbs = []
+    pageCount = 0
     currentPage = 1
     showAll = false
+    busy = false
     notice = ''
     elements.overlay.hidden = false
     setStatus('Загружаем список принтеров…')
@@ -536,9 +608,7 @@ export function createPrintDialog(elements: PrintDialogElements, hooks: PrintDia
         notice = `Принтер «${settings.deviceName}» больше не доступен — печатаем в PDF`
       }
     }
-    // Сообщение о принтерах держим в notice: refresh() показывает его один раз
-    // поверх успешного превью, а не затирает пустым статусом
-    setStatus(notice || 'Готовим предпросмотр…')
+    // Текст notice показывает refresh() поверх успешного превью, а не затирает
     syncButtons()
     await refresh()
   }
@@ -547,10 +617,11 @@ export function createPrintDialog(elements: PrintDialogElements, hooks: PrintDia
     open: openDialog,
     close,
     isOpen: () => open,
+    isBusy: () => busy,
     refresh,
     currentSettings,
     currentPage: () => currentPage,
-    pageCount: () => thumbs.length,
+    pageCount: () => Math.max(1, pageCount),
     previewBytes: () => bytes,
   }
 }
