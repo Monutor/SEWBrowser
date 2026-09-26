@@ -10,6 +10,7 @@ declare module '*.css'
 interface SewWebViewElement extends HTMLElement {
   loadURL(url: string): Promise<void>
   getURL(): string
+  getTitle(): string
   isLoading(): boolean
   isCrashed(): boolean
   goBack(): void
@@ -43,6 +44,7 @@ interface SewWebViewElement extends HTMLElement {
       result: { activeMatchOrdinal: number; matches: number; finalUpdate: boolean }
     }) => void,
   ): void
+  addEventListener(event: 'page-title-updated', listener: (event: { title: string; explicitSet: boolean }) => void): this
 }
 
 interface NavTab {
@@ -217,6 +219,19 @@ type ShortcutName =
   | 'zoom-reset'
   | 'settings'
   | 'escape'
+  | 'new-tab'
+  | 'close-tab'
+  | 'next-tab'
+  | 'prev-tab'
+  | 'tab-1'
+  | 'tab-2'
+  | 'tab-3'
+  | 'tab-4'
+  | 'tab-5'
+  | 'tab-6'
+  | 'tab-7'
+  | 'tab-8'
+  | 'tab-9'
 
 interface ShellApi {
   getConfig(): Promise<ShellConfig>
@@ -294,6 +309,8 @@ interface ShellApi {
   notifyTasks(items: { id: number; title: string; body: string; url: string }[]): Promise<boolean>
   /** Клик по OS-уведомлению tasks-notify: main шлёт 'tasks:open-url' — renderer переходит */
   onTasksOpen(cb: (url: string) => void): void
+  /** main просит открыть новую вкладку с URL (напр. из ссылки в письме/уведомлении) */
+  onOpenNewTab(cb: (url: string) => void): void
   /** Выбрать свой звук уведомления для слота ('rel' | 'ho'); null — отмена/неподходящий файл */
   pickSound(slot: 'rel' | 'ho'): Promise<{ file: string; name: string } | null>
   /** Байты сохранённого звука слота для проигрывания (null — нет своего файла) */

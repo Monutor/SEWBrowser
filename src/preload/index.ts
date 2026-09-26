@@ -265,6 +265,12 @@ const api = {
   onTasksOpen: (cb: (url: string) => void): void => {
     ipcRenderer.on('tasks:open-url', (_event, url: string) => cb(url))
   },
+  /** main просит открыть новую вкладку с URL (канал 'shell:open-new-tab') */
+  onOpenNewTab: (cb: (url: string) => void): void => {
+    ipcRenderer.on('shell:open-new-tab', (_event, url: string) => {
+      if (typeof url === 'string' && url) cb(url)
+    })
+  },
   /** Выбрать свой звук уведомления для слота ('rel' | 'ho'); null — отмена/неподходящий файл */
   pickSound: (slot: 'rel' | 'ho'): Promise<{ file: string; name: string } | null> =>
     ipcRenderer.invoke('sound:pick', slot),
