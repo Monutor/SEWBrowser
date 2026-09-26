@@ -251,6 +251,20 @@ describe('closeTab', () => {
   })
 })
 
+describe('primaryTab', () => {
+  it('primaryTab() всегда первая вкладка, даже если активна другая', async () => {
+    const h = setup()
+    tabsModule.openTab('https://sew.mvideoeldorado.ru/v2/')
+    tabsModule.openTab('https://sew.mvideoeldorado.ru/v2/relocation/tasks')
+    assert.equal(tabsModule.listTabs().length, 2)
+    assert.equal(tabsModule.primaryTab()?.isPrimary, true)
+    assert.equal(tabsModule.primaryTab()?.url, 'https://sew.mvideoeldorado.ru/v2/')
+    assert.equal(tabsModule.primaryView(), tabsModule.primaryTab()?.view)
+    assert.notEqual(tabsModule.activeTab()?.id, tabsModule.primaryTab()?.id)
+    h.newTab.remove()
+  })
+})
+
 describe('focusOrOpenTab', () => {
   it('переиспользует уже открытую вкладку с тем же URL', () => {
     setup()

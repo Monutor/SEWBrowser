@@ -1,7 +1,20 @@
 import './styles.css'
 import { createTaskAlert, formatTaskAlertText, getTaskAlertUrls } from './task-alert'
+import { hostOfTabUrl } from './tabs-core.ts'
+import {
+  activeTab,
+  activeView,
+  initTabs,
+  isActiveTab,
+  listTabs,
+  openTab,
+  primaryTab,
+  refreshTabBar,
+  setTabTitle,
+  setTabUrl,
+  type ShellTab,
+} from './tabs'
 
-const webview = document.getElementById('site') as unknown as SewWebViewElement
 const addressInput = document.getElementById('address') as HTMLInputElement | null
 const statusEl = document.getElementById('status') as HTMLElement | null
 const toastEl = document.getElementById('toast') as HTMLElement | null
@@ -116,11 +129,7 @@ function normalizeUrl(raw: string): string {
 }
 
 function hostOf(url: string): string {
-  try {
-    return new URL(url).host.toLowerCase()
-  } catch {
-    return ''
-  }
+  return hostOfTabUrl(url)
 }
 
 /** Логика совпадает с allowlist в конфиге (проверка синхронная, в will-navigate) */
@@ -148,7 +157,7 @@ function resolveTasksUrl(url: string): string {
   const raw = (url || '').trim() || '/v2/relocation/tasks'
   if (/^https?:\/\//i.test(raw)) return raw
   try {
-    const base = webview.getURL() || config?.startUrl || ''
+    const base = activeView()?.getURL() || config?.startUrl || ''
     return new URL(raw, base).href
   } catch {
     const start = config?.startUrl || ''
@@ -341,7 +350,7 @@ if (!window.__shellChromeShim) {
 }
 `
 
-async function injectPlugins(): Promise<void> {
+async function injectPlugins(tab: ShellTab): Promise<void> {
   // Снапшот данных плагинов в страницу (читает шим вместо IPC — см. комментарий
   // к CHROME_SHIM). Пушим до кода плагинов, чтобы первые чтения видели данные.
   await pushPluginStores()
@@ -349,13 +358,13 @@ async function injectPlugins(): Promise<void> {
     try {
       if (plugin.styles) {
         try {
-          await webview.insertCSS(plugin.styles)
+          await tab.view.insertCSS(plugin.styles)
         } catch (err) {
           console.warn(`[plugins:${plugin.name}] insertCSS failed:`, err)
         }
       }
       // chrome-шим страницы (один на документ) + имя плагина для его хранилища
-      await guestJS<void>('shim', CHROME_SHIM)
+      await guestJS<void>(tab, 'shim', CHROME_SHIM)
       if (!plugin.code) continue
       const key = JSON.stringify(plugin.name)
       // Код плагина выполняется в гостевом try/catch: синхронный throw складываем
@@ -363,6 +372,7 @@ async function injectPlugins(): Promise<void> {
       // Иначе Electron пишет лишь безликое "GUEST_VIEW_MANAGER_CALL: Script
       // failed to execute" без имени плагина и текста ошибки.
       await guestJS<void>(
+        tab,
         `inject:${plugin.name}`,
         `window.__shellPluginName = ${key};` +
           `window.__shellPlugins = window.__shellPlugins || {};` +
@@ -375,6 +385,7 @@ async function injectPlugins(): Promise<void> {
       )
       try {
         const pluginErr = (await guestJS<unknown>(
+          tab,
           `plugin-error:${plugin.name}`,
           `(window.__shellPluginError || {})[${key}] ?? null`,
         )) as unknown
@@ -386,7 +397,7 @@ async function injectPlugins(): Promise<void> {
       }
       if (plugin.init) {
         try {
-          await guestJS<unknown>(`init:${plugin.name}`, plugin.init)
+          await guestJS<unknown>(tab, `init:${plugin.name}`, plugin.init)
         } catch (err) {
           console.warn(`[plugins:${plugin.name}] init failed:`, err)
         }
@@ -397,7 +408,7 @@ async function injectPlugins(): Promise<void> {
   }
   // Сбрасываем имя плагина, чтобы чужой код не писал в чужое хранилище
   try {
-    await guestJS<void>('name-reset', 'window.__shellPluginName = null;')
+    await guestJS<void>(tab, 'name-reset', 'window.__shellPluginName = null;')
   } catch {
     // страница могла уже уйти — игнорируем
   }
@@ -411,10 +422,12 @@ async function pushPluginStores(): Promise<void> {
   } catch (err) {
     console.warn('[shell] getAllPluginData failed:', err)
   }
-  try {
-    await guestJS<void>('push-stores', 'window.__shellPluginStores = ' + JSON.stringify(snapshot) + ';')
-  } catch {
-    // страница не готова — игнорируем
+  for (const tab of listTabs()) {
+    try {
+      await guestJS<void>(tab, 'push-stores', 'window.__shellPluginStores = ' + JSON.stringify(snapshot) + ';')
+    } catch {
+      // вкладка могла закрыться между listTabs() и вызовом — пропускаем
+    }
   }
 }
 
@@ -429,14 +442,15 @@ async function pushPluginStores(): Promise<void> {
  *  Без этого безликий "GUEST_VIEW_MANAGER_CALL: ..." не даёт понять виновника.
  *  Повторы с тем же текстом глушим (дедуп по label), исключение пробрасываем. */
 const lastGuestErr: Record<string, string> = {}
-async function guestJS<T>(label: string, code: string): Promise<T> {
+async function guestJS<T>(tab: ShellTab, label: string, code: string): Promise<T> {
+  const key = `${tab.id}:${label}`
   try {
-    return (await webview.executeJavaScript(code)) as T
+    return (await tab.view.executeJavaScript(code)) as T
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    if (lastGuestErr[label] !== msg) {
-      lastGuestErr[label] = msg
-      console.warn(`[guestjs:${label}] failed:`, msg)
+    if (lastGuestErr[key] !== msg) {
+      lastGuestErr[key] = msg
+      console.warn(`[guestjs:${key}] failed:`, msg)
     }
     throw err
   }
@@ -477,6 +491,8 @@ function startSewHelperBridge(): void {
 async function pumpSewHelperBff(): Promise<boolean> {
   try {
     if (!plugins.some((p) => p.name === 'sew-helper')) return false
+    const tab = primaryTab()
+    if (!tab) return false
     // Гостевая часть — полностью неубиваемая (вложенные try/catch): reject
     // executeJavaScript Electron всегда дублирует внутренним логом
     // "GUEST_VIEW_MANAGER_CALL: ...", поэтому гость не должен кидать
@@ -487,6 +503,7 @@ async function pumpSewHelperBff(): Promise<boolean> {
     // возвращает сам объект функции, а он неклонируем:
     // "GUEST_VIEW_MANAGER_CALL: An object could not be cloned" (ловушка 17).
     const rawTake = await guestJS<string>(
+      tab,
       'bff-take',
       '(function(){try{var q=window.__sewHelperBffReq;if(!Array.isArray(q))return "[]";' +
         'try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})()',
@@ -498,7 +515,7 @@ async function pumpSewHelperBff(): Promise<boolean> {
         bffTakeDiagged = true
         try {
           console.warn(
-            `[guestjs:bff-take] guest state: url=${webview.getURL()} loading=${webview.isLoading()} crashed=${webview.isCrashed()}`,
+            `[guestjs:bff-take] guest state: url=${tab.view.getURL()} loading=${tab.view.isLoading()} crashed=${tab.view.isCrashed()}`,
           )
         } catch {
           // ignore
@@ -524,6 +541,7 @@ async function pumpSewHelperBff(): Promise<boolean> {
       }
       try {
         await guestJS<boolean>(
+          tab,
           'bff-write',
           '(function(id,payload){try{(window.__sewHelperBffRes = window.__sewHelperBffRes || {})[id]=payload;return true}catch(e){return false}})' +
             '(' +
@@ -586,7 +604,10 @@ function startScansBridge(): void {
 async function pumpScansBridge(): Promise<boolean> {
   try {
     if (!plugins.some((p) => p.name === 'scans-block')) return false
+    const tab = primaryTab()
+    if (!tab) return false
     const rawTake = await guestJS<string>(
+      tab,
       'scans-take',
       '(function(){try{var q=window.__sewScansReq;if(!Array.isArray(q))return "[]";' +
         'try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})()',
@@ -595,7 +616,7 @@ async function pumpScansBridge(): Promise<boolean> {
         scansTakeDiagged = true
         try {
           console.warn(
-            `[guestjs:scans-take] guest state: url=${webview.getURL()} loading=${webview.isLoading()} crashed=${webview.isCrashed()}`,
+            `[guestjs:scans-take] guest state: url=${tab.view.getURL()} loading=${tab.view.isLoading()} crashed=${tab.view.isCrashed()}`,
           )
         } catch {
           // ignore
@@ -646,6 +667,7 @@ async function pumpScansBridge(): Promise<boolean> {
       }
       try {
         await guestJS<boolean>(
+          tab,
           'scans-write',
           '(function(id,payload){try{(window.__sewScansRes = window.__sewScansRes || {})[id]=payload;return true}catch(e){return false}})' +
             '(' +
@@ -754,7 +776,10 @@ async function readTnAlertTtl(): Promise<number> {
 async function pumpTasksNotify(): Promise<boolean> {
   try {
     if (!plugins.some((p) => p.name === 'tasks-notify')) return false
+    const tab = primaryTab()
+    if (!tab) return false
     const rawTake = await guestJS<string>(
+      tab,
       'tasks-take',
       '(function(){try{var q=window.__tasksNotifyReq;if(!Array.isArray(q))return "[]";' +
         'try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})()',
@@ -762,7 +787,7 @@ async function pumpTasksNotify(): Promise<boolean> {
       if (!tasksNotifyDiagged) {
         tasksNotifyDiagged = true
         try {
-          console.warn(`[guestjs:tasks-take] guest state: url=${webview.getURL()} loading=${webview.isLoading()} crashed=${webview.isCrashed()}`)
+          console.warn(`[guestjs:tasks-take] guest state: url=${tab.view.getURL()} loading=${tab.view.isLoading()} crashed=${tab.view.isCrashed()}`)
         } catch { /* ignore */ }
       }
       throw err
@@ -802,8 +827,10 @@ async function pumpTasksNotify(): Promise<boolean> {
 
 function updateAddressBar(): void {
   if (!addressInput) return
+  const view = activeView()
+  if (!view) return
   try {
-    addressInput.value = webview.getURL() ?? ''
+    addressInput.value = view.getURL() ?? ''
   } catch {
     // webview ещё не готов — игнорируем
   }
@@ -813,8 +840,10 @@ async function navigate(url: string): Promise<void> {
   const target = normalizeUrl(url)
   if (!target) return
   if (isAllowed(target)) {
+    const view = activeView()
+    if (!view) return
     try {
-      await webview.loadURL(target)
+      await view.loadURL(target)
     } catch (err) {
       console.warn('[shell] loadURL failed:', err)
     }
@@ -838,10 +867,12 @@ function nearestZoomIndex(factor: number): number {
 /** Применяет запомненный для текущего хоста зум (вызывается при навигации) */
 function applyZoomForCurrentPage(): void {
   if (!config) return
+  const view = activeView()
+  if (!view) return
   try {
-    const host = hostOf(webview.getURL() ?? '')
+    const host = hostOf(view.getURL() ?? '')
     const factor = (host && config.zoom[host]) || 1
-    webview.setZoomFactor(factor)
+    view.setZoomFactor(factor)
   } catch {
     // webview ещё не готов — применится при следующей навигации
   }
@@ -849,9 +880,11 @@ function applyZoomForCurrentPage(): void {
 
 async function changeZoom(dir: 1 | -1 | 'reset'): Promise<void> {
   if (!config) return
+  const view = activeView()
+  if (!view) return
   let current = 1
   try {
-    current = webview.getZoomFactor()
+    current = view.getZoomFactor()
   } catch {
     // страница не готова — нечего масштабировать
     return
@@ -861,11 +894,11 @@ async function changeZoom(dir: 1 | -1 | 'reset'): Promise<void> {
       ? 1
       : ZOOM_STEPS[Math.min(ZOOM_STEPS.length - 1, Math.max(0, nearestZoomIndex(current) + dir))]
   try {
-    webview.setZoomFactor(next)
+    view.setZoomFactor(next)
   } catch {
     return
   }
-  const host = hostOf(webview.getURL() ?? '')
+  const host = hostOf(view.getURL() ?? '')
   if (host) {
     config.zoom[host] = Math.round(next * 100) / 100
     try {
@@ -893,8 +926,10 @@ function closeFind(): void {
   findActive = false
   if (findbar) findbar.hidden = true
   if (findCount) findCount.textContent = ''
+  const view = activeView()
+  if (!view) return
   try {
-    webview.stopFindInPage('clearSelection')
+    view.stopFindInPage('clearSelection')
   } catch {
     // игнорируем
   }
@@ -906,8 +941,10 @@ function doFind(forward: boolean, findNext = true): void {
     if (findCount) findCount.textContent = ''
     return
   }
+  const view = activeView()
+  if (!view) return
   try {
-    webview.findInPage(text, { forward, findNext })
+    view.findInPage(text, { forward, findNext })
   } catch {
     // страница не готова — игнорируем
   }
@@ -928,11 +965,6 @@ function wireFindbar(): void {
   document.getElementById('find-prev')?.addEventListener('click', () => doFind(false))
   document.getElementById('find-next')?.addEventListener('click', () => doFind(true))
   document.getElementById('find-close')?.addEventListener('click', closeFind)
-  webview.addEventListener('found-in-page', (event) => {
-    const result = event.result
-    if (!result.finalUpdate || !findCount) return
-    findCount.textContent = result.matches === 0 ? '0' : `${result.activeMatchOrdinal}/${result.matches}`
-  })
 }
 
 // ---------- Оверлей ошибки сети ----------
@@ -948,8 +980,10 @@ function hideError(): void {
 
 function wireErrorOverlay(): void {
   document.getElementById('error-retry')?.addEventListener('click', () => {
+    const view = activeView()
+    if (!view) return
     hideError()
-    webview.reload()
+    view.reload()
   })
 }
 
@@ -1083,7 +1117,7 @@ async function clearSessionAndLogout(): Promise<void> {
   try {
     await window.shell.clearSession()
     closeSettings()
-    webview.reload()
+    activeView()?.reload()
     setStatus('сессия очищена')
   } catch (err) {
     console.warn('[shell] failed to clear session:', err)
@@ -1304,16 +1338,20 @@ async function refreshStoragePanel(): Promise<void> {
       parts.push(`куки: ошибка (${errText(reason)})`)
       renderCookies([])
     }
-    try {
-      const estimate = (await guestJS<{ usage: number } | null>(
-        'storage-estimate',
-        'navigator.storage && navigator.storage.estimate ' +
-          '? navigator.storage.estimate().then((e) => ({ usage: e.usage ?? 0 })).catch(() => null) ' +
-          ': Promise.resolve(null)',
-      ))
-      if (estimate) parts.push(`данные сайта: ${formatSize(estimate.usage)}`)
-    } catch {
-      // страница не готова — показываем без данных сайта
+    const tab = activeTab()
+    if (tab) {
+      try {
+        const estimate = (await guestJS<{ usage: number } | null>(
+          tab,
+          'storage-estimate',
+          'navigator.storage && navigator.storage.estimate ' +
+            '? navigator.storage.estimate().then((e) => ({ usage: e.usage ?? 0 })).catch(() => null) ' +
+            ': Promise.resolve(null)',
+        ))
+        if (estimate) parts.push(`данные сайта: ${formatSize(estimate.usage)}`)
+      } catch {
+        // страница не готова — показываем без данных сайта
+      }
     }
     if (setStorageUsage) setStorageUsage.textContent = parts.join(' · ')
   } catch (err) {
@@ -1337,7 +1375,7 @@ async function clearStorageTarget(target: 'cache' | 'cookies'): Promise<void> {
   }
   try {
     await window.shell.clearStorage(target)
-    if (target === 'cookies') webview.reload()
+    if (target === 'cookies') activeView()?.reload()
     await refreshStoragePanel()
     setStatus(target === 'cache' ? 'кэш очищен' : 'куки очищены')
   } catch (err) {
@@ -1485,8 +1523,11 @@ function closeAccounts(): void {
 
 /** Есть ли на странице видимое поле пароля (форма входа)? */
 async function hasLoginForm(): Promise<boolean> {
+  const tab = activeTab()
+  if (!tab) return false
   try {
     const found = await guestJS<unknown>(
+      tab,
       'login-form',
       '!!document.querySelector(\'input[type="password"]:not([disabled])\')',
     )
@@ -1546,8 +1587,10 @@ async function fillLogin(accountId: string): Promise<void> {
     'return "ok";})(' +
     payload +
     ')'
+  const tab = activeTab()
+  if (!tab) return
   try {
-    await guestJS<unknown>('fill-login', script)
+    await guestJS<unknown>(tab, 'fill-login', script)
     setStatus('вход…')
   } catch (err) {
     console.warn('[shell] autofill failed:', err)
@@ -1824,13 +1867,19 @@ function isExternalProtocol(url: string): boolean {
 
 async function handleShortcut(name: string): Promise<void> {
   switch (name as ShortcutName) {
-    case 'reload':
-      webview.reload()
+    case 'reload': {
+      const view = activeView()
+      if (view) view.reload()
       break
-    case 'hard-reload':
-      webview.reloadIgnoringCache()
-      setStatus('перезагрузка мимо кэша')
+    }
+    case 'hard-reload': {
+      const view = activeView()
+      if (view) {
+        view.reloadIgnoringCache()
+        setStatus('перезагрузка мимо кэша')
+      }
       break
+    }
     case 'focus-address':
       addressInput?.focus()
       addressInput?.select()
@@ -1841,12 +1890,16 @@ async function handleShortcut(name: string): Promise<void> {
     case 'templates':
       void openTemplates()
       break
-    case 'back':
-      webview.goBack()
+    case 'back': {
+      const view = activeView()
+      if (view) view.goBack()
       break
-    case 'forward':
-      webview.goForward()
+    }
+    case 'forward': {
+      const view = activeView()
+      if (view) view.goForward()
       break
+    }
     case 'fullscreen':
       try {
         isFullscreen = await window.shell.setFullscreen()
@@ -1856,7 +1909,8 @@ async function handleShortcut(name: string): Promise<void> {
       break
     case 'print':
       try {
-        await webview.print()
+        const view = activeView()
+        if (view) await view.print()
       } catch (err) {
         console.warn('[shell] print failed:', err)
         setStatus('печать не удалась')
@@ -1935,13 +1989,12 @@ function shortcutFromEvent(event: KeyboardEvent): ShortcutName | null {
 
 /** Скриншот активной вкладки: файл + история в main, тост с кнопкой «Копировать» здесь */
 async function captureActiveTabScreenshot(): Promise<void> {
-  let guestId = 0
-  try {
-    guestId = webview.getWebContentsId()
-  } catch {
+  const view = activeView()
+  if (!view) {
     setStatus('нет активной вкладки')
     return
   }
+  const guestId = view.getWebContentsId()
   try {
     showScreenshotToast(await window.shell.captureScreenshot(guestId))
   } catch {
@@ -1981,15 +2034,24 @@ function wireShortcuts(): void {
 }
 
 function wireToolbar(): void {
-  document.getElementById('btn-back')?.addEventListener('click', () => webview.goBack())
-  document.getElementById('btn-forward')?.addEventListener('click', () => webview.goForward())
+  document.getElementById('btn-back')?.addEventListener('click', () => {
+    const view = activeView()
+    if (view) view.goBack()
+  })
+  document.getElementById('btn-forward')?.addEventListener('click', () => {
+    const view = activeView()
+    if (view) view.goForward()
+  })
   document.getElementById('btn-home')?.addEventListener('click', () => {
     if (config) void navigate(config.startUrl)
   })
   document.getElementById('btn-mvideo')?.addEventListener('click', () => {
     void navigate('https://www.mvideo.ru/')
   })
-  document.getElementById('btn-reload')?.addEventListener('click', () => webview.reload())
+  document.getElementById('btn-reload')?.addEventListener('click', () => {
+    const view = activeView()
+    if (view) view.reload()
+  })
   document.getElementById('btn-barcode')?.addEventListener('click', () => {
     void navigate('https://monutor.github.io/warehouse-barcode-generator/')
   })
@@ -2012,8 +2074,10 @@ function wireToolbar(): void {
   document.getElementById('btn-close')?.addEventListener('click', () => window.shell.windowClose())
 
   document.getElementById('btn-scans')?.addEventListener('click', async () => {
+    const tab = activeTab()
+    if (!tab) return
     try {
-      await guestJS<void>('scans-open', '(function(){try{window.dispatchEvent(new CustomEvent("scans-block:open"))}catch(e){}})()')
+      await guestJS<void>(tab, 'scans-open', '(function(){try{window.dispatchEvent(new CustomEvent("scans-block:open"))}catch(e){}})()')
     } catch (err) {
       console.warn('[shell] failed to open scans block:', err)
     }
@@ -2023,71 +2087,95 @@ function wireToolbar(): void {
   window.addEventListener('keydown', (event: KeyboardEvent) => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'i' && config?.debug) {
       event.preventDefault()
-      webview.openDevTools()
+      const view = activeView()
+      if (view) view.openDevTools()
     }
   })
 }
 
-// Последний разрешённый URL — точка возврата при срабатывании allowlist.
-// (preventDefault() в will-navigate у webview не работает, поэтому запрещённую
-// навигацию откатываем обратно через loadURL.)
-let lastAllowedUrl = ''
-
-function wireWebviewEvents(): void {
-  webview.addEventListener('dom-ready', () => {
+// События конкретной вкладки. UI трогаем только у активной, инъекция плагинов — у всех.
+function wireTabEvents(tab: ShellTab): void {
+  const view = tab.view
+  view.addEventListener('dom-ready', () => {
     // Привязка гостевого webContents для перехвата хоткеев внутри страницы
     try {
-      window.shell.attachGuest(webview.getWebContentsId())
+      window.shell.attachGuest(view.getWebContentsId())
     } catch (err) {
       console.warn('[shell] guest attach failed:', err)
     }
   })
-  webview.addEventListener('did-navigate', (event) => {
+  view.addEventListener('page-title-updated', (event) => {
+    setTabTitle(tab, event.title)
+  })
+  view.addEventListener('did-navigate', (event) => {
     console.log('[shell] did-navigate:', event.url)
     if (isAllowed(event.url)) {
-      lastAllowedUrl = event.url
-      updateAddressBar()
-      applyZoomForCurrentPage()
-      updateActiveTab()
+      setTabUrl(tab, event.url)
+      if (isActiveTab(tab)) {
+        updateAddressBar()
+        applyZoomForCurrentPage()
+        updateActiveTab()
+      }
     } else {
       // Показываем заблокированный хост — так проще дополнять allowlist
-      setStatus(`blocked: ${hostOf(event.url) || event.url}`)
-      void webview.loadURL(lastAllowedUrl).catch((err) => console.warn('[shell] bounce-back failed:', err))
+      if (isActiveTab(tab)) setStatus(`blocked: ${hostOf(event.url) || event.url}`)
+      void view.loadURL(tab.lastAllowedUrl).catch((err) => console.warn('[shell] bounce-back failed:', err))
     }
   })
-  webview.addEventListener('did-navigate-in-page', updateAddressBar)
-  webview.addEventListener('did-finish-load', () => {
-    void injectPlugins()
+  view.addEventListener('did-navigate-in-page', (event) => {
+    setTabUrl(tab, event.url)
+    if (isActiveTab(tab)) updateAddressBar()
+  })
+  view.addEventListener('did-finish-load', () => {
+    void injectPlugins(tab)
+    try {
+      setTabTitle(tab, view.getTitle())
+    } catch {
+      // заголовок недоступен — останется хост
+    }
     // Появилась форма входа? Предлагаем выбрать аккаунт (с паузой —
     // SPA достраивает форму уже после события загрузки)
-    setTimeout(() => void checkLoginForm(false), 1200)
+    if (isActiveTab(tab)) setTimeout(() => void checkLoginForm(false), 1200)
   })
-  webview.addEventListener('did-fail-load', (event) => {
+  view.addEventListener('did-fail-load', (event) => {
     if (!event.isMainFrame) return
     // -3 (ERR_ABORTED) — прерванная загрузка, например откат allowlist; не ошибка
     if (event.errorCode === -3) return
     // Ссылки на внешние приложения (mailto:, tel:) — открываем снаружи
     if (isExternalProtocol(event.url)) {
-      setStatus('открыто во внешнем приложении')
+      if (isActiveTab(tab)) setStatus('открыто во внешнем приложении')
       void window.shell.openExternal(event.url)
       return
     }
     console.error('[shell] did-fail-load:', event.errorCode, event.errorDescription)
+    if (!isActiveTab(tab)) return
     setStatus(`fail: ${event.errorDescription}`)
     showError(`${event.errorDescription} (код ${event.errorCode})`)
   })
-  webview.addEventListener('did-start-loading', () => {
+  view.addEventListener('did-start-loading', () => {
+    if (!isActiveTab(tab)) return
     hideError()
     loginPrompted = false
     toolbar?.classList.add('loading')
   })
-  webview.addEventListener('did-stop-loading', () => toolbar?.classList.remove('loading'))
+  view.addEventListener('did-stop-loading', () => {
+    if (!isActiveTab(tab)) return
+    toolbar?.classList.remove('loading')
+  })
+  view.addEventListener('found-in-page', (event) => {
+    if (!isActiveTab(tab)) return
+    const result = event.result
+    if (!result.finalUpdate || !findCount) return
+    findCount.textContent = result.matches === 0 ? '0' : `${result.activeMatchOrdinal}/${result.matches}`
+  })
 }
 
 function startStatusPolling(): void {
   setInterval(async () => {
+    const tab = activeTab()
+    if (!tab) return
     try {
-      const count = await guestJS<unknown>('datalog-count', '(window.__sewDataLog || []).length')
+      const count = await guestJS<unknown>(tab, 'datalog-count', '(window.__sewDataLog || []).length')
       setStatus(config?.debug ? `req: ${count} · debug` : `req: ${count}`, false)
     } catch {
       // страница ещё не готова — игнорируем
@@ -2320,8 +2408,11 @@ function closeTemplates(): void {
 
 /** Применить шаблон к открытой форме SEW — через onMessage-подписку content-скрипта */
 async function applyTemplateFromShell(id: string): Promise<void> {
+  const tab = activeTab()
+  if (!tab) return
   try {
     const delivered = await guestJS<boolean>(
+      tab,
       'apply-template',
       `typeof window.__chromeShimReceive === 'function'` +
         ` ? (window.__chromeShimReceive({action:'applyTemplate',templateId:${JSON.stringify(id)}}), true)` +
@@ -2447,18 +2538,19 @@ async function saveTabs(tabs: NavTab[]): Promise<void> {
 
 function currentViewUrl(): string {
   try {
-    return webview.getURL() ?? ''
+    return activeView()?.getURL() ?? ''
   } catch {
     return ''
   }
 }
 
-// Лента вкладок во второй строке тулбара. Всегда видима (даже при пустом
-// списке), иначе кнопки +/⋮ внутри скрытой ленты недостижимы, а в тулбаре
-// отдельной кнопки не было — на чистой установке вкладки нельзя было создать.
-// При отсутствии папок — плоская лента (обратная совместимость); при наличии
-// вкладки без папки отображаются плоскими строками, а по реальным папкам строятся
-// группы, раскрытие которых показывает список вкладок выпадающим блоком под лентой.
+// Лента ссылок в третьей строке оболочки (под полосой вкладок и тулбаром).
+// Всегда видима (даже при пустом списке), иначе кнопки +/⋮ внутри скрытой
+// ленты недостижимы, а в тулбаре отдельной кнопки не было — на чистой
+// установке вкладки нельзя было создать. При отсутствии папок — плоская лента
+// (обратная совместимость); при наличии вкладки без папки отображаются плоскими
+// строками, а по реальным папкам строятся группы, раскрытие которых показывает
+// список вкладок выпадающим блоком под лентой.
 function renderStrip(): void {
   if (!tabstrip || !tabsEl || !config) return
   tabstrip.hidden = false
@@ -3204,7 +3296,25 @@ async function init(): Promise<void> {
   wireFolderPasswordPrompt()
   wireUpdater()
   wireOverlayDismiss()
-  wireWebviewEvents()
+  initTabs({
+    container: document.getElementById('tab-views') as HTMLElement,
+    strip: document.getElementById('tabbar-strip') as HTMLElement,
+    newTabButton: document.getElementById('tabbar-new') as HTMLButtonElement,
+    startUrl: config.startUrl,
+    hooks: {
+      wire: (tab) => {
+        wireTabEvents(tab)
+      },
+      onActivated: () => {
+        updateAddressBar()
+        applyZoomForCurrentPage()
+        updateActiveTab()
+      },
+      onClosed: () => {
+        refreshTabBar()
+      },
+    },
+  })
   startStatusPolling()
   startSewHelperBridge()
   startScansBridge()
@@ -3215,23 +3325,19 @@ async function init(): Promise<void> {
   // Живые обновления папки сканов: main шлёт 'scans:changed' при каждом изменении —
   // форвардим список в гостя событием 'scans-block:update' (блок перерисуется сам).
   window.shell.onScansChanged((files) => {
-    void guestJS<void>(
-      'scans-push',
-      '(function(list){try{window.dispatchEvent(new CustomEvent("scans-block:update",{detail:list}))}catch(e){}})(' +
-        JSON.stringify(files ?? []) +
-        ')',
-    ).catch(() => {
-      // страница не готова — гость подтянет список сам через bridgeSend('list')
-    })
+    const payload = JSON.stringify(files ?? [])
+    for (const tab of listTabs()) {
+      void guestJS<void>(tab, 'scans-push', '(function(list){try{window.dispatchEvent(new CustomEvent("scans-block:update",{detail:list}))}catch(e){}})(' + payload + ')').catch(() => {})
+    }
   })
   // Клик по OS-уведомлению tasks-notify: main прислал URL — переходим в гесте
   // (относительный путь резолвим против текущего URL, иначе allowlist режет)
   window.shell.onTasksOpen?.((url) => { void navigate(resolveTasksUrl(url)) })
 
   if (addressInput) addressInput.value = config.startUrl
-  lastAllowedUrl = config.startUrl
-  // Стартовую навигацию задаём атрибутом src — срабатывает даже до attach webview
-  webview.setAttribute('src', config.startUrl)
+  // Стартовую навигацию отдаём менеджеру вкладок: он создаёт webview, вешает
+  // обработчики (hooks.wire) и только потом ставит src.
+  openTab(config.startUrl, { activate: true })
   renderStrip()
   setStatus(config.debug ? 'debug' : '')
 }

@@ -68,8 +68,13 @@ export function activeView(): SewWebViewElement | null {
   return tab ? tab.view : null
 }
 
-export function primaryView(): SewWebViewElement | null {
+export function primaryTab(): ShellTab | null {
   const first = tabs[0]
+  return first ?? null
+}
+
+export function primaryView(): SewWebViewElement | null {
+  const first = primaryTab()
   return first ? first.view : null
 }
 
