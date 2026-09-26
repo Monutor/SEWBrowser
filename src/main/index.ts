@@ -80,6 +80,12 @@ function alertTtlSec(): number {
   return Number.isFinite(n) && n >= 0 ? n : TN_ALERT_TTL_DEFAULT_SEC
 }
 
+/** Просит оболочку открыть URL в новой вкладке. */
+function openUrlInNewTab(url: string): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  mainWindow.webContents.send('shell:open-new-tab', url)
+}
+
 /**
  * Санитизация имени файла от remote-источника (getFilename, title PDF):
  * basename против `../`, вырезать запрещённое в Windows, точки/пробелы по краям,
@@ -865,7 +871,7 @@ function createWindow(): void {
     })
 
     // Попапы и window.open (тег webview имеет атрибут allowpopups):
-    // разрешённое — в том же окне, остальное — в системный браузер.
+    // разрешённое — в новой вкладке оболочки, остальное — в системный браузер.
     // blob:/data: — сгенерированные страницей файлы («скачать документ» в SPA):
     // will-download их не видит, скачиваем вручную через downloadGuestUrl.
     guest.setWindowOpenHandler(({ url }) => {
@@ -884,9 +890,7 @@ function createWindow(): void {
         return { action: 'deny' }
       }
       if (isAllowedUrl(target)) {
-        if (!guest.isDestroyed()) {
-          void guest.loadURL(target).catch((err) => console.warn('[shell] popup nav failed:', err))
-        }
+        openUrlInNewTab(target)
       } else {
         void shell.openExternal(target)
       }
@@ -910,6 +914,12 @@ function createWindow(): void {
               } else if (EXTERNAL_SCHEME_RE.test(link)) {
                 void shell.openExternal(link)
               }
+            },
+          },
+          {
+            label: 'Открыть ссылку в новой вкладке',
+            click: () => {
+              if (/^https?:/i.test(link) && isAllowedUrl(link)) openUrlInNewTab(link)
             },
           },
           {

@@ -3364,6 +3364,10 @@ async function init(): Promise<void> {
   // Клик по OS-уведомлению tasks-notify: main прислал URL — переходим в гесте
   // (относительный путь резолвим против текущего URL, иначе allowlist режет)
   window.shell.onTasksOpen?.((url) => { void navigate(resolveTasksUrl(url)) })
+  // window.open / target=_blank из гостя: открываем отдельной вкладкой справа
+  window.shell.onOpenNewTab((url) => {
+    openTab(url)
+  })
 
   if (addressInput) addressInput.value = config.startUrl
   // Стартовую навигацию отдаём менеджеру вкладок: он создаёт webview, вешает
