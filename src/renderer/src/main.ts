@@ -389,6 +389,14 @@ async function injectPlugins(tab: ShellTab): Promise<void> {
   // Снапшот данных плагинов в страницу (читает шим вместо IPC — см. комментарий
   // к CHROME_SHIM). Пушим до кода плагинов, чтобы первые чтения видели данные.
   await pushPluginStores()
+  // Хост опроса: только первая вкладка забирает очередь заданий (tasks-notify),
+  // иначе при N вкладках придёт N одинаковых уведомлений. Ставим ДО кода
+  // плагинов — tasks-notify читает флаг на старте (__tnInit).
+  try {
+    await guestJS<void>(tab, 'poll-host', `window.__shellPollHost = ${tab.isPrimary ? 'true' : 'false'};`)
+  } catch (err) {
+    console.warn('[plugins] poll host flag failed:', err)
+  }
   for (const plugin of plugins) {
     try {
       if (plugin.styles) {
@@ -526,70 +534,77 @@ function startSewHelperBridge(): void {
 async function pumpSewHelperBff(): Promise<boolean> {
   try {
     if (!plugins.some((p) => p.name === 'sew-helper')) return false
-    const tab = primaryTab()
-    if (!tab) return false
-    // Гостевая часть — полностью неубиваемая (вложенные try/catch): reject
-    // executeJavaScript Electron всегда дублирует внутренним логом
-    // "GUEST_VIEW_MANAGER_CALL: ...", поэтому гость не должен кидать
-    // в принципе.
-    // take возвращает JSON-СТРОКУ (structured clone результата падает на
-    // объектах только в экзотике, строка — всегда безопасна). КРИТИЧНО:
-    // IIFE обязана заканчиваться `()()` — голая `(function(){...})` без вызова
-    // возвращает сам объект функции, а он неклонируем:
-    // "GUEST_VIEW_MANAGER_CALL: An object could not be cloned" (ловушка 17).
-    const rawTake = await guestJS<string>(
-      tab,
-      'bff-take',
-      '(function(){try{var q=window.__sewHelperBffReq;if(!Array.isArray(q))return "[]";' +
-        'try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})()',
-    ).catch((err) => {
-      // take возвращает строку во всех ветках — клон здесь ни при чём.
-      // Фиксируем состояние ГЕСТА (синхронные хост-вызовы, без клона),
-      // чтобы понять, в какой момент падает invoke. Однократно.
-      if (!bffTakeDiagged) {
-        bffTakeDiagged = true
+    // Обходим ВСЕ вкладки: BFF-запрос может прийти из любой, а в госте у него
+    // 30-секундный таймаут ожидания ответа — не опросим вкладку, она зависнет.
+    // hadWork: был ли хоть один запрос — по нему адаптивный таймер держит 500мс.
+    let hadWork = false
+    for (const tab of listTabs()) {
+      // Гостевая часть — полностью неубиваемая (вложенные try/catch): reject
+      // executeJavaScript Electron всегда дублирует внутренним логом
+      // "GUEST_VIEW_MANAGER_CALL: ...", поэтому гость не должен кидать
+      // в принципе.
+      // take возвращает JSON-СТРОКУ (structured clone результата падает на
+      // объектах только в экзотике, строка — всегда безопасна). КРИТИЧНО:
+      // IIFE обязана заканчиваться `()()` — голая `(function(){...})` без вызова
+      // возвращает сам объект функции, а он неклонируем:
+      // "GUEST_VIEW_MANAGER_CALL: An object could not be cloned" (ловушка 17).
+      let rawTake: string
+      try {
+        rawTake = await guestJS<string>(
+          tab,
+          'bff-take',
+          '(function(){try{var q=window.__sewHelperBffReq;if(!Array.isArray(q))return "[]";' +
+            'try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})()',
+        )
+      } catch (err) {
+        // take возвращает строку во всех ветках — клон здесь ни при чём.
+        // Фиксируем состояние ГЕСТА (синхронные хост-вызовы, без клона),
+        // чтобы понять, в какой момент падает invoke. Однократно.
+        if (!bffTakeDiagged) {
+          bffTakeDiagged = true
+          try {
+            console.warn(
+              `[guestjs:bff-take] guest state: url=${tab.view.getURL()} loading=${tab.view.isLoading()} crashed=${tab.view.isCrashed()}`,
+            )
+          } catch {
+            // ignore
+          }
+        }
+        continue
+      }
+      let reqs: Array<{ id: string; url: string }> = []
+      try {
+        const parsed: unknown = JSON.parse(typeof rawTake === 'string' ? rawTake : '[]')
+        if (Array.isArray(parsed)) reqs = parsed as Array<{ id: string; url: string }>
+      } catch {
+        reqs = []
+      }
+      for (const req of reqs) {
+        if (!req || typeof req.id !== 'string' || typeof req.url !== 'string') continue
+        hadWork = true
+        let res: { ok: boolean; status: number; data: unknown }
         try {
-          console.warn(
-            `[guestjs:bff-take] guest state: url=${tab.view.getURL()} loading=${tab.view.isLoading()} crashed=${tab.view.isCrashed()}`,
+          res = await window.shell.netFetch(req.url)
+        } catch {
+          res = { ok: false, status: 0, data: null }
+        }
+        try {
+          await guestJS<boolean>(
+            tab,
+            'bff-write',
+            '(function(id,payload){try{(window.__sewHelperBffRes = window.__sewHelperBffRes || {})[id]=payload;return true}catch(e){return false}})' +
+              '(' +
+              JSON.stringify(req.id) +
+              ',' +
+              JSON.stringify(res ?? { ok: false, status: 0, data: null }) +
+              ')',
           )
         } catch {
-          // ignore
+          // вкладка могла закрыться между опросом и ответом — гость повторит запрос сам (retry)
         }
       }
-      throw err
-    })
-    let reqs: Array<{ id: string; url: string }> = []
-    try {
-      const parsed: unknown = JSON.parse(typeof rawTake === 'string' ? rawTake : '[]')
-      if (Array.isArray(parsed)) reqs = parsed as Array<{ id: string; url: string }>
-    } catch {
-      reqs = []
     }
-    if (!Array.isArray(reqs) || reqs.length === 0) return false
-    for (const req of reqs) {
-      if (!req || typeof req.id !== 'string' || typeof req.url !== 'string') continue
-      let res: { ok: boolean; status: number; data: unknown }
-      try {
-        res = await window.shell.netFetch(req.url)
-      } catch {
-        res = { ok: false, status: 0, data: null }
-      }
-      try {
-        await guestJS<boolean>(
-          tab,
-          'bff-write',
-          '(function(id,payload){try{(window.__sewHelperBffRes = window.__sewHelperBffRes || {})[id]=payload;return true}catch(e){return false}})' +
-            '(' +
-            JSON.stringify(req.id) +
-            ',' +
-            JSON.stringify(res ?? { ok: false, status: 0, data: null }) +
-            ')',
-        )
-      } catch {
-        // страница ушла между опросом и ответом — гость повторит запрос сам (retry)
-      }
-    }
-    return true
+    return hadWork
   } catch {
     // webview не готов — молча ждём следующего тика
     return false
@@ -639,83 +654,89 @@ function startScansBridge(): void {
 async function pumpScansBridge(): Promise<boolean> {
   try {
     if (!plugins.some((p) => p.name === 'scans-block')) return false
-    const tab = primaryTab()
-    if (!tab) return false
-    const rawTake = await guestJS<string>(
-      tab,
-      'scans-take',
-      '(function(){try{var q=window.__sewScansReq;if(!Array.isArray(q))return "[]";' +
-        'try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})()',
-    ).catch((err) => {
-      if (!scansTakeDiagged) {
-        scansTakeDiagged = true
+    // Как и BFF-мост: запрос «Сканы» может прийти из любой вкладки, а ответ
+    // ждёт в госте с таймаутом — обходим все вкладки подряд.
+    let hadWork = false
+    for (const tab of listTabs()) {
+      let rawTake: string
+      try {
+        rawTake = await guestJS<string>(
+          tab,
+          'scans-take',
+          '(function(){try{var q=window.__sewScansReq;if(!Array.isArray(q))return "[]";' +
+            'try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})()',
+        )
+      } catch (err) {
+        if (!scansTakeDiagged) {
+          scansTakeDiagged = true
+          try {
+            console.warn(
+              `[guestjs:scans-take] guest state: url=${tab.view.getURL()} loading=${tab.view.isLoading()} crashed=${tab.view.isCrashed()}`,
+            )
+          } catch {
+            // ignore
+          }
+        }
+        continue
+      }
+      let reqs: Array<{ id: string; type: string; payload?: unknown }> = []
+      try {
+        const parsed: unknown = JSON.parse(typeof rawTake === 'string' ? rawTake : '[]')
+        if (Array.isArray(parsed)) reqs = parsed as Array<{ id: string; type: string; payload?: unknown }>
+      } catch {
+        reqs = []
+      }
+      for (const req of reqs) {
+        if (!req || typeof req.id !== 'string' || typeof req.type !== 'string') continue
+        hadWork = true
+        let result: unknown
         try {
-          console.warn(
-            `[guestjs:scans-take] guest state: url=${tab.view.getURL()} loading=${tab.view.isLoading()} crashed=${tab.view.isCrashed()}`,
+          switch (req.type) {
+            case 'list':
+              result = await window.shell.listScans()
+              break
+            case 'read':
+              result = typeof req.payload === 'string' ? await window.shell.readScanFile(req.payload) : null
+              break
+            case 'launch':
+              result = await window.shell.launchScannerApp()
+              break
+            case 'pick':
+              result = await window.shell.pickScanFile()
+              break
+            case 'open':
+              result = typeof req.payload === 'string' ? await window.shell.openScanFile(req.payload) : false
+              break
+            case 'show':
+              result = typeof req.payload === 'string' ? await window.shell.showScanInFolder(req.payload) : false
+              break
+            case 'delete':
+              result = typeof req.payload === 'string' ? await window.shell.deleteScan(req.payload) : []
+              break
+            default:
+              result = { ok: false, error: 'unknown type' }
+          }
+        } catch (err) {
+          console.warn(`[scans-bridge] ${req.type} failed:`, err)
+          result = { ok: false, error: String((err as Error)?.message ?? err) }
+        }
+        try {
+          await guestJS<boolean>(
+            tab,
+            'scans-write',
+            '(function(id,payload){try{(window.__sewScansRes = window.__sewScansRes || {})[id]=payload;return true}catch(e){return false}})' +
+              '(' +
+              JSON.stringify(req.id) +
+              ',' +
+              JSON.stringify(result ?? null) +
+              ')',
           )
         } catch {
-          // ignore
+          // вкладка могла закрыться между опросом и ответом — гость повторит запрос сам
         }
       }
-      throw err
-    })
-    let reqs: Array<{ id: string; type: string; payload?: unknown }> = []
-    try {
-      const parsed: unknown = JSON.parse(typeof rawTake === 'string' ? rawTake : '[]')
-      if (Array.isArray(parsed)) reqs = parsed as Array<{ id: string; type: string; payload?: unknown }>
-    } catch {
-      reqs = []
     }
-    if (!Array.isArray(reqs) || reqs.length === 0) return false
-    for (const req of reqs) {
-      if (!req || typeof req.id !== 'string' || typeof req.type !== 'string') continue
-      let result: unknown
-      try {
-        switch (req.type) {
-          case 'list':
-            result = await window.shell.listScans()
-            break
-          case 'read':
-            result = typeof req.payload === 'string' ? await window.shell.readScanFile(req.payload) : null
-            break
-          case 'launch':
-            result = await window.shell.launchScannerApp()
-            break
-          case 'pick':
-            result = await window.shell.pickScanFile()
-            break
-          case 'open':
-            result = typeof req.payload === 'string' ? await window.shell.openScanFile(req.payload) : false
-            break
-          case 'show':
-            result = typeof req.payload === 'string' ? await window.shell.showScanInFolder(req.payload) : false
-            break
-          case 'delete':
-            result = typeof req.payload === 'string' ? await window.shell.deleteScan(req.payload) : []
-            break
-          default:
-            result = { ok: false, error: 'unknown type' }
-        }
-      } catch (err) {
-        console.warn(`[scans-bridge] ${req.type} failed:`, err)
-        result = { ok: false, error: String((err as Error)?.message ?? err) }
-      }
-      try {
-        await guestJS<boolean>(
-          tab,
-          'scans-write',
-          '(function(id,payload){try{(window.__sewScansRes = window.__sewScansRes || {})[id]=payload;return true}catch(e){return false}})' +
-            '(' +
-            JSON.stringify(req.id) +
-            ',' +
-            JSON.stringify(result ?? null) +
-            ')',
-        )
-      } catch {
-        // страница ушла между опросом и ответом — гость повторит запрос сам
-      }
-    }
-    return true
+    return hadWork
   } catch {
     // webview не готов — молча ждём следующего тика
     return false
@@ -1646,6 +1667,7 @@ async function hasLoginForm(): Promise<boolean> {
 }
 
 async function checkLoginForm(manual: boolean): Promise<void> {
+  if (!activeTab()) return
   if (accountsOpen) return
   if (!manual && loginPrompted) return
   if (!(await hasLoginForm())) return

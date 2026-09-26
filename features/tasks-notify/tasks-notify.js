@@ -167,6 +167,9 @@ function __tnTick() {
 
 (function __tnInit() {
   try {
+    // Не хост-вкладка: оболочка опрашивает задания только из первой вкладки,
+    // здесь молчим — иначе N вкладок = N одинаковых уведомлений.
+    if (window.__shellPollHost === false) return;
     __tnHookAuth();
     window.__tasksNotifyReq = window.__tasksNotifyReq || [];
     window.__tasksNotifyState = window.__tasksNotifyState || { lastTick: '', lastCount: 0, lastError: '' };
