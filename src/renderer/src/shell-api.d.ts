@@ -41,6 +41,9 @@ interface PrintOptionsLike {
   landscape?: boolean
   /** Имя размера бумаги или свой размер; объект — в МИКРОНАХ (только у принтера) */
   pageSize?: PrintPaperName | { width: number; height: number }
+  /** Взять размер бумаги по умолчанию у принтера. Взаимоисключающе с pageSize,
+   *  по умолчанию false: без pageSize И без этого флага Electron бросает ошибку. */
+  usePrinterDefaultPageSize?: boolean
   copies?: number
   /** Масштаб 0.1..2 (у printToPDF это scale). Настройка хранится в процентах, здесь доля */
   scaleFactor?: number

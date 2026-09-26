@@ -2,10 +2,13 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  PRINT_PAPER_NAMES,
   bytesToBase64,
   mmToInches,
+  mmToPixels,
   normalizePrintSettings,
   printMarginsInches,
+  printMarginsPx,
   printOptions,
   printPageRangesFor,
   printToPdfOptions,
@@ -117,6 +120,31 @@ describe('mmToInches', () => {
   })
 })
 
+describe('mmToPixels', () => {
+  it('переводит миллиметры в пиксели при 96 dpi', () => {
+    assert.equal(mmToPixels(25.4), 96)
+    assert.equal(mmToPixels(20), 76)
+    assert.equal(mmToPixels(10), 38)
+  })
+
+  it('на 0 мм и на мусоре отдаёт 0', () => {
+    assert.equal(mmToPixels(0), 0)
+    assert.equal(mmToPixels(NaN), 0)
+  })
+})
+
+describe('printMarginsPx', () => {
+  it('отдаёт все четыре стороны в пикселях с marginType custom', () => {
+    assert.deepEqual(printMarginsPx(base), {
+      marginType: 'custom',
+      top: 76,
+      bottom: 76,
+      left: 38,
+      right: 38,
+    })
+  })
+})
+
 describe('printMarginsInches', () => {
   it('переводит все четыре поля', () => {
     assert.deepEqual(printMarginsInches(base), {
@@ -160,9 +188,21 @@ describe('printPageRangesFor', () => {
     assert.deepEqual(printPageRangesFor(s, 1, 1), [{ from: 0, to: 0 }])
   })
 
+  it('при from > to отдаёт диапазон из одной страницы', () => {
+    const s = normalizePrintSettings({ rangeMode: 'custom', rangeFrom: 5, rangeTo: 2 })
+    assert.deepEqual(printPageRangesFor(s, 10, 1), [{ from: 4, to: 4 }])
+  })
+
   it('при пустом числе страниц диапазона нет', () => {
     const s = normalizePrintSettings({ rangeMode: 'custom', rangeFrom: 1, rangeTo: 2 })
     assert.deepEqual(printPageRangesFor(s, 0, 1), [])
+  })
+
+  it('нецелое число страниц округляет вниз, индексы остаются целыми', () => {
+    const s = normalizePrintSettings({ rangeMode: 'current' })
+    assert.deepEqual(printPageRangesFor(s, 10.9, 99), [{ from: 9, to: 9 }])
+    const c = normalizePrintSettings({ rangeMode: 'custom', rangeFrom: 1, rangeTo: 99 })
+    assert.deepEqual(printPageRangesFor(c, 10.9, 1), [{ from: 0, to: 9 }])
   })
 })
 
@@ -181,18 +221,34 @@ describe('printOptions', () => {
     assert.equal(opts.printBackground, true)
     assert.equal(opts.pageSize, 'A4')
     assert.equal(opts.scaleFactor, 1)
+    // размер задан явно → флаг принтера взаимоисключающий и не выставляется
+    assert.equal(opts.usePrinterDefaultPageSize, undefined)
     // режим «все страницы» → диапазон пустой, поле не передаём
     assert.equal(opts.pageRanges, undefined)
     // webview.print ждёт поля в пикселях и только свои (marginType: 'custom')
     assert.deepEqual(opts.margins, { marginType: 'custom', top: 76, bottom: 76, left: 38, right: 38 })
-    // A6 принтер не понимает — поле размера не передаём вовсе
-    const a6 = printOptions(normalizePrintSettings({ pageSize: 'A6' }), 'HP LaserJet', 10, 1)
-    assert.equal('pageSize' in a6, false)
   })
 
   it('подставляет диапазон, когда он есть', () => {
     const opts = printOptions(normalizePrintSettings({ rangeMode: 'custom', rangeFrom: 1, rangeTo: 2 }), 'XPS', 5, 1)
     assert.deepEqual(opts.pageRanges, [{ from: 0, to: 1 }])
+  })
+
+  it('при размере, которого нет у принтера, просит размер принтера по умолчанию', () => {
+    // A6 в WebviewTagPrintOptions отсутствует. Молчать нельзя: по документации
+    // Electron при отсутствии валидного pageSize и usePrinterDefaultPageSize === false
+    // печать падает с ошибкой, поэтому флаг обязателен.
+    const opts = printOptions(normalizePrintSettings({ pageSize: 'A6' }), 'HP LaserJet', 10, 1)
+    assert.equal(opts.usePrinterDefaultPageSize, true)
+    assert.equal('pageSize' in opts, false)
+  })
+
+  it('каждый размер из PRINT_PAPER_NAMES доезжает до pageSize', () => {
+    for (const name of PRINT_PAPER_NAMES) {
+      const opts = printOptions(normalizePrintSettings({ pageSize: name }), 'HP LaserJet', 10, 1)
+      assert.equal(opts.pageSize, name)
+      assert.equal(opts.usePrinterDefaultPageSize, undefined)
+    }
   })
 })
 

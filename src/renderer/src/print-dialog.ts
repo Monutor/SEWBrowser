@@ -17,11 +17,12 @@ const DEFAULTS: PrintSettings = {
   displayHeaderFooter: false,
 }
 
-/** Все размеры бумаги, которые хранить можно: A6 понимает только printToPDF */
-const PAGE_SIZES: readonly PrintPageSizeName[] = ['A3', 'A4', 'A5', 'A6', 'Legal', 'Letter', 'Tabloid']
-
 /** Размеры бумаги, которые понимает webview.print: A6 в списке принтера отсутствует */
 export const PRINT_PAPER_NAMES: readonly PrintPaperName[] = ['A3', 'A4', 'A5', 'Legal', 'Letter', 'Tabloid']
+
+/** Все размеры бумаги, которые хранить можно: список принтера плюс A6,
+ *  который понимает только printToPDF. Список один — чтобы A6 не «потерялся» */
+const PAGE_SIZES: readonly PrintPageSizeName[] = [...PRINT_PAPER_NAMES, 'A6']
 
 /** Число ли значение по сути. Числа и числовые строки берём как есть, остальное
  *  (null, '', '  ', false, [], {}) — в NaN. Иначе Number() молча превратит мусор
@@ -118,7 +119,10 @@ export function printToPdfOptions(s: PrintSettings): PrintToPdfOptionsLike {
 
 function clampPage(n: number, pageCount: number): number {
   if (!Number.isFinite(n)) return 1
-  const max = Math.max(1, pageCount)
+  // pageCount округляем вниз: иначе при нецелом числе страниц (например, из-за
+  // дробной оценки вёрстки) индекс диапазона вышел бы нецелым и не прошёл бы
+  // structured clone в guest webContents
+  const max = Math.max(1, Math.floor(pageCount))
   return Math.min(Math.max(1, Math.floor(n)), max)
 }
 
@@ -160,9 +164,15 @@ export function printOptions(
     scaleFactor: s.scale / 100,
   }
   if (ranges.length) opts.pageRanges = ranges
-  // A6 принтер не понимает, а свой размер в микронах мы не храним — поле
-  // не передаём вовсе, принтер возьмёт свой размер по умолчанию
-  if (isPaperName(s.pageSize)) opts.pageSize = s.pageSize
+  if (isPaperName(s.pageSize)) {
+    opts.pageSize = s.pageSize
+  } else {
+    // A6 в списке WebviewTagPrintOptions отсутствует, а свой размер в микронах мы
+    // не храним. Молчать нельзя: по документации Electron, если валидный pageSize не
+    // передан и usePrinterDefaultPageSize === false, печать падает с ошибкой, поэтому
+    // флаг обязателен. Он взаимоисключающе с pageSize, поэтому ставим именно его.
+    opts.usePrinterDefaultPageSize = true
+  }
   return opts
 }
 
