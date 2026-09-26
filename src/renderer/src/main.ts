@@ -41,6 +41,7 @@ const setAllowlist = document.getElementById('set-allowlist') as HTMLTextAreaEle
 const setPlugins = document.getElementById('set-plugins') as HTMLElement | null
 const setTnObjectId = document.getElementById('set-tn-objectid') as HTMLInputElement | null
 const setTnInterval = document.getElementById('set-tn-interval') as HTMLInputElement | null
+const setTnAlertTtl = document.getElementById('set-tn-alert-ttl') as HTMLInputElement | null
 const setTnSound = document.getElementById('set-tn-sound') as HTMLInputElement | null
 const setTnSoundName = document.getElementById('set-tn-sound-name') as HTMLElement | null
 const setTnSoundHoName = document.getElementById('set-tn-sound-ho-name') as HTMLElement | null
@@ -727,6 +728,29 @@ function startTasksNotifyBridge(): void {
   setTimeout(tick, 5000)
 }
 
+/** Дефолт времени показа уведомлений tasks-notify, сек (0 = не скрывать) */
+const TN_ALERT_TTL_DEFAULT_SEC = 60
+
+/** Нормализация «Времени показа уведомлений»: 0 = не скрывать, пустое/мусор → дефолт */
+function normalizeTnAlertTtl(raw: unknown): number {
+  if (typeof raw === 'string' && !raw.trim()) return TN_ALERT_TTL_DEFAULT_SEC
+  const n = Math.floor(Number(raw))
+  return Number.isFinite(n) && n >= 0 ? n : TN_ALERT_TTL_DEFAULT_SEC
+}
+
+/**
+ * «Время показа уведомлений» из настроек плагина. Читается в момент показа,
+ * поэтому новое значение применяется без перезапуска гостя.
+ */
+async function readTnAlertTtl(): Promise<number> {
+  try {
+    const data = await window.shell.pluginDataGet('tasks-notify', ['settings'])
+    return normalizeTnAlertTtl((data.settings as { alertTtlSec?: unknown } | undefined)?.alertTtlSec)
+  } catch {
+    return TN_ALERT_TTL_DEFAULT_SEC
+  }
+}
+
 async function pumpTasksNotify(): Promise<boolean> {
   try {
     if (!plugins.some((p) => p.name === 'tasks-notify')) return false
@@ -769,7 +793,7 @@ async function pumpTasksNotify(): Promise<boolean> {
       void navigate(openUrl)
     }, allUrl ? () => {
       void navigate(allUrl)
-    } : undefined)
+    } : undefined, await readTnAlertTtl())
     return true
   } catch {
     return false
@@ -935,13 +959,14 @@ function wireErrorOverlay(): void {
 async function loadTnSettings(): Promise<void> {
   try {
     const data = await window.shell.pluginDataGet('tasks-notify', ['settings'])
-    const s = (data?.settings ?? {}) as { objectId?: unknown; intervalSec?: unknown; sound?: unknown; soundFile?: unknown; soundName?: unknown; soundFileHo?: unknown; soundNameHo?: unknown }
+    const s = (data?.settings ?? {}) as { objectId?: unknown; intervalSec?: unknown; alertTtlSec?: unknown; sound?: unknown; soundFile?: unknown; soundName?: unknown; soundFileHo?: unknown; soundNameHo?: unknown }
     if (setTnObjectId) setTnObjectId.value = typeof s.objectId === 'string' && s.objectId ? s.objectId : 'S187'
     if (setTnInterval) {
       setTnInterval.value = String(
         typeof s.intervalSec === 'number' && s.intervalSec >= 15 ? Math.floor(s.intervalSec) : 60,
       )
     }
+    if (setTnAlertTtl) setTnAlertTtl.value = String(normalizeTnAlertTtl(s.alertTtlSec))
     if (setTnSound) setTnSound.checked = s.sound !== false
     tnSoundFileRel = typeof s.soundFile === 'string' ? s.soundFile : ''
     tnSoundFileHo = typeof s.soundFileHo === 'string' ? s.soundFileHo : ''
@@ -1023,10 +1048,12 @@ async function saveSettings(): Promise<void> {
     // Пишем отдельно: их падение не отменяет уже сохранённый основной конфиг.
     try {
       const tnInterval = Math.floor(Number(setTnInterval?.value))
+      const tnAlertTtl = normalizeTnAlertTtl(setTnAlertTtl?.value)
       await window.shell.pluginDataSet('tasks-notify', {
         settings: {
           objectId: setTnObjectId?.value.trim() || 'S187',
           intervalSec: Number.isFinite(tnInterval) && tnInterval >= 15 ? tnInterval : 60,
+          alertTtlSec: tnAlertTtl,
           sound: setTnSound?.checked !== false,
           soundFile: tnSoundFileRel,
           soundName: setTnSoundName?.textContent ?? '',

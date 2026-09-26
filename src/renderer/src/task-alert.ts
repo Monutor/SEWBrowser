@@ -8,7 +8,7 @@ export interface TaskAlertElements {
 }
 
 export interface TaskAlertController {
-  show: (text: string, onOpen: () => void, onAll?: () => void) => void
+  show: (text: string, onOpen: () => void, onAll?: () => void, ttlSec?: number) => void
   close: () => void
 }
 
@@ -42,8 +42,17 @@ export function formatTaskAlertText(task: TaskAlertTask): string {
 export function createTaskAlert(elements: TaskAlertElements): TaskAlertController {
   let onOpen: (() => void) | null = null
   let onAll: (() => void) | null = null
+  let timer: ReturnType<typeof setTimeout> | null = null
+
+  const stopTimer = (): void => {
+    if (timer !== null) {
+      clearTimeout(timer)
+      timer = null
+    }
+  }
 
   const close = (): void => {
+    stopTimer()
     elements.root.hidden = true
     elements.open.onclick = null
     elements.all.onclick = null
@@ -53,7 +62,8 @@ export function createTaskAlert(elements: TaskAlertElements): TaskAlertControlle
     onAll = null
   }
 
-  const show = (text: string, callback: () => void, allCallback?: () => void): void => {
+  const show = (text: string, callback: () => void, allCallback?: () => void, ttlSec?: number): void => {
+    stopTimer()
     onOpen = callback
     onAll = allCallback ?? null
     elements.title.textContent = 'Новое задание'
@@ -73,6 +83,8 @@ export function createTaskAlert(elements: TaskAlertElements): TaskAlertControlle
           action?.()
         }
     elements.close.onclick = close
+    const ttl = typeof ttlSec === 'number' && Number.isFinite(ttlSec) ? Math.floor(ttlSec) : 0
+    if (ttl > 0) timer = setTimeout(close, ttl * 1000)
   }
 
   return { show, close }

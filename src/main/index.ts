@@ -66,6 +66,20 @@ function guestShortcutName(input: Input): string | null {
 /** Схемы, которые разрешено открывать во внешнем приложении */
 const EXTERNAL_SCHEME_RE = /^(https?|mailto|tel):/i
 
+/** Дефолт времени показа уведомлений tasks-notify, сек (0 = не скрывать) */
+const TN_ALERT_TTL_DEFAULT_SEC = 60
+
+/**
+ * Настройка «Время показа уведомлений» из данных плагина tasks-notify.
+ * Читается на каждый показ, поэтому правка в настройках применяется сразу.
+ */
+function alertTtlSec(): number {
+  const raw = (getPluginData('tasks-notify', ['settings']).settings as { alertTtlSec?: unknown } | undefined)?.alertTtlSec
+  if (typeof raw === 'string' && !raw.trim()) return TN_ALERT_TTL_DEFAULT_SEC
+  const n = Math.floor(Number(raw))
+  return Number.isFinite(n) && n >= 0 ? n : TN_ALERT_TTL_DEFAULT_SEC
+}
+
 /**
  * Санитизация имени файла от remote-источника (getFilename, title PDF):
  * basename против `../`, вырезать запрещённое в Windows, точки/пробелы по краям,
@@ -269,6 +283,7 @@ function createWindow(): void {
     const list = Array.isArray(items) ? items.filter((x): x is { id: number; title: string; body: string; url: string } =>
       !!x && typeof x === 'object' && typeof (x as {id:unknown}).id === 'number' && typeof (x as {title:unknown}).title === 'string') : []
     if (list.length === 0 || !mainWindow || mainWindow.isDestroyed()) return false
+    const ttlSec = alertTtlSec()
     const showOne = (title: string, body: string, url: string): void => {
       const n = new Notification({ title, body })
       n.on('click', () => {
@@ -283,6 +298,12 @@ function createWindow(): void {
         } catch { /* ignore */ }
       })
       n.show()
+      // На Windows close() снимает тост с экрана и убирает его из Action Center
+      if (ttlSec > 0) {
+        setTimeout(() => {
+          try { n.close() } catch { /* ignore */ }
+        }, ttlSec * 1000)
+      }
     }
     if (list.length <= 3) {
       for (const it of list) showOne(it.title, typeof it.body === 'string' ? it.body : '', typeof it.url === 'string' ? it.url : '/v2/relocation/tasks')
