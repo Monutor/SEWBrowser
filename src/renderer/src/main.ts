@@ -1,5 +1,6 @@
 import './styles.css'
 import { createTaskAlert, formatTaskAlertText, getTaskAlertUrls } from './task-alert'
+import { createAddressMenu, type AddressMenuController } from './address-menu'
 import {
   hostOfTabUrl,
   extractNewTabUrls,
@@ -26,6 +27,8 @@ import {
 } from './tabs'
 
 const addressInput = document.getElementById('address') as HTMLInputElement | null
+/** Меню «⋮» в конце адресной строки; собирается в wireAddressMenu */
+let addressMenu: AddressMenuController | null = null
 const titlebarTitle = document.getElementById('titlebar-title') as HTMLElement | null
 const btnBack = document.getElementById('btn-back') as HTMLButtonElement | null
 const btnForward = document.getElementById('btn-forward') as HTMLButtonElement | null
@@ -1018,6 +1021,7 @@ function applyZoomForCurrentPage(): void {
     const host = hostOf(view.getURL() ?? '')
     const factor = (host && config.zoom[host]) || 1
     view.setZoomFactor(factor)
+    addressMenu?.syncZoom(factor)
   } catch {
     // webview ещё не готов — применится при следующей навигации
   }
@@ -1043,6 +1047,7 @@ async function changeZoom(dir: 1 | -1 | 'reset'): Promise<void> {
   } catch {
     return
   }
+  addressMenu?.syncZoom(next)
   const host = hostOf(view.getURL() ?? '')
   if (host) {
     config.zoom[host] = Math.round(next * 100) / 100
@@ -2133,6 +2138,10 @@ async function handleShortcut(name: string): Promise<void> {
       break
     case 'escape':
       cancelFolderPasswordPrompt()
+      if (addressMenu?.isOpen()) {
+        addressMenu.close()
+        break
+      }
       if (expandedGroupId !== null) {
         closeGroupPanel()
         break
@@ -2237,7 +2246,52 @@ function wireShortcuts(): void {
   window.shell.onScreenshotSaved((result) => showScreenshotToast(result))
 }
 
+function wireAddressMenu(): void {
+  const popup = document.getElementById('address-menu') as HTMLElement | null
+  const button = document.getElementById('address-menu-btn') as HTMLButtonElement | null
+  const zoomValue = document.getElementById('address-zoom-value') as HTMLElement | null
+  if (!popup || !button || !zoomValue || !addressInput) return
+  const zoomOut = document.getElementById('address-zoom-out') as HTMLElement | null
+  const zoomIn = document.getElementById('address-zoom-in') as HTMLElement | null
+  const find = document.getElementById('address-menu-find') as HTMLElement | null
+  const copy = document.getElementById('address-menu-copy') as HTMLElement | null
+  const print = document.getElementById('address-menu-print') as HTMLElement | null
+  if (!zoomOut || !zoomIn || !find || !copy || !print) return
+  addressMenu = createAddressMenu(
+    { button, popup, zoomOut, zoomValue, zoomIn, find, copy, print, input: addressInput },
+    {
+      onZoom: (dir) => {
+        void changeZoom(dir)
+      },
+      onFind: () => openFind(),
+      onCopy: () => {
+        const url = currentViewUrl()
+        if (!url) {
+          setStatus('нечего копировать')
+          return
+        }
+        void window.shell
+          .copyText(url)
+          .then((ok) => setStatus(ok ? 'адрес скопирован' : 'не удалось скопировать адрес'))
+          .catch(() => setStatus('не удалось скопировать адрес'))
+      },
+      onPrint: () => {
+        const view = activeView()
+        if (!view) return
+        void view.print().catch(() => setStatus('печать недоступна'))
+      },
+    },
+  )
+  // Подпись масштаба должна совпадать с реальным зумом активной вкладки
+  try {
+    addressMenu.syncZoom(activeView()?.getZoomFactor() ?? 1)
+  } catch {
+    /* гость ещё не готов */
+  }
+}
+
 function wireToolbar(): void {
+  wireAddressMenu()
   btnBack?.addEventListener('click', () => {
     const tab = activeTab()
     if (!tab || !canTabGoBack(tab)) return
@@ -3552,6 +3606,11 @@ async function init(): Promise<void> {
         updateAddressBar()
         updateTitlebarTitle()
         updateNavButtons()
+        try {
+          addressMenu?.syncZoom(activeView()?.getZoomFactor() ?? 1)
+        } catch {
+          /* гость ещё не готов */
+        }
         applyZoomForCurrentPage()
         updateActiveTab()
         // Оверлей сети и findbar описывают предыдущую вкладку, на новой они

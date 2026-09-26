@@ -609,6 +609,127 @@ body {
   color: var(--text-3);
 }
 
+/* Кнопка меню адреса — «⋮» в конце пилюли */
+#address-menu-btn {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-right: -8px;
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-2);
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  cursor: default;
+  transition: background 0.15s, color 0.15s;
+}
+
+#address-menu-btn:hover {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+/* Панель меню адреса: масштаб, поиск, копирование, печать.
+   В хроме webview — обычный элемент, поэтому панель держим в слое хрома. */
+#address-menu {
+  position: fixed;
+  z-index: 40;
+  width: 260px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-sm);
+}
+
+#address-menu[hidden] {
+  display: none;
+}
+
+.address-menu-zoom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 8px 6px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.address-menu-zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.address-menu-zoom-controls button {
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  color: var(--text-2);
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  cursor: default;
+  transition: background 0.15s, color 0.15s;
+}
+
+#address-zoom-value {
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.address-menu-zoom-controls button:hover {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+.address-menu-sep {
+  height: 1px;
+  margin: 2px 6px;
+  background: var(--border);
+}
+
+.address-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 8px;
+  font-size: 13px;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  cursor: default;
+  transition: background 0.15s;
+}
+
+.address-menu-ico {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--text-2);
+}
+
+.address-menu-item:hover {
+  background: var(--accent-soft);
+}
+
+.address-menu-item:hover .address-menu-ico {
+  color: var(--text);
+}
+
 #status {
   font-size: 12px;
   color: var(--text-dim);

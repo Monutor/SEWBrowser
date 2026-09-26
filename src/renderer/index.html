@@ -102,14 +102,16 @@
         <polyline points="23 4 23 10 17 10"></polyline>
         <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
       </svg></button>
-    <label class="omnibox" for="address">
+    <div class="omnibox">
       <span class="omnibox-lock" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
           stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="4" y="11" width="16" height="10" rx="3"></rect>
           <path d="M8 11V7a4 4 0 0 1 8 0v4"></path>
         </svg></span>
       <input id="address" spellcheck="false" autocomplete="off" />
-    </label>
+      <button id="address-menu-btn" title="Меню адреса" aria-label="Меню адреса"
+        aria-haspopup="true" aria-expanded="false">&#8942;</button>
+    </div>
     <button id="btn-accounts" title="Аккаунты SEW (Ctrl+Shift+L)">&#128273;</button>
     <button id="btn-downloads" title="Загрузки">&#128229;</button>
     <button id="btn-screenshot" title="Снимок вкладки (Ctrl+Shift+S)">&#128247;</button>
@@ -126,6 +128,41 @@
   </div>
 
   <div id="tab-group-panel" hidden></div>
+
+  <div id="address-menu" hidden>
+    <div class="address-menu-zoom">
+      <span class="address-menu-zoom-label">Масштаб</span>
+      <span class="address-menu-zoom-controls">
+        <button id="address-zoom-out" title="Уменьшить масштаб" aria-label="Уменьшить масштаб">&minus;</button>
+        <button id="address-zoom-value" title="Сбросить масштаб" aria-label="Сбросить масштаб">100%</button>
+        <button id="address-zoom-in" title="Увеличить масштаб" aria-label="Увеличить масштаб">+</button>
+      </span>
+    </div>
+    <div class="address-menu-sep"></div>
+    <button class="address-menu-item" id="address-menu-find">
+      <svg class="address-menu-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle>
+        <path d="M20 20l-3.5-3.5"></path></svg>
+      Найти на странице
+    </button>
+    <button class="address-menu-item" id="address-menu-copy">
+      <svg class="address-menu-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="9" y="9" width="11" height="11" rx="2.5"></rect>
+        <path d="M15 5.5A2.5 2.5 0 0 0 12.5 4H6.5A2.5 2.5 0 0 0 4 6.5v6A2.5 2.5 0 0 0 5.5 15"></path>
+      </svg>
+      Копировать адрес
+    </button>
+    <button class="address-menu-item" id="address-menu-print">
+      <svg class="address-menu-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M7 9V4h10v5"></path>
+        <rect x="4" y="9" width="16" height="7" rx="2"></rect>
+        <path d="M7 14h10v6H7z"></path>
+      </svg>
+      Печать
+    </button>
+  </div>
 
   <div id="findbar" hidden>
     <input id="find-input" placeholder="Найти на странице" autocomplete="off" />

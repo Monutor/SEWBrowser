@@ -315,6 +315,8 @@ interface ShellApi {
   popupMenu(items: { label: string; action: string }[]): Promise<boolean>
   /** Клик по пункту контекстного меню: main шлёт 'shell:menu-action' */
   onMenuAction(cb: (action: string) => void): void
+  /** Копирование текста в системный буфер обмена (меню адреса) */
+  copyText(text: string): Promise<boolean>
   /** Выбрать свой звук уведомления для слота ('rel' | 'ho'); null — отмена/неподходящий файл */
   pickSound(slot: 'rel' | 'ho'): Promise<{ file: string; name: string } | null>
   /** Байты сохранённого звука слота для проигрывания (null — нет своего файла) */

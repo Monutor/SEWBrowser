@@ -279,6 +279,8 @@ const api = {
       if (typeof action === 'string') cb(action)
     })
   },
+  /** Копирование текста в системный буфер обмена */
+  copyText: (text: string): Promise<boolean> => ipcRenderer.invoke('clipboard:write-text', text),
   /** Выбрать свой звук уведомления для слота ('rel' | 'ho'); null — отмена/неподходящий файл */
   pickSound: (slot: 'rel' | 'ho'): Promise<{ file: string; name: string } | null> =>
     ipcRenderer.invoke('sound:pick', slot),

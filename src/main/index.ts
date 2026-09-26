@@ -297,6 +297,13 @@ function createWindow(): void {
     for (const p of plugins) out[p.name] = getPluginData(p.name)
     return out
   })
+  // Копирование текста из оболочки (меню адреса → «Копировать адрес»).
+  // Значение куки/пароля сюда не попадает — только то, что нажал пользователь.
+  ipcMain.handle('clipboard:write-text', (_event, text: unknown) => {
+    if (typeof text !== 'string' || !text) return false
+    clipboard.writeText(text)
+    return true
+  })
   // Уведомления tasks-notify: пачка за тик → одно OS-уведомление (или по одному при <=3)
   ipcMain.handle('notify:tasks', (_event, items: unknown) => {
     const list = Array.isArray(items) ? items.filter((x): x is { id: number; title: string; body: string; url: string } =>
