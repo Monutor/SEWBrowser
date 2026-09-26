@@ -18,11 +18,11 @@
     "electron": "^44.4.5",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
+    "pdfjs-dist": "6.3.289",
     "typescript": "^7.0.2",
     "vite": "^7.3.6"
   },
   "dependencies": {
-    "electron-updater": "^6.8.9",
-    "pdfjs-dist": "6.3.289"
+    "electron-updater": "^6.8.9"
   }
 }

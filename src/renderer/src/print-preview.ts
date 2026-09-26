@@ -42,21 +42,42 @@ export async function renderPdfThumbnails(
   width: number,
   limit: number,
 ): Promise<{ pageCount: number; thumbs: string[] }> {
+  // task вне try нельзя: getDocument бросает синхронно на мусорных параметрах,
+  // а функция обязана вернуть заглушку, а не исключение.
+  let task: pdfjs.PDFDocumentLoadingTask | null = null
   try {
     // isEvalSupported в pdf.js 6.x удалён вместе с веткой font→eval
     // (CVE-2024-4367), отдельный флаг больше не нужен.
-    const task = pdfjs.getDocument({ data: bytes })
-    const doc = await task.promise
+    const loading = pdfjs.getDocument({ data: bytes })
+    task = loading
+    const doc = await loading.promise
     const pageCount = doc.numPages
     const wanted = Math.max(1, Math.min(limit, pageCount))
     const thumbs: string[] = []
-    for (let i = 1; i <= wanted; i++) {
-      if (i > 1) await nextFrame()
-      thumbs.push(await renderPage(doc, i, width))
+    try {
+      for (let i = 1; i <= wanted; i++) {
+        if (i > 1) await nextFrame()
+        thumbs.push(await renderPage(doc, i, width))
+      }
+    } catch (err) {
+      // Битая страница не должна обнулять уже нарисованные миниатюры и реальное
+      // число страниц: останавливаемся и отдаём что успели.
+      console.warn('[print] не удалось отрисовать страницу:', err)
     }
     return { pageCount, thumbs }
   } catch (err) {
     console.warn('[print] не удалось разобрать PDF:', err)
     return { pageCount: 0, thumbs: [] }
+  } finally {
+    // Воркер держит живой порт; контроллер зовёт функцию на каждый пересчёт
+    // превью, поэтому освобождаем явно. Ошибка освобождения не должна уронить
+    // уже собранный результат — глотаем.
+    if (task) {
+      try {
+        await task.destroy()
+      } catch (err) {
+        console.warn('[print] не удалось освободить воркер PDF:', err)
+      }
+    }
   }
 }
