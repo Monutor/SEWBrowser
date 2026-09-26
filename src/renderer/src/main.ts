@@ -789,9 +789,21 @@ function startTasksNotifyBridge(): void {
 // Только активная вкладка: в фоне пользователь не кликает.
 let linkIntakeTimer: ReturnType<typeof setTimeout> | null = null
 
+/**
+ * Вкладки, в которых гость подтвердил, что LINK_HOOK встал. Спецификация §8.2:
+ * executeJavaScript дёргаем ТОЛЬКО после подтверждения, иначе опрос раз в
+ * 400 мс бьёт IPC впустую (2.5 раза в секунду) на любой странице без хука —
+ * в том числе до первой инъекции, на упавшей странице и на странице логина.
+ * WeakSet по самому <webview>: запись уносится вместе с закрытой вкладкой,
+ * ручная чистка не нужна.
+ */
+const linkHookReady = new WeakSet<SewWebViewElement>()
+
 async function pumpLinkIntake(): Promise<boolean> {
   const view = activeView()
   if (!view) return false
+  // Хук не подтверждён — в гостя не идём вообще.
+  if (!linkHookReady.has(view)) return false
   let raw: unknown
   try {
     raw = await view.executeJavaScript(LINK_TAKE)
@@ -799,7 +811,18 @@ async function pumpLinkIntake(): Promise<boolean> {
     return false
   }
   const urls = extractNewTabUrls(raw)
-  for (const url of urls) openTab(url)
+  for (const url of urls) {
+    // Тот же выбор, что у оболочки для window.open: разрешённый http(s) —
+    // вкладкой внутри, остальное — во внешнем браузере. Без этой развилки
+    // не-allowlisted ссылка создавала бы вкладку, которая тут же отскочит
+    // на lastAllowedUrl: хук уже сделал preventDefault, до навигации дело
+    // не дошло, и ветка setWindowOpenHandler сюда не приходит.
+    if (isAllowed(url)) openTab(url)
+    else {
+      setStatus('открыто во внешнем приложении')
+      void window.shell.openExternal(url)
+    }
+  }
   return urls.length > 0
 }
 
@@ -2229,6 +2252,9 @@ function wireTabEvents(tab: ShellTab): void {
     setTabTitle(tab, event.title)
   })
   view.addEventListener('did-navigate', (event) => {
+    // Новый документ = новое window → флаг готовности старого хука мёртв.
+    // did-navigate-in-page сюда НЕ попадает (там тот же документ, хук жив).
+    linkHookReady.delete(view)
     console.log('[shell] did-navigate:', event.url)
     if (isAllowed(event.url)) {
       setTabUrl(tab, event.url)
@@ -2258,9 +2284,18 @@ function wireTabEvents(tab: ShellTab): void {
   })
   view.addEventListener('did-finish-load', () => {
     void injectPlugins(tab)
-    void tab.view.executeJavaScript(LINK_HOOK).catch(() => {
-      // страница могла закрыться или упасть — хук не критичен
-    })
+    // Готовность хука — только ПОСЛЕ успешной инъекции: до подтверждения
+    // pumpLinkIntake в гостя не ходит. Упала инъекция — не подтверждаем,
+    // опрос просто не пойдёт (ретраи и таймауты не нужны).
+    linkHookReady.delete(view)
+    void view.executeJavaScript(LINK_HOOK).then(
+      () => {
+        linkHookReady.add(view)
+      },
+      () => {
+        // страница могла закрыться или упасть — хук не критичен
+      },
+    )
     try {
       setTabTitle(tab, view.getTitle())
     } catch {
