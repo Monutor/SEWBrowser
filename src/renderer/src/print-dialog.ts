@@ -192,3 +192,365 @@ export function suggestedPdfName(title: string): string {
   if (!cleaned) return 'document.pdf'
   return /\.pdf$/i.test(cleaned) ? cleaned : `${cleaned}.pdf`
 }
+
+export interface PrintDialogElements {
+  /** Контейнер всех полей настроек. Слушатель с debounce на него вешает
+   *  вызывающий код (main.ts) и зовёт refresh() — в контроллере таймеров нет */
+  settings: HTMLElement
+  overlay: HTMLElement
+  title: HTMLElement
+  destination: HTMLElement
+  printerRow: HTMLElement
+  rangeMode: HTMLElement
+  rangeCustom: HTMLElement
+  rangeFrom: HTMLElement
+  rangeTo: HTMLElement
+  copies: HTMLElement
+  landscape: HTMLElement
+  pageSize: HTMLElement
+  marginTop: HTMLElement
+  marginBottom: HTMLElement
+  marginLeft: HTMLElement
+  marginRight: HTMLElement
+  noMargins: HTMLElement
+  scale: HTMLElement
+  printBackground: HTMLElement
+  displayHeaderFooter: HTMLElement
+  thumbs: HTMLElement
+  thumbsNote: HTMLElement
+  showAll: HTMLElement
+  pageCounter: HTMLElement
+  status: HTMLElement
+  cancel: HTMLElement
+  savePdf: HTMLElement
+  print: HTMLElement
+}
+
+export interface PrintDialogHooks {
+  listPrinters: () => Promise<ShellPrinter[]>
+  /** Собрать PDF: view.printToPDF(printToPdfOptions(settings)) */
+  buildPdf: (settings: PrintSettings) => Promise<Uint8Array>
+  /** PDF → data URL миниатюр. limit — сколько страниц нужно отрендерить;
+   *  контроллер просит ВСЕ (Number.MAX_SAFE_INTEGER), потому что общее число
+   *  страниц нужно для счётчика и подсказки «Показаны первые 10 из N» */
+  renderThumbs: (bytes: Uint8Array, limit: number) => Promise<string[]>
+  /** Системная печать: view.print(printOptions(settings, …)) */
+  doPrint: (settings: PrintSettings) => Promise<void>
+  /** window.shell.savePdf(bytesToBase64(bytes), suggestedPdfName(title)) */
+  doSavePdf: (settings: PrintSettings, bytes: Uint8Array) => Promise<boolean>
+  documentTitle: () => string
+  /** Запись config.print — только при успешной печати/сохранении */
+  persist: (settings: PrintSettings) => Promise<void>
+}
+
+export interface PrintDialogController {
+  open: (settings: PrintSettings) => Promise<void>
+  close: () => void
+  isOpen: () => boolean
+  refresh: () => Promise<void>
+  currentSettings: () => PrintSettings
+  currentPage: () => number
+  pageCount: () => number
+  previewBytes: () => Uint8Array | null
+}
+
+/** Миниатюр показываем по 10; остальное — по кнопке «Показать все» */
+const THUMB_LIMIT = 10
+const PDF_OPTION = 'pdf'
+
+/**
+ * Контроллер диалога печати. Не знает ни про Electron, ни про webview —
+ * всё через хуки, поэтому тестируется под node --test с FakeEl.
+ * Таймеров нет: debounce пересчёта превью живёт в вызывающем коде (main.ts).
+ */
+export function createPrintDialog(elements: PrintDialogElements, hooks: PrintDialogHooks): PrintDialogController {
+  let open = false
+  let printers: ShellPrinter[] = []
+  let bytes: Uint8Array | null = null
+  let thumbs: string[] = []
+  let currentPage = 1
+  let showAll = false
+  let busy = false
+  /** Растёт на каждый refresh: результат устаревшей сборки игнорируется */
+  let generation = 0
+  /** Сообщение о принтерах: показывается один раз поверх успешного превью,
+   *  иначе refresh() затирал бы его пустым статусом */
+  let notice = ''
+
+  const input = (el: HTMLElement): HTMLInputElement => el as HTMLInputElement
+  const readValue = (el: HTMLElement): string => input(el).value ?? ''
+  const readChecked = (el: HTMLElement): boolean => input(el).checked === true
+  const toInt = (el: HTMLElement, fallback: number): number => {
+    const n = Math.floor(Number(readValue(el)))
+    return Number.isFinite(n) ? n : fallback
+  }
+  const toFloat = (el: HTMLElement, fallback: number): number => {
+    const n = Number(readValue(el))
+    return Number.isFinite(n) ? n : fallback
+  }
+  const fill = (el: HTMLElement, value: string | number | boolean): void => {
+    input(el).value = String(value)
+  }
+  const setStatus = (text: string): void => {
+    elements.status.textContent = text
+  }
+
+  const errText = (err: unknown): string => (err instanceof Error ? err.message : String(err))
+
+  const currentDeviceName = (): string => {
+    const value = readValue(elements.destination)
+    return printers.some((p) => p.name === value) ? value : ''
+  }
+
+  const currentSettings = (): PrintSettings =>
+    normalizePrintSettings({
+      destination: currentDeviceName() ? 'printer' : PDF_OPTION,
+      deviceName: currentDeviceName(),
+      rangeMode: readValue(elements.rangeMode),
+      rangeFrom: toInt(elements.rangeFrom, DEFAULTS.rangeFrom),
+      rangeTo: toInt(elements.rangeTo, DEFAULTS.rangeTo),
+      copies: toInt(elements.copies, DEFAULTS.copies),
+      landscape: readValue(elements.landscape) === 'landscape',
+      pageSize: readValue(elements.pageSize),
+      marginTop: toFloat(elements.marginTop, DEFAULTS.marginTop),
+      marginBottom: toFloat(elements.marginBottom, DEFAULTS.marginBottom),
+      marginLeft: toFloat(elements.marginLeft, DEFAULTS.marginLeft),
+      marginRight: toFloat(elements.marginRight, DEFAULTS.marginRight),
+      scale: toInt(elements.scale, DEFAULTS.scale),
+      printBackground: readChecked(elements.printBackground),
+      displayHeaderFooter: readChecked(elements.displayHeaderFooter),
+    })
+
+  const fillSettings = (s: PrintSettings): void => {
+    elements.title.textContent = hooks.documentTitle() || 'Документ'
+    fill(elements.rangeMode, s.rangeMode)
+    fill(elements.rangeFrom, s.rangeFrom)
+    fill(elements.rangeTo, s.rangeTo)
+    fill(elements.copies, s.copies)
+    fill(elements.landscape, s.landscape ? 'landscape' : 'portrait')
+    fill(elements.pageSize, s.pageSize)
+    fill(elements.marginTop, s.marginTop)
+    fill(elements.marginBottom, s.marginBottom)
+    fill(elements.marginLeft, s.marginLeft)
+    fill(elements.marginRight, s.marginRight)
+    fill(elements.scale, s.scale)
+    input(elements.printBackground).checked = s.printBackground
+    input(elements.displayHeaderFooter).checked = s.displayHeaderFooter
+    elements.rangeCustom.hidden = s.rangeMode !== 'custom'
+  }
+
+  const buildDestination = (selected: string): void => {
+    const options: Array<{ value: string; label: string }> = [
+      { value: PDF_OPTION, label: 'Сохранить как PDF' },
+    ]
+    for (const p of printers) options.push({ value: p.name, label: p.displayName || p.name })
+    elements.destination.replaceChildren(
+      ...options.map((o) => {
+        const option = document.createElement('option')
+        option.value = o.value
+        option.textContent = o.label
+        return option
+      }),
+    )
+    fill(elements.destination, options.some((o) => o.value === selected) ? selected : PDF_OPTION)
+  }
+
+  const syncButtons = (): void => {
+    const s = currentSettings()
+    const hasPrinter = printers.length > 0 && printers.some((p) => p.name === s.deviceName)
+    const broken = bytes === null
+    // disabled есть только у HTMLInputElement/HTMLButtonElement, поэтому через input()
+    input(elements.print).disabled = busy || broken || s.destination !== 'printer' || !hasPrinter
+    input(elements.savePdf).disabled = busy || broken
+    input(elements.cancel).disabled = busy
+  }
+
+  const paintThumbs = (): void => {
+    const limit = showAll ? thumbs.length : Math.min(THUMB_LIMIT, thumbs.length)
+    const nodes: HTMLElement[] = []
+    for (let i = 0; i < limit; i++) {
+      const page = i + 1
+      const img = document.createElement('img')
+      img.src = thumbs[i] ?? ''
+      img.alt = `Страница ${page}`
+      img.dataset.page = String(page)
+      img.className = page === currentPage ? 'print-thumb current' : 'print-thumb'
+      // Слушатель на самой миниатюре, а не на контейнере: контейнер перерисовывается
+      // целиком, делегирование в нём жило бы только до первой перерисовки
+      img.addEventListener('click', () => {
+        currentPage = page
+        paintThumbs()
+      })
+      nodes.push(img)
+    }
+    elements.thumbs.replaceChildren(...nodes)
+    if (thumbs.length > THUMB_LIMIT && !showAll) {
+      elements.thumbsNote.textContent = `Показаны первые ${THUMB_LIMIT} из ${thumbs.length}`
+      elements.showAll.hidden = false
+    } else {
+      elements.thumbsNote.textContent = ''
+      elements.showAll.hidden = true
+    }
+    elements.pageCounter.textContent = thumbs.length > 0 ? `Страница ${Math.min(currentPage, thumbs.length)} из ${thumbs.length}` : ''
+  }
+
+  const refresh = async (): Promise<void> => {
+    if (!open) return
+    const my = ++generation
+    const settings = currentSettings()
+    elements.rangeCustom.hidden = readValue(elements.rangeMode) !== 'custom'
+    setStatus('Готовим предпросмотр…')
+    try {
+      const built = await hooks.buildPdf(settings)
+      if (my !== generation || !open) return
+      // Просим миниатюры ВСЕХ страниц одним вызовом: без общего числа страниц
+      // подсказку «Показаны первые 10 из N» и счётчик «Страница 1 из N» не собрать.
+      // В списке показываем 10, остальное — по кнопке «Показать все».
+      // Провал рендера миниатюр НЕ ломает печать: PDF уже есть, показываем
+      // заглушку и оставляем кнопки рабочими (спека §9).
+      let painted: string[] = []
+      try {
+        const out = await hooks.renderThumbs(built, Number.MAX_SAFE_INTEGER)
+        painted = Array.isArray(out) ? out : []
+      } catch (renderErr) {
+        console.warn('[print] не удалось построить миниатюры:', renderErr)
+      }
+      if (my !== generation || !open) return
+      bytes = built
+      thumbs = painted
+      if (currentPage > thumbs.length) currentPage = Math.max(1, thumbs.length)
+      paintThumbs()
+      setStatus(painted.length > 0 ? notice : 'Не удалось построить предпросмотр')
+      notice = ''
+    } catch (err) {
+      if (my !== generation || !open) return
+      bytes = null
+      thumbs = []
+      paintThumbs()
+      setStatus(`Не удалось построить предпросмотр: ${errText(err)}`)
+      notice = ''
+    }
+    syncButtons()
+  }
+
+  const close = (): void => {
+    if (!open) return
+    open = false
+    generation++
+    notice = ''
+    elements.overlay.hidden = true
+  }
+
+  const runAction = async (action: () => Promise<void>): Promise<void> => {
+    if (busy) return
+    busy = true
+    syncButtons()
+    try {
+      await action()
+    } catch (err) {
+      setStatus(errText(err))
+    } finally {
+      busy = false
+      syncButtons()
+    }
+  }
+
+  elements.cancel.addEventListener('click', close)
+  elements.showAll.addEventListener('click', () => {
+    // Миниатюры всех страниц уже собраны — перерисовываем весь список,
+    // пересобирать PDF ради «показать все» незачем
+    showAll = true
+    paintThumbs()
+  })
+  elements.noMargins.addEventListener('click', () => {
+    fill(elements.marginTop, 0)
+    fill(elements.marginBottom, 0)
+    fill(elements.marginLeft, 0)
+    fill(elements.marginRight, 0)
+  })
+  elements.print.addEventListener('click', () => {
+    void runAction(async () => {
+      const settings = currentSettings()
+      try {
+        await hooks.doPrint(settings)
+      } catch (err) {
+        throw new Error(`Печать не удалась: ${errText(err)}`)
+      }
+      await hooks.persist(settings)
+      close()
+    })
+  })
+  elements.savePdf.addEventListener('click', () => {
+    void runAction(async () => {
+      const settings = currentSettings()
+      let data = bytes
+      if (!data) {
+        try {
+          data = await hooks.buildPdf(settings)
+        } catch (err) {
+          throw new Error(`Не удалось сохранить PDF: ${errText(err)}`)
+        }
+        bytes = data
+      }
+      try {
+        await hooks.doSavePdf(settings, data)
+      } catch (err) {
+        throw new Error(`Не удалось сохранить PDF: ${errText(err)}`)
+      }
+      await hooks.persist(settings)
+      close()
+    })
+  })
+
+  elements.overlay.hidden = true
+
+  const openDialog = async (settings: PrintSettings): Promise<void> => {
+    if (open) return
+    open = true
+    bytes = null
+    thumbs = []
+    currentPage = 1
+    showAll = false
+    notice = ''
+    elements.overlay.hidden = false
+    setStatus('Загружаем список принтеров…')
+    let list: ShellPrinter[] = []
+    let printersFailed = false
+    try {
+      list = await hooks.listPrinters()
+    } catch (err) {
+      console.warn('[print] список принтеров недоступен:', err)
+      printersFailed = true
+    }
+    if (!open) return
+    printers = Array.isArray(list) ? list : []
+    const known = printers.some((p) => p.name === settings.deviceName)
+    buildDestination(settings.destination === 'printer' && known ? settings.deviceName : PDF_OPTION)
+    fillSettings(settings)
+    if (printers.length === 0) {
+      elements.printerRow.hidden = true
+      notice = printersFailed ? 'Не удалось получить список принтеров' : 'Принтеры не найдены — доступно сохранение в PDF'
+    } else {
+      elements.printerRow.hidden = false
+      if (settings.destination === 'printer' && !known) {
+        notice = `Принтер «${settings.deviceName}» больше не доступен — печатаем в PDF`
+      }
+    }
+    // Сообщение о принтерах держим в notice: refresh() показывает его один раз
+    // поверх успешного превью, а не затирает пустым статусом
+    setStatus(notice || 'Готовим предпросмотр…')
+    syncButtons()
+    await refresh()
+  }
+
+  return {
+    open: openDialog,
+    close,
+    isOpen: () => open,
+    refresh,
+    currentSettings,
+    currentPage: () => currentPage,
+    pageCount: () => thumbs.length,
+    previewBytes: () => bytes,
+  }
+}

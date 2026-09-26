@@ -14,6 +14,7 @@ import {
   printToPdfOptions,
   suggestedPdfName,
 } from './print-dialog.ts'
+import { createPrintDialog, type PrintDialogController, type PrintDialogElements, type PrintDialogHooks } from './print-dialog.ts'
 
 const base = normalizePrintSettings(undefined)
 
@@ -273,5 +274,308 @@ describe('suggestedPdfName', () => {
     assert.equal(suggestedPdfName('  '), 'document.pdf')
     // разделители заменяются пробелом, а не вырезаются
     assert.equal(suggestedPdfName('a/b:c'), 'a b c.pdf')
+  })
+})
+
+// Мини-дом для контроллера: своего jsdom в проекте нет (как в address-menu.test.ts)
+interface FakeEl {
+  tag: string
+  className: string
+  textContent: string
+  title: string
+  src: string
+  hidden: boolean
+  value: string
+  checked: boolean
+  disabled: boolean
+  dataset: Record<string, string>
+  attrs: Record<string, string>
+  children: FakeEl[]
+  parent: FakeEl | null
+  listeners: Array<{ type: string; fn: (event: unknown) => void }>
+  appendChild(node: FakeEl): FakeEl
+  replaceChildren(...nodes: FakeEl[]): void
+  setAttribute(name: string, value: string): void
+  getAttribute(name: string): string | null
+  addEventListener(type: string, fn: (event: unknown) => void): void
+}
+
+function mkEl(tag: string): FakeEl {
+  const el: FakeEl = {
+    tag,
+    className: '',
+    textContent: '',
+    title: '',
+    src: '',
+    hidden: false,
+    value: '',
+    checked: false,
+    disabled: false,
+    dataset: {},
+    attrs: {},
+    children: [],
+    parent: null,
+    listeners: [],
+    appendChild(node: FakeEl): FakeEl {
+      node.parent = el
+      el.children.push(node)
+      return node
+    },
+    replaceChildren(...nodes: FakeEl[]): void {
+      for (const n of nodes) n.parent = el
+      el.children = nodes
+    },
+    setAttribute(name: string, value: string): void {
+      el.attrs[name] = value
+    },
+    getAttribute(name: string): string | null {
+      return name in el.attrs ? el.attrs[name] : null
+    },
+    addEventListener(type: string, fn: (event: unknown) => void): void {
+      el.listeners.push({ type, fn })
+    },
+  }
+  return el
+}
+
+function fire(el: FakeEl, type: string, event: unknown = { target: null }): void {
+  for (const listener of [...el.listeners]) {
+    if (listener.type === type) listener.fn(event)
+  }
+}
+
+// Контроллер создаёт <option> через document.createElement
+;(globalThis as unknown as { document: unknown }).document = {
+  createElement: (tag: string) => mkEl(tag),
+}
+
+const ELEMENT_KEYS: Array<keyof PrintDialogElements> = [
+  'settings', 'overlay', 'title', 'destination', 'printerRow', 'rangeMode', 'rangeCustom',
+  'rangeFrom', 'rangeTo', 'copies', 'landscape', 'pageSize', 'marginTop', 'marginBottom',
+  'marginLeft', 'marginRight', 'noMargins', 'scale', 'printBackground', 'displayHeaderFooter',
+  'thumbs', 'thumbsNote', 'showAll', 'pageCounter', 'status', 'cancel', 'savePdf', 'print',
+]
+
+const PDF_BYTES = new Uint8Array([37, 80, 68, 70]) // '%PDF'
+
+interface Harness {
+  el: Record<keyof PrintDialogElements, FakeEl>
+  dialog: PrintDialogController
+  printers: ShellPrinter[]
+  printersFail: Error | null
+  pages: number
+  buildCalls: PrintSettings[]
+  printCalls: PrintSettings[]
+  saveCalls: Array<{ settings: PrintSettings; bytes: Uint8Array }>
+  persisted: PrintSettings[]
+  buildFail: Error | null
+  renderFail: Error | null
+  printFail: Error | null
+}
+
+function setup(partial: Partial<Harness> = {}): Harness {
+  const el = {} as Record<keyof PrintDialogElements, FakeEl>
+  for (const key of ELEMENT_KEYS) el[key] = mkEl(key === 'thumbs' ? 'div' : 'input')
+  el.overlay.hidden = true
+  const h: Harness = {
+    el,
+    dialog: null as unknown as PrintDialogController,
+    printers: [{ name: 'HP', displayName: 'HP LaserJet', description: '' }],
+    printersFail: null,
+    pages: 3,
+    buildCalls: [],
+    printCalls: [],
+    saveCalls: [],
+    persisted: [],
+    buildFail: null,
+    renderFail: null,
+    printFail: null,
+    ...partial,
+  }
+  const elements = {} as Record<keyof PrintDialogElements, HTMLElement>
+  for (const key of ELEMENT_KEYS) elements[key] = el[key] as unknown as HTMLElement
+  const hooks: PrintDialogHooks = {
+    listPrinters: async () => {
+      if (h.printersFail) throw h.printersFail
+      return h.printers
+    },
+    buildPdf: async (settings) => {
+      h.buildCalls.push(settings)
+      if (h.buildFail) throw h.buildFail
+      return PDF_BYTES
+    },
+    renderThumbs: async (_bytes, limit) => {
+      if (h.renderFail) throw h.renderFail
+      return Array.from({ length: Math.max(0, Math.min(limit, h.pages)) }, () => 'data:image/png;base64,AAA')
+    },
+    doPrint: async (settings) => {
+      if (h.printFail) throw h.printFail
+      h.printCalls.push(settings)
+    },
+    doSavePdf: async (settings, bytes) => {
+      h.saveCalls.push({ settings, bytes })
+      return true
+    },
+    documentTitle: () => 'Документ',
+    persist: async (settings) => {
+      h.persisted.push(settings)
+    },
+  }
+  h.dialog = createPrintDialog(elements as PrintDialogElements, hooks)
+  return h
+}
+
+const flush = async (): Promise<void> => {
+  for (let i = 0; i < 8; i++) await Promise.resolve()
+}
+
+describe('диалог печати', () => {
+  it('открывается, наполняет поля и показывает превью со счётчиком', async () => {
+    const h = setup()
+    await h.dialog.open(normalizePrintSettings({ deviceName: 'HP', landscape: true, copies: 2 }))
+    assert.equal(h.dialog.isOpen(), true)
+    assert.equal(h.el.overlay.hidden, false)
+    assert.equal(h.el.title.textContent, 'Документ')
+    assert.equal(h.el.rangeMode.value, 'all')
+    assert.equal(h.el.copies.value, '2')
+    assert.equal(h.el.landscape.value, 'landscape')
+    assert.equal(h.el.pageSize.value, 'A4')
+    assert.equal(h.el.marginTop.value, '20')
+    assert.equal(h.el.scale.value, '100')
+    assert.equal(h.el.pageCounter.textContent, 'Страница 1 из 3')
+    assert.equal(h.el.thumbs.children.length, 3)
+    assert.equal(h.buildCalls.length, 1)
+  })
+
+  it('второй open() пока открытого диалога игнорирует', async () => {
+    const h = setup()
+    await h.dialog.open(normalizePrintSettings({}))
+    await h.dialog.open(normalizePrintSettings({ copies: 5 }))
+    assert.equal(h.el.copies.value, '1')
+  })
+
+  it('прячет блок принтера и блокирует «Печать», когда принтеров нет', async () => {
+    const h = setup({ printers: [] })
+    await h.dialog.open(normalizePrintSettings({ destination: 'printer', deviceName: 'HP' }))
+    assert.equal(h.el.printerRow.hidden, true)
+    assert.equal(h.el.print.disabled, true)
+    assert.equal(h.el.savePdf.disabled, false)
+    assert.equal(h.el.status.textContent, 'Принтеры не найдены — доступно сохранение в PDF')
+  })
+
+  it('при сбое списка принтеров остаётся только PDF и показывается подсказка', async () => {
+    const h = setup({ printersFail: new Error('WMI сломал') })
+    await h.dialog.open(normalizePrintSettings({ destination: 'printer', deviceName: 'HP' }))
+    assert.equal(h.el.destination.children.length, 1)
+    assert.equal(h.el.printerRow.hidden, true)
+    assert.equal(h.el.status.textContent, 'Не удалось получить список принтеров')
+  })
+
+  it('недоступный принтер из конфига переключает назначение на PDF с подсказкой', async () => {
+    const h = setup()
+    await h.dialog.open(normalizePrintSettings({ destination: 'printer', deviceName: 'Нет такого' }))
+    assert.equal(h.dialog.currentSettings().destination, 'pdf')
+    assert.equal(h.el.status.textContent, 'Принтер «Нет такого» больше не доступен — печатаем в PDF')
+  })
+
+  it('refresh пересчитывает превью с новыми полями', async () => {
+    const h = setup()
+    await h.dialog.open(normalizePrintSettings({}))
+    h.el.scale.value = '150'
+    await h.dialog.refresh()
+    assert.equal(h.buildCalls.length, 2)
+    assert.equal(h.buildCalls[1].scale, 150)
+  })
+
+  it('клик по миниатюре выбирает текущую страницу', async () => {
+    const h = setup()
+    await h.dialog.open(normalizePrintSettings({}))
+    fire(h.el.thumbs.children[2], 'click', { target: h.el.thumbs.children[2] })
+    assert.equal(h.dialog.currentPage(), 3)
+    assert.equal(h.el.pageCounter.textContent, 'Страница 3 из 3')
+    assert.equal(h.el.thumbs.children[2].className, 'print-thumb current')
+  })
+
+  it('«Показать все» снимает лимит в 10 миниатюр', async () => {
+    const h = setup({ pages: 12 })
+    await h.dialog.open(normalizePrintSettings({}))
+    assert.equal(h.el.thumbs.children.length, 10)
+    assert.equal(h.el.thumbsNote.textContent, 'Показаны первые 10 из 12')
+    assert.equal(h.el.showAll.hidden, false)
+    fire(h.el.showAll, 'click')
+    await flush()
+    assert.equal(h.el.thumbs.children.length, 12)
+    assert.equal(h.el.thumbsNote.textContent, '')
+    assert.equal(h.el.showAll.hidden, true)
+  })
+
+  it('«Сохранить как PDF» отдаёт байты, сохраняет настройки и закрывает', async () => {
+    const h = setup()
+    await h.dialog.open(normalizePrintSettings({}))
+    fire(h.el.savePdf, 'click')
+    await flush()
+    assert.equal(h.saveCalls.length, 1)
+    assert.deepEqual(Array.from(h.saveCalls[0].bytes), Array.from(PDF_BYTES))
+    assert.equal(h.persisted.length, 1)
+    assert.equal(h.el.overlay.hidden, true)
+  })
+
+  it('«Печать» зовёт doPrint, persist и закрывает', async () => {
+    const h = setup()
+    await h.dialog.open(normalizePrintSettings({ destination: 'printer', deviceName: 'HP' }))
+    fire(h.el.print, 'click')
+    await flush()
+    assert.equal(h.printCalls.length, 1)
+    assert.equal(h.persisted.length, 1)
+    assert.equal(h.el.overlay.hidden, true)
+  })
+
+  it('при сбое buildPdf показывает ошибку и блокирует кнопки', async () => {
+    const h = setup({ buildFail: new Error('нет содержимого') })
+    await h.dialog.open(normalizePrintSettings({ destination: 'printer', deviceName: 'HP' }))
+    assert.equal(h.el.status.textContent, 'Не удалось построить предпросмотр: нет содержимого')
+    assert.equal(h.el.print.disabled, true)
+    assert.equal(h.el.savePdf.disabled, true)
+    assert.equal(h.el.overlay.hidden, false)
+  })
+
+  it('падение рендера миниатюр не блокирует печать и сохранение (спека §9)', async () => {
+    const h = setup({ renderFail: new Error('битый PDF') })
+    await h.dialog.open(normalizePrintSettings({ destination: 'printer', deviceName: 'HP' }))
+    assert.equal(h.el.status.textContent, 'Не удалось построить предпросмотр')
+    assert.equal(h.el.print.disabled, false)
+    assert.equal(h.el.savePdf.disabled, false)
+    fire(h.el.print, 'click')
+    await flush()
+    assert.equal(h.printCalls.length, 1)
+  })
+
+  it('при сбое doPrint показывает ошибку, разблокирует кнопки, не закрывает и не сохраняет', async () => {
+    const h = setup({ printFail: new Error('диалог не открылся') })
+    await h.dialog.open(normalizePrintSettings({ destination: 'printer', deviceName: 'HP' }))
+    fire(h.el.print, 'click')
+    await flush()
+    assert.equal(h.el.status.textContent, 'Печать не удалась: диалог не открылся')
+    assert.equal(h.el.print.disabled, false)
+    assert.equal(h.el.overlay.hidden, false)
+    assert.equal(h.persisted.length, 0)
+  })
+
+  it('«Отмена» закрывает диалог и ничего не сохраняет', async () => {
+    const h = setup()
+    await h.dialog.open(normalizePrintSettings({}))
+    fire(h.el.cancel, 'click')
+    assert.equal(h.dialog.isOpen(), false)
+    assert.equal(h.persisted.length, 0)
+  })
+
+  it('кнопка «Поля: нет» обнуляет все четыре поля', async () => {
+    const h = setup()
+    await h.dialog.open(normalizePrintSettings({}))
+    fire(h.el.noMargins, 'click')
+    assert.equal(h.el.marginTop.value, '0')
+    assert.equal(h.el.marginBottom.value, '0')
+    assert.equal(h.el.marginLeft.value, '0')
+    assert.equal(h.el.marginRight.value, '0')
   })
 })
