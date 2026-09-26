@@ -2945,7 +2945,7 @@ function renderGroupPanel(): void {
     url.textContent = tab.url
     row.append(name, url)
     row.addEventListener('click', () => {
-      void navigate(tab.url)
+      focusOrOpenTab(tab.url)
       closeGroupPanel()
     })
     list.append(row)
@@ -3017,7 +3017,7 @@ function createTabRow(tab: NavTab): HTMLElement {
   row.addEventListener('click', (e: MouseEvent) => {
     if ((e.target as HTMLElement)?.closest('.tab-row button') || (e.target as HTMLElement).closest('.tab-folder-select')) return
     void closeTabs()
-    void navigate(tab.url)
+    focusOrOpenTab(tab.url)
   })
   const up = tabRowButton('↑', 'Поднять выше', () => void moveTab(tab.id, -1))
   const down = tabRowButton('↓', 'Опустить ниже', () => void moveTab(tab.id, 1))
