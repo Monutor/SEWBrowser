@@ -50,3 +50,26 @@ export function clampTabIndex(count: number, oneBased: number): number {
   if (index < 0 || index >= count) return -1
   return index
 }
+
+/**
+ * Разбирает ответ гостя из window.__shellNewTabReq и оставляет только
+ * корректные http(s)-ссылки — всё остальное (мусор, javascript:, mailto:) пропускаем.
+ */
+export function extractNewTabUrls(raw: unknown): string[] {
+  if (typeof raw !== 'string' || raw === '') return []
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return []
+  }
+  if (!Array.isArray(parsed)) return []
+  const out: string[] = []
+  for (const item of parsed) {
+    const url = (item as { url?: unknown } | null)?.url
+    if (typeof url !== 'string' || !url) continue
+    if (!HTTP_SCHEME_RE.test(url)) continue
+    out.push(url)
+  }
+  return out
+}

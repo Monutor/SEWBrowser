@@ -1,6 +1,9 @@
 import './styles.css'
 import { createTaskAlert, formatTaskAlertText, getTaskAlertUrls } from './task-alert'
-import { hostOfTabUrl } from './tabs-core.ts'
+import {
+  hostOfTabUrl,
+  extractNewTabUrls,
+} from './tabs-core.ts'
 import {
   activeTab,
   activeView,
@@ -352,6 +355,35 @@ if (!window.__shellChromeShim) {
   })();
 }
 `
+
+// Перехват Ctrl+клика и средней кнопки в гостевой странице. Идемпотентно:
+// повторная инъекция в ту же вкладку ничего не делает.
+const LINK_HOOK = `(function(){
+  try {
+    if (window.__shellLinkHook) return;
+    window.__shellLinkHook = true;
+    window.__shellNewTabReq = window.__shellNewTabReq || [];
+    var push = function (ev) {
+      try {
+        if (ev.type === 'auxclick' && ev.button !== 1) return;
+        if (ev.type === 'click' && !(ev.ctrlKey || ev.metaKey)) return;
+        var a = ev.target && ev.target.closest ? ev.target.closest('a[href]') : null;
+        if (!a) return;
+        var href = a.getAttribute('href') || '';
+        if (!href || href.charAt(0) === '#') return;
+        ev.preventDefault();
+        if (ev.stopPropagation) ev.stopPropagation();
+        window.__shellNewTabReq.push({ url: new URL(href, document.baseURI).href });
+      } catch (e) {}
+    };
+    document.addEventListener('click', push, true);
+    document.addEventListener('auxclick', push, true);
+  } catch (e) {}
+})()`
+
+// Забор очереди ссылок из активной вкладки. Возвращает всегда строку —
+// результат executeJavaScript обязан быть structured-cloneable.
+const LINK_TAKE = '(function(){try{var q=window.__shellNewTabReq;if(!Array.isArray(q))return "[]";try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})()'
 
 async function injectPlugins(tab: ShellTab): Promise<void> {
   // Снапшот данных плагинов в страницу (читает шим вместо IPC — см. комментарий
@@ -751,6 +783,38 @@ function startTasksNotifyBridge(): void {
     setTimeout(tick, tasksNotifyDelay)
   }
   setTimeout(tick, 5000)
+}
+
+// Забор ссылок, перехваченных в гостевой странице (Ctrl+клик / средняя кнопка).
+// Только активная вкладка: в фоне пользователь не кликает.
+let linkIntakeTimer: ReturnType<typeof setTimeout> | null = null
+
+async function pumpLinkIntake(): Promise<boolean> {
+  const view = activeView()
+  if (!view) return false
+  let raw: unknown
+  try {
+    raw = await view.executeJavaScript(LINK_TAKE)
+  } catch {
+    return false
+  }
+  const urls = extractNewTabUrls(raw)
+  for (const url of urls) openTab(url)
+  return urls.length > 0
+}
+
+function startLinkIntake(): void {
+  if (linkIntakeTimer !== null) return
+  const tick = async (): Promise<void> => {
+    let hadWork = false
+    try {
+      hadWork = await pumpLinkIntake()
+    } catch {
+      hadWork = false
+    }
+    linkIntakeTimer = setTimeout(tick, hadWork ? 100 : 400)
+  }
+  linkIntakeTimer = setTimeout(tick, 400)
 }
 
 /** Дефолт времени показа уведомлений tasks-notify, сек (0 = не скрывать) */
@@ -2194,6 +2258,9 @@ function wireTabEvents(tab: ShellTab): void {
   })
   view.addEventListener('did-finish-load', () => {
     void injectPlugins(tab)
+    void tab.view.executeJavaScript(LINK_HOOK).catch(() => {
+      // страница могла закрыться или упасть — хук не критичен
+    })
     try {
       setTabTitle(tab, view.getTitle())
     } catch {
@@ -3386,6 +3453,7 @@ async function init(): Promise<void> {
     },
   })
   startStatusPolling()
+  startLinkIntake()
   startSewHelperBridge()
   startScansBridge()
   startTasksNotifyBridge()

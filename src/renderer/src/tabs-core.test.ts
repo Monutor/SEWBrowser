@@ -104,3 +104,16 @@ describe('clampTabIndex', () => {
     assert.equal(clampTabIndex(0, 1), -1)
   })
 })
+
+describe('extractNewTabUrls', () => {
+  it('extractNewTabUrls отбрасывает мусор и не-http схемы', async () => {
+    const { extractNewTabUrls } = await import('./tabs-core.ts')
+    assert.deepEqual(
+      extractNewTabUrls('[{"url":"https://sew.mvideoeldorado.ru/v2/relocation/tasks/1"},{"url":"javascript:alert(1)"},{"nope":1},{"url":""}]'),
+      ['https://sew.mvideoeldorado.ru/v2/relocation/tasks/1'],
+    )
+    assert.deepEqual(extractNewTabUrls('[]'), [])
+    assert.deepEqual(extractNewTabUrls(null), [])
+    assert.deepEqual(extractNewTabUrls('не json'), [])
+  })
+})
