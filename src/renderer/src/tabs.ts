@@ -27,6 +27,10 @@ export interface TabsOptions {
   newTabButton: HTMLButtonElement
   startUrl: string
   hooks: TabsHooks
+  /** Allowlist-предикат оболочки. Не задан — считаем, что разрешено всё. */
+  isAllowed?: (url: string) => boolean
+  /** Отказ по allowlist: вкладка не создана, оболочка должна объяснить пользователю. */
+  onBlocked?: (url: string) => void
 }
 
 let options: TabsOptions | null = null
@@ -35,6 +39,10 @@ let activeId = 0
 let nextId = 1
 /** Вкладка, для которой открыто контекстное меню (ПКМ не активирует вкладку). */
 let menuTabId = 0
+/** Кнопки полосы по id вкладки: элементы переиспользуются, а не пересоздаются. */
+const stripButtons = new Map<number, HTMLButtonElement>()
+/** Порядок id, отрисованный в прошлый раз, — по нему решаем, нужна ли пересборка полосы. */
+let stripOrder: number[] = []
 
 export function initTabs(opts: TabsOptions): void {
   options = opts
@@ -42,6 +50,8 @@ export function initTabs(opts: TabsOptions): void {
   activeId = 0
   nextId = 1
   menuTabId = 0
+  stripButtons.clear()
+  stripOrder = []
   opts.newTabButton.addEventListener('click', () => {
     openTab(opts.startUrl, { activate: true })
   })
@@ -87,6 +97,12 @@ export function openTab(rawUrl: string, opts?: { activate?: boolean }): ShellTab
   if (!o) return null
   const url = normalizeTabUrl(rawUrl)
   if (!url) return null
+  // Allowlist-инвариант живёт здесь: запрещённый хост не должен давать пустую
+  // вкладку без объяснения, поэтому вкладку не создаём вовсе и зовём onBlocked.
+  if (o.isAllowed && !o.isAllowed(url)) {
+    o.onBlocked?.(url)
+    return null
+  }
   const view = document.createElement('webview') as unknown as SewWebViewElement
   view.setAttribute('allowpopups', '')
   const tab: ShellTab = {
@@ -175,6 +191,7 @@ export function focusOrOpenTab(rawUrl: string): void {
     activateTab(found)
     return
   }
+  // Проверку allowlist делает openTab — уже открытой вкладке она не нужна
   openTab(url, { activate: true })
 }
 
@@ -205,43 +222,72 @@ function applyVisibility(): void {
 function renderTabBar(): void {
   const o = options
   if (!o) return
-  o.strip.replaceChildren()
+  const order = tabs.map((tab) => tab.id)
+  const compositionChanged =
+    order.length !== stripOrder.length || order.some((id, index) => stripOrder[index] !== id)
   for (const tab of tabs) {
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.className = tab.id === activeId ? 'tab-btn active' : 'tab-btn'
-    button.title = tab.url
-    const label = document.createElement('span')
-    label.className = 'tab-btn-label'
-    label.textContent = tab.title
-    const close = document.createElement('button')
-    close.type = 'button'
-    close.className = 'tab-btn-close'
-    close.textContent = '×'
-    close.title = 'Закрыть вкладку'
-    close.addEventListener('click', (event) => {
-      const stop = event as { stopPropagation?: () => void }
-      if (typeof stop.stopPropagation === 'function') stop.stopPropagation()
-      closeTab(tab.id)
-    })
-    button.append(label, close)
-    button.addEventListener('click', () => {
-      activateTab(tab)
-    })
-    button.addEventListener('auxclick', (event) => {
-      const mouse = event as MouseEvent
-      if (mouse.button === 1) {
-        mouse.preventDefault()
-        closeTab(tab.id)
-      }
-    })
-    button.addEventListener('contextmenu', (event) => {
-      const mouse = event as MouseEvent
-      mouse.preventDefault()
-      showTabMenu(tab)
-    })
-    o.strip.appendChild(button)
+    let button = stripButtons.get(tab.id)
+    if (!button) {
+      button = createTabButton(tab)
+      stripButtons.set(tab.id, button)
+    }
+    updateTabButton(button, tab)
   }
+  for (const id of [...stripButtons.keys()]) {
+    if (!tabs.some((tab) => tab.id === id)) stripButtons.delete(id)
+  }
+  stripOrder = order
+  // Пересобираем полосу только когда состав вкладок действительно изменился:
+  // did-navigate фоновой вкладки не должен пересоздавать кнопки активной.
+  if (!compositionChanged) return
+  const buttons: HTMLButtonElement[] = []
+  for (const tab of tabs) {
+    const button = stripButtons.get(tab.id)
+    if (button) buttons.push(button)
+  }
+  o.strip.replaceChildren(...buttons)
+}
+
+function createTabButton(tab: ShellTab): HTMLButtonElement {
+  const button = document.createElement('button')
+  button.type = 'button'
+  const label = document.createElement('span')
+  label.className = 'tab-btn-label'
+  const close = document.createElement('button')
+  close.type = 'button'
+  close.className = 'tab-btn-close'
+  close.textContent = '×'
+  close.title = 'Закрыть вкладку'
+  close.addEventListener('click', (event) => {
+    const stop = event as { stopPropagation?: () => void }
+    if (typeof stop.stopPropagation === 'function') stop.stopPropagation()
+    closeTab(tab.id)
+  })
+  button.append(label, close)
+  button.addEventListener('click', () => {
+    activateTab(tab)
+  })
+  button.addEventListener('auxclick', (event) => {
+    const mouse = event as MouseEvent
+    if (mouse.button === 1) {
+      mouse.preventDefault()
+      closeTab(tab.id)
+    }
+  })
+  button.addEventListener('contextmenu', (event) => {
+    const mouse = event as MouseEvent
+    mouse.preventDefault()
+    showTabMenu(tab)
+  })
+  return button
+}
+
+function updateTabButton(button: HTMLButtonElement, tab: ShellTab): void {
+  button.className = tab.id === activeId ? 'tab-btn active' : 'tab-btn'
+  // Подсказка — полный заголовок вкладки (спека §6.3), не URL
+  button.title = tab.title
+  const label = button.children[0]
+  if (label) label.textContent = tab.title
 }
 
 function showTabMenu(tab: ShellTab): void {

@@ -91,16 +91,20 @@ interface Harness {
   wired: number[]
   activated: number[]
   closed: number[]
+  blocked: string[]
   popupItems: Array<{ label: string; action: string }>
   /** Зарегистрированные обработчики onMenuAction — тест шлёт в них action вручную */
   menuActions: Array<(action: string) => void>
 }
 
-function setup(startUrl = 'https://sew.mvideoeldorado.ru/v2/'): Harness {
+function setup(
+  startUrl = 'https://sew.mvideoeldorado.ru/v2/',
+  extra: { isAllowed?: (url: string) => boolean } = {},
+): Harness {
   const container = mkEl('div')
   const strip = mkEl('div')
   const newTab = mkEl('button')
-  const h: Harness = { container, strip, newTab, wired: [], activated: [], closed: [], popupItems: [], menuActions: [] }
+  const h: Harness = { container, strip, newTab, wired: [], activated: [], closed: [], blocked: [], popupItems: [], menuActions: [] }
   ;(globalThis as unknown as { window: unknown }).window = {
     shell: {
       popupMenu: (items: Array<{ label: string; action: string }>): Promise<boolean> => {
@@ -117,6 +121,10 @@ function setup(startUrl = 'https://sew.mvideoeldorado.ru/v2/'): Harness {
     strip: strip as unknown as HTMLElement,
     newTabButton: newTab as unknown as HTMLButtonElement,
     startUrl,
+    isAllowed: extra.isAllowed,
+    onBlocked: (url) => {
+      h.blocked.push(url)
+    },
     hooks: {
       wire: (tab) => h.wired.push(tab.id),
       onActivated: (tab) => h.activated.push(tab.id),
@@ -166,6 +174,20 @@ describe('openTab', () => {
     assert.equal(tabsModule.isActiveTab(first), true)
     assert.equal(second.view.getAttribute('data-hidden'), '')
     assert.deepEqual(h.activated, [first.id])
+  })
+
+  it('не создаёт вкладку для хоста вне allowlist и сообщает об отказе', () => {
+    const h = setup('https://sew.mvideoeldorado.ru/v2/', {
+      isAllowed: (url) => url.startsWith('https://sew.mvideoeldorado.ru/'),
+    })
+    assert.equal(tabsModule.openTab('https://evil.example.com/'), null)
+    assert.deepEqual(h.blocked, ['https://evil.example.com/'])
+    assert.deepEqual(tabsModule.listTabs(), [])
+    assert.equal(h.container.children.length, 0)
+    assert.deepEqual(h.wired, [])
+    // Разрешённый хост по-прежнему открывается — гард не сломал обычный путь
+    assert.ok(tabsModule.openTab('https://sew.mvideoeldorado.ru/v2/relocation/tasks'))
+    assert.equal(tabsModule.listTabs().length, 1)
   })
 })
 

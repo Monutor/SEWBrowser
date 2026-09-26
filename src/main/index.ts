@@ -871,6 +871,14 @@ function createWindow(): void {
     }
     guest.on('will-navigate', (event, url) => denyBlocked(event, url))
     guest.on('will-redirect', (event, url) => denyBlocked(event, url))
+    // Троттлинг фоновых гостей выключаем: первая вкладка (единственный опросный
+    // хост tasks-notify) почти всегда скрыта через [data-hidden], а Chromium
+    // иначе ужимает её setInterval — уведомления молча перестают приходить.
+    try {
+      guest.setBackgroundThrottling(false)
+    } catch (err) {
+      console.warn('[shell] setBackgroundThrottling failed:', err)
+    }
     guest.on('before-input-event', (event, input) => {
       if (input.type !== 'keyDown') return
       const name = guestShortcutName(input)

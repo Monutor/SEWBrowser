@@ -15,7 +15,6 @@ import {
   listTabs,
   openTab,
   primaryTab,
-  refreshTabBar,
   selectTabIndex,
   setTabTitle,
   setTabUrl,
@@ -484,7 +483,8 @@ async function pushPluginStores(): Promise<void> {
  */
 /** Именованный вызов гостя: при reject пишет КАКОЙ вызов упал и с чем.
  *  Без этого безликий "GUEST_VIEW_MANAGER_CALL: ..." не даёт понять виновника.
- *  Повторы с тем же текстом глушим (дедуп по label), исключение пробрасываем. */
+ *  Повторы с тем же текстом глушим (дедуп по ключу `${tab.id}:${label}`),
+ *  исключение пробрасываем. */
 const lastGuestErr: Record<string, string> = {}
 async function guestJS<T>(tab: ShellTab, label: string, code: string): Promise<T> {
   const key = `${tab.id}:${label}`
@@ -932,10 +932,12 @@ async function pumpTasksNotify(): Promise<boolean> {
     const taskUrls = getTaskAlertUrls(first)
     const openUrl = resolveTasksUrl(taskUrls.open)
     const allUrl = taskUrls.all ? resolveTasksUrl(taskUrls.all) : undefined
+    // Клик по баннеру открывает задание вкладкой, как и клик по OS-уведомлению
+    // (ниже onTasksOpen): навигация в текущей вкладке уничтожила бы её работу.
     taskAlert?.show(toastText, () => {
-      void navigate(openUrl)
+      focusOrOpenTab(openUrl)
     }, allUrl ? () => {
-      void navigate(allUrl)
+      focusOrOpenTab(allUrl)
     } : undefined, await readTnAlertTtl())
     return true
   } catch {
@@ -2167,8 +2169,8 @@ async function captureActiveTabScreenshot(): Promise<void> {
     setStatus('нет активной вкладки')
     return
   }
-  const guestId = view.getWebContentsId()
   try {
+    const guestId = view.getWebContentsId()
     showScreenshotToast(await window.shell.captureScreenshot(guestId))
   } catch {
     setStatus('снимок не удался')
@@ -2350,9 +2352,11 @@ function wireTabEvents(tab: ShellTab): void {
     showError(`${event.errorDescription} (код ${event.errorCode})`)
   })
   view.addEventListener('did-start-loading', () => {
+    // loginPrompted сбрасываем всем вкладкам: предложение выбрать аккаунт общее
+    // для оболочки, и форма могла появиться в фоновой вкладке.
+    loginPrompted = false
     if (!isActiveTab(tab)) return
     hideError()
-    loginPrompted = false
     toolbar?.classList.add('loading')
   })
   view.addEventListener('did-stop-loading', () => {
@@ -3498,6 +3502,10 @@ async function init(): Promise<void> {
     strip: document.getElementById('tabbar-strip') as HTMLElement,
     newTabButton: document.getElementById('tabbar-new') as HTMLButtonElement,
     startUrl: config.startUrl,
+    // Allowlist-инвариант в одном месте: openTab не создаёт вкладку для
+    // запрещённого хоста, статус тот же, что у navigate.
+    isAllowed: (url) => isAllowed(url),
+    onBlocked: () => setStatus('blocked by allowlist'),
     hooks: {
       wire: (tab) => {
         wireTabEvents(tab)
@@ -3506,13 +3514,22 @@ async function init(): Promise<void> {
         updateAddressBar()
         applyZoomForCurrentPage()
         updateActiveTab()
+        // Оверлей сети и findbar описывают предыдущую вкладку, на новой они
+        // врут: «Повторить» перезагрузил бы уже другую страницу (спека §7.2/§12).
+        hideError()
+        toolbar?.classList.remove('loading')
+        closeFind()
         // Фоновая вкладка могла догрузить форму входа, пока была неактивной —
         // при возврате фокуса проверяем её (checkLoginForm сам гасит повтор
         // через loginPrompted/accountsOpen).
         void checkLoginForm(false)
       },
-      onClosed: () => {
-        refreshTabBar()
+      onClosed: (tab) => {
+        // Ключи гостевых вызовов не чистятся сами — снимаем префикс вкладки,
+        // иначе за сессию накапливается мусор.
+        for (const key of Object.keys(lastGuestErr)) {
+          if (key.startsWith(`${tab.id}:`)) delete lastGuestErr[key]
+        }
       },
     },
   })
