@@ -59,6 +59,9 @@ interface PrintToPdfOptionsLike {
   pageSize?: PrintPageSizeName | { width: number; height: number }
   /** Поля в дюймах */
   margins?: PrintPdfMargins
+  /** Страницы для печати, формат как в Electron: '1-5, 8, 11-13', индексы 1-based.
+   *  Пустая строка или отсутствие поля = все страницы. */
+  pageRanges?: string
 }
 
 /** Принтер системы: name идёт в deviceName, displayName — в UI */
