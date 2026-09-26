@@ -23,16 +23,29 @@ const PAGE_SIZES: readonly PrintPageSizeName[] = ['A3', 'A4', 'A5', 'A6', 'Legal
 /** Размеры бумаги, которые понимает webview.print: A6 в списке принтера отсутствует */
 export const PRINT_PAPER_NAMES: readonly PrintPaperName[] = ['A3', 'A4', 'A5', 'Legal', 'Letter', 'Tabloid']
 
+/** Число ли значение по сути. Числа и числовые строки берём как есть, остальное
+ *  (null, '', '  ', false, [], {}) — в NaN. Иначе Number() молча превратит мусор
+ *  в 0, а 0 проходит проверку диапазона полей (0..50 мм) и вместо дефолта
+ *  в настройки попадёт поле 0 мм. */
+function toNumber(x: unknown): number {
+  if (typeof x === 'number') return x
+  if (typeof x === 'string' && x.trim() !== '') {
+    const n = Number(x)
+    return Number.isFinite(n) ? n : NaN
+  }
+  return NaN
+}
+
 /** Привести любой мусор из config.json к валидным настройкам */
 export function normalizePrintSettings(raw: unknown): PrintSettings {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ...DEFAULTS }
   const v = raw as Record<string, unknown>
   const int = (x: unknown, min: number, max: number, fallback: number): number => {
-    const n = Math.floor(Number(x))
+    const n = Math.floor(toNumber(x))
     return Number.isFinite(n) && n >= min && n <= max ? n : fallback
   }
   const mm = (x: unknown, fallback: number): number => {
-    const n = Math.round(Number(x) * 100) / 100
+    const n = Math.round(toNumber(x) * 100) / 100
     return Number.isFinite(n) && n >= 0 && n <= 50 ? n : fallback
   }
   const size = typeof v.pageSize === 'string' && PAGE_SIZES.includes(v.pageSize as PrintPageSizeName) ? (v.pageSize as PrintPageSizeName) : DEFAULTS.pageSize

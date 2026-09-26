@@ -79,6 +79,34 @@ describe('normalizePrintSettings', () => {
     assert.equal(s.rangeFrom, 1)
     assert.equal(s.landscape, false)
   })
+
+  it('мусорные поля дают дефолты, а не нули', () => {
+    // Number(null/''/false) === 0, и 0 проходит проверку диапазона 0..50 мм —
+    // раньше из-за этого поля молча схлопывались в 0 мм вместо дефолтных
+    const s = normalizePrintSettings({
+      marginTop: null,
+      marginBottom: '',
+      marginLeft: false,
+      marginRight: undefined,
+    })
+    assert.equal(s.marginTop, base.marginTop)
+    assert.equal(s.marginBottom, base.marginBottom)
+    assert.equal(s.marginLeft, base.marginLeft)
+    assert.equal(s.marginRight, base.marginRight)
+  })
+
+  it('валидные значения полей сохраняются, включая 0 мм', () => {
+    const s = normalizePrintSettings({
+      marginTop: 0,
+      marginBottom: 7.5,
+      marginLeft: '8',
+      marginRight: 50,
+    })
+    assert.equal(s.marginTop, 0)
+    assert.equal(s.marginBottom, 7.5)
+    assert.equal(s.marginLeft, 8)
+    assert.equal(s.marginRight, 50)
+  })
 })
 
 describe('mmToInches', () => {
