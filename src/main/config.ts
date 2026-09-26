@@ -36,6 +36,27 @@ export interface ScanFolder {
   path: string
 }
 
+/** Настройки диалога печати (renderer, src/renderer/src/print-dialog.ts) */
+export interface PrintSettings {
+  destination: 'pdf' | 'printer';
+  deviceName: string;
+  rangeMode: 'all' | 'current' | 'custom';
+  rangeFrom: number;
+  rangeTo: number;
+  copies: number;
+  landscape: boolean;
+  pageSize: 'A3' | 'A4' | 'A5' | 'A6' | 'Legal' | 'Letter' | 'Tabloid';
+  /** Поля в миллиметрах */
+  marginTop: number;
+  marginBottom: number;
+  marginLeft: number;
+  marginRight: number;
+  /** Проценты, 10..200 */
+  scale: number;
+  printBackground: boolean;
+  displayHeaderFooter: boolean;
+}
+
 export interface SewConfig {
   startUrl: string;
   debug: boolean;
@@ -44,6 +65,8 @@ export interface SewConfig {
   plugins: Record<string, boolean>;
    /** Запомненный зум страниц: host -> zoom factor (1 = 100%) */
    zoom: Record<string, number>;
+   /** Настройки диалога печати; undefined — ещё не печатали (renderer ставит дефолты) */
+   print?: PrintSettings;
    /** Автоочистка при выходе: 'none' | 'cache' (только HTTP-кэш) | 'all' (кэш + все хранилища) */
    clearOnExit: 'none' | 'cache' | 'all';
    tabs: NavTab[];
@@ -174,6 +197,38 @@ function sanitizeConfig(user: Partial<SewConfig>): SewConfig {
     if (legacy) return [{ id: folderIdFor(legacy), path: legacy }]
     return DEFAULTS.scanFolders
   }
+  // Настройки печати: неверный тип/значение -> дефолт. absent/undefined
+  // остаётся undefined — renderer применит свои дефолты (A4, книжная, 20/20/10/10).
+  const pickPrint = (v: unknown): PrintSettings | undefined => {
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined
+    const raw = v as Record<string, unknown>
+    const sizes = ['A3', 'A4', 'A5', 'A6', 'Legal', 'Letter', 'Tabloid'] as const
+    const int = (x: unknown, min: number, max: number, fallback: number): number => {
+      const n = Math.floor(Number(x))
+      return Number.isFinite(n) && n >= min && n <= max ? n : fallback
+    }
+    const mm = (x: unknown, fallback: number): number => {
+      const n = Math.round(Number(x) * 100) / 100
+      return Number.isFinite(n) && n >= 0 && n <= 50 ? n : fallback
+    }
+    return {
+      destination: raw.destination === 'printer' ? 'printer' : 'pdf',
+      deviceName: typeof raw.deviceName === 'string' ? raw.deviceName : '',
+      rangeMode: raw.rangeMode === 'current' || raw.rangeMode === 'custom' ? raw.rangeMode : 'all',
+      rangeFrom: int(raw.rangeFrom, 1, 100000, 1),
+      rangeTo: int(raw.rangeTo, 1, 100000, 1),
+      copies: int(raw.copies, 1, 99, 1),
+      landscape: raw.landscape === true,
+      pageSize: sizes.includes(raw.pageSize as (typeof sizes)[number]) ? (raw.pageSize as PrintSettings['pageSize']) : 'A4',
+      marginTop: mm(raw.marginTop, 20),
+      marginBottom: mm(raw.marginBottom, 20),
+      marginLeft: mm(raw.marginLeft, 10),
+      marginRight: mm(raw.marginRight, 10),
+      scale: int(raw.scale, 10, 200, 100),
+      printBackground: raw.printBackground === true,
+      displayHeaderFooter: raw.displayHeaderFooter === true,
+    }
+  }
   const folders = pickFolders(user.folders)
   const folderIds = new Set(folders.map((f) => f.id))
   const tabs = pickTabs(user.tabs).map((t) =>
@@ -186,6 +241,7 @@ function sanitizeConfig(user: Partial<SewConfig>): SewConfig {
     allowlist: pickStringArray(user.allowlist, DEFAULTS.allowlist),
     plugins: { ...DEFAULTS.plugins, ...pickBoolMap(user.plugins) },
     zoom: { ...DEFAULTS.zoom, ...pickZoom(user.zoom) },
+    print: pickPrint(user.print),
     clearOnExit: user.clearOnExit === 'cache' || user.clearOnExit === 'all' ? user.clearOnExit : 'none',
     folders,
     tabs,

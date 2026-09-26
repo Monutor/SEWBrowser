@@ -7,6 +7,69 @@ declare module '*.css'
  * НЕ работает; попапы — через атрибут allowpopups + setWindowOpenHandler
  * в main-процессе (события 'new-window' у webview НЕТ).
  */
+
+/** Размер бумаги, поддерживаемый и webContents.print, и printToPDF */
+type PrintPageSizeName = 'A3' | 'A4' | 'A5' | 'A6' | 'Legal' | 'Letter' | 'Tabloid'
+
+/** Поля в дюймах (так их ждёт Electron) */
+interface PrintMarginsLike {
+  top?: number
+  bottom?: number
+  left?: number
+  right?: number
+}
+
+interface PrintOptionsLike {
+  silent?: boolean
+  printBackground?: boolean
+  /** Системное имя принтера из списка (не displayName!) */
+  deviceName?: string
+  landscape?: boolean
+  pageSize?: PrintPageSizeName | { width: number; height: number }
+  copies?: number
+  /** '1-3' — диапазон; пустая строка/отсутствие = все страницы */
+  pageRanges?: string
+  margins?: PrintMarginsLike
+}
+
+interface PrintToPdfOptionsLike {
+  landscape?: boolean
+  printBackground?: boolean
+  /** 0.1..2; настройка хранится в процентах, здесь доля */
+  scale?: number
+  displayHeaderFooter?: boolean
+  pageSize?: PrintPageSizeName | { width: number; height: number }
+  margins?: PrintMarginsLike
+}
+
+/** Принтер системы: name идёт в deviceName, displayName — в UI */
+interface ShellPrinter {
+  name: string
+  displayName: string
+  description: string
+}
+
+/** Настройки диалога печати; пишутся в config.json при печати/сохранении */
+interface PrintSettings {
+  destination: 'pdf' | 'printer'
+  deviceName: string
+  rangeMode: 'all' | 'current' | 'custom'
+  rangeFrom: number
+  rangeTo: number
+  copies: number
+  landscape: boolean
+  pageSize: PrintPageSizeName
+  /** Поля в миллиметрах */
+  marginTop: number
+  marginBottom: number
+  marginLeft: number
+  marginRight: number
+  /** Проценты, 10..200 */
+  scale: number
+  printBackground: boolean
+  displayHeaderFooter: boolean
+}
+
 interface SewWebViewElement extends HTMLElement {
   loadURL(url: string): Promise<void>
   getURL(): string
@@ -25,7 +88,8 @@ interface SewWebViewElement extends HTMLElement {
   setZoomFactor(factor: number): void
   findInPage(text: string, options?: { forward?: boolean; findNext?: boolean; matchCase?: boolean }): number
   stopFindInPage(action: 'clearSelection' | 'keepSelection' | 'activateSelection'): void
-  print(): Promise<void>
+  print(options?: PrintOptionsLike): Promise<void>
+  printToPDF(options?: PrintToPdfOptionsLike): Promise<Uint8Array>
   addEventListener(
     event: 'did-navigate' | 'did-navigate-in-page',
     listener: (event: { url: string }) => void,
@@ -70,6 +134,7 @@ interface ShellConfig {
   allowlist: string[]
   plugins: Record<string, boolean>
   zoom: Record<string, number>
+  print?: PrintSettings
   clearOnExit: 'none' | 'cache' | 'all'
   tabs: NavTab[]
   folders: NavFolder[]
@@ -317,6 +382,10 @@ interface ShellApi {
   onMenuAction(cb: (action: string) => void): void
   /** Копирование текста в системный буфер обмена (меню адреса) */
   copyText(text: string): Promise<boolean>
+  /** Принтеры системы (список одинаков для всех webContents) */
+  listPrinters(): Promise<ShellPrinter[]>
+  /** ПКМ по странице → «Печать…»: main шлёт 'shell:open-print' */
+  onOpenPrint(cb: () => void): void
   /** Выбрать свой звук уведомления для слота ('rel' | 'ho'); null — отмена/неподходящий файл */
   pickSound(slot: 'rel' | 'ho'): Promise<{ file: string; name: string } | null>
   /** Байты сохранённого звука слота для проигрывания (null — нет своего файла) */

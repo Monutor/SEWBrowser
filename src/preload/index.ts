@@ -6,6 +6,32 @@ interface NavTabLike {
   url: string
 }
 
+/** Поля печати в том же виде, что в конфиге (см. shell-api.d.ts) */
+interface PrintSettingsLike {
+  destination: 'pdf' | 'printer'
+  deviceName: string
+  rangeMode: 'all' | 'current' | 'custom'
+  rangeFrom: number
+  rangeTo: number
+  copies: number
+  landscape: boolean
+  pageSize: 'A3' | 'A4' | 'A5' | 'A6' | 'Legal' | 'Letter' | 'Tabloid'
+  marginTop: number
+  marginBottom: number
+  marginLeft: number
+  marginRight: number
+  scale: number
+  printBackground: boolean
+  displayHeaderFooter: boolean
+}
+
+/** Принтер системы для диалога печати */
+interface ShellPrinterLike {
+  name: string
+  displayName: string
+  description: string
+}
+
 interface ShellConfigLike {
   startUrl: string
   debug: boolean
@@ -13,6 +39,7 @@ interface ShellConfigLike {
   allowlist: string[]
   plugins: Record<string, boolean>
   zoom: Record<string, number>
+  print?: PrintSettingsLike
   clearOnExit: 'none' | 'cache' | 'all'
   tabs: NavTabLike[]
   scanFolders: ScanFolderLike[]
@@ -281,6 +308,10 @@ const api = {
   },
   /** Копирование текста в системный буфер обмена */
   copyText: (text: string): Promise<boolean> => ipcRenderer.invoke('clipboard:write-text', text),
+  listPrinters: (): Promise<ShellPrinterLike[]> => ipcRenderer.invoke('printers:list'),
+  onOpenPrint: (cb: () => void): void => {
+    ipcRenderer.on('shell:open-print', () => cb())
+  },
   /** Выбрать свой звук уведомления для слота ('rel' | 'ho'); null — отмена/неподходящий файл */
   pickSound: (slot: 'rel' | 'ho'): Promise<{ file: string; name: string } | null> =>
     ipcRenderer.invoke('sound:pick', slot),

@@ -304,6 +304,18 @@ function createWindow(): void {
     clipboard.writeText(text)
     return true
   })
+  // Список системных принтеров для диалога печати. Список одинаков для любого
+  // webContents, поэтому гость не нужен — берём у webContents главного окна.
+  ipcMain.handle('printers:list', async () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return []
+    try {
+      const printers = await mainWindow.webContents.getPrintersAsync()
+      return printers.map((p) => ({ name: p.name, displayName: p.displayName, description: p.description }))
+    } catch (err) {
+      console.warn('[shell] getPrintersAsync failed:', err)
+      throw err
+    }
+  })
   // Уведомления tasks-notify: пачка за тик → одно OS-уведомление (или по одному при <=3)
   ipcMain.handle('notify:tasks', (_event, items: unknown) => {
     const list = Array.isArray(items) ? items.filter((x): x is { id: number; title: string; body: string; url: string } =>
@@ -1004,7 +1016,13 @@ function createWindow(): void {
           },
         },
         { type: 'separator' },
-        { label: 'Печать…', click: () => { if (!guest.isDestroyed()) void guest.print({}) } },
+        {
+          // Свой диалог печати живёт в renderer; системный — вызовется из него.
+          label: 'Печать…',
+          click: () => {
+            if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('shell:open-print')
+          },
+        },
         {
           label: 'Открыть страницу в браузере',
           click: () => {
