@@ -39,6 +39,7 @@ interface ShellConfigLike {
   allowlist: string[]
   plugins: Record<string, boolean>
   zoom: Record<string, number>
+  /** Настройки диалога печати; нет — renderer ставит свои дефолты */
   print?: PrintSettingsLike
   clearOnExit: 'none' | 'cache' | 'all'
   tabs: NavTabLike[]
@@ -308,7 +309,9 @@ const api = {
   },
   /** Копирование текста в системный буфер обмена */
   copyText: (text: string): Promise<boolean> => ipcRenderer.invoke('clipboard:write-text', text),
+  /** Принтеры системы для диалога печати (name идёт в deviceName) */
   listPrinters: (): Promise<ShellPrinterLike[]> => ipcRenderer.invoke('printers:list'),
+  /** ПКМ по странице → «Печать…»: main шлёт 'shell:open-print' */
   onOpenPrint: (cb: () => void): void => {
     ipcRenderer.on('shell:open-print', () => cb())
   },

@@ -262,6 +262,10 @@ export function saveConfig(partial: Partial<SewConfig>): SewConfig {
   if ('zoom' in validPartial && (!validPartial.zoom || typeof validPartial.zoom !== 'object')) {
     delete validPartial.zoom
   }
+  // Явный print: undefined в патче не должен затирать настройки печати в файле
+  if ('print' in validPartial && (!validPartial.print || typeof validPartial.print !== 'object' || Array.isArray(validPartial.print))) {
+    delete validPartial.print
+  }
   const merged: Partial<SewConfig> = {
     ...current,
     ...validPartial,

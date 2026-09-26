@@ -1,22 +1,36 @@
 declare module '*.css'
 
-/**
- * Подмножество реального API тега <webview> (см. Electron docs, webview-tag).
- * Важно: события — ТОЛЬКО через addEventListener (метода .on нет);
- * навигация — через loadURL()/атрибут src; preventDefault() в will-navigate
- * НЕ работает; попапы — через атрибут allowpopups + setWindowOpenHandler
- * в main-процессе (события 'new-window' у webview НЕТ).
- */
-
-/** Размер бумаги, поддерживаемый и webContents.print, и printToPDF */
+/** Размер бумаги, который понимает printToPDF (A0..A6, Legal, Letter, Tabloid, Ledger).
+ *  У принтера набор уже — см. PrintPaperName: A6 в списке webview.print нет. */
 type PrintPageSizeName = 'A3' | 'A4' | 'A5' | 'A6' | 'Legal' | 'Letter' | 'Tabloid'
 
-/** Поля в дюймах (так их ждёт Electron) */
-interface PrintMarginsLike {
+/** Размер бумаги, который понимает webview.print (A6 в этом списке отсутствует) */
+type PrintPaperName = 'A3' | 'A4' | 'A5' | 'Legal' | 'Letter' | 'Tabloid'
+
+/** Диапазон страниц для webview.print: индексы 0-based, last — включительно.
+ *  ВНИМАНИЕ: у printToPDF pageRanges — строка '1-5, 8' с индексами 1-based. */
+interface PrintPageRange {
+  from: number
+  to: number
+}
+
+/** Поля для printToPDF — в ДЮЙМАХ (PrintToPDFMargins), по умолчанию ~0.4" */
+interface PrintPdfMargins {
   top?: number
   bottom?: number
   left?: number
   right?: number
+}
+
+/** Поля для webview.print — в ПИКСЕЛЯХ (Margins). Свои поля Electron принимает
+ *  ТОЛЬКО при marginType: 'custom', поэтому здесь он обязателен, как и все четыре
+ *  стороны. Из миллиметров настроек конвертирует print-dialog. */
+interface PrintMarginsPx {
+  marginType: 'custom'
+  top: number
+  bottom: number
+  left: number
+  right: number
 }
 
 interface PrintOptionsLike {
@@ -25,11 +39,14 @@ interface PrintOptionsLike {
   /** Системное имя принтера из списка (не displayName!) */
   deviceName?: string
   landscape?: boolean
-  pageSize?: PrintPageSizeName | { width: number; height: number }
+  /** Имя размера бумаги или свой размер; объект — в МИКРОНАХ (только у принтера) */
+  pageSize?: PrintPaperName | { width: number; height: number }
   copies?: number
-  /** '1-3' — диапазон; пустая строка/отсутствие = все страницы */
-  pageRanges?: string
-  margins?: PrintMarginsLike
+  /** Масштаб 0.1..2 (у printToPDF это scale). Настройка хранится в процентах, здесь доля */
+  scaleFactor?: number
+  /** Диапазоны страниц, индексы 0-based */
+  pageRanges?: PrintPageRange[]
+  margins?: PrintMarginsPx
 }
 
 interface PrintToPdfOptionsLike {
@@ -38,8 +55,10 @@ interface PrintToPdfOptionsLike {
   /** 0.1..2; настройка хранится в процентах, здесь доля */
   scale?: number
   displayHeaderFooter?: boolean
+  /** Имя размера бумаги или свой размер; объект — в ДЮЙМАХ (у принтера — микроны) */
   pageSize?: PrintPageSizeName | { width: number; height: number }
-  margins?: PrintMarginsLike
+  /** Поля в дюймах */
+  margins?: PrintPdfMargins
 }
 
 /** Принтер системы: name идёт в deviceName, displayName — в UI */
@@ -58,6 +77,7 @@ interface PrintSettings {
   rangeTo: number
   copies: number
   landscape: boolean
+  /** A6 хранить можно (PDF его понимает), но принтеру такое имя не отправить */
   pageSize: PrintPageSizeName
   /** Поля в миллиметрах */
   marginTop: number
@@ -70,6 +90,13 @@ interface PrintSettings {
   displayHeaderFooter: boolean
 }
 
+/**
+ * Подмножество реального API тега <webview> (см. Electron docs, webview-tag).
+ * Важно: события — ТОЛЬКО через addEventListener (метода .on нет);
+ * навигация — через loadURL()/атрибут src; preventDefault() в will-navigate
+ * НЕ работает; попапы — через атрибут allowpopups + setWindowOpenHandler
+ * в main-процессе (события 'new-window' у webview НЕТ).
+ */
 interface SewWebViewElement extends HTMLElement {
   loadURL(url: string): Promise<void>
   getURL(): string
@@ -89,7 +116,7 @@ interface SewWebViewElement extends HTMLElement {
   findInPage(text: string, options?: { forward?: boolean; findNext?: boolean; matchCase?: boolean }): number
   stopFindInPage(action: 'clearSelection' | 'keepSelection' | 'activateSelection'): void
   print(options?: PrintOptionsLike): Promise<void>
-  printToPDF(options?: PrintToPdfOptionsLike): Promise<Uint8Array>
+  printToPDF(options: PrintToPdfOptionsLike): Promise<Uint8Array>
   addEventListener(
     event: 'did-navigate' | 'did-navigate-in-page',
     listener: (event: { url: string }) => void,
