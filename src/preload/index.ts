@@ -271,6 +271,14 @@ const api = {
       if (typeof url === 'string' && url) cb(url)
     })
   },
+  /** Контекстное меню оболочки (ПКМ по вкладке): native-попап в main */
+  popupMenu: (items: { label: string; action: string }[]): Promise<boolean> =>
+    ipcRenderer.invoke('shell:popup-menu', items),
+  onMenuAction: (cb: (action: string) => void): void => {
+    ipcRenderer.on('shell:menu-action', (_event, action: string) => {
+      if (typeof action === 'string') cb(action)
+    })
+  },
   /** Выбрать свой звук уведомления для слота ('rel' | 'ho'); null — отмена/неподходящий файл */
   pickSound: (slot: 'rel' | 'ho'): Promise<{ file: string; name: string } | null> =>
     ipcRenderer.invoke('sound:pick', slot),

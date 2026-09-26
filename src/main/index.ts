@@ -313,6 +313,25 @@ function createWindow(): void {
     try { mainWindow.flashFrame(true) } catch { /* ignore */ }
     return true
   })
+  // Контекстное меню оболочки (ПКМ по вкладке). Клик по пункту возвращается в renderer.
+  ipcMain.handle('shell:popup-menu', (event, items: unknown) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const list = Array.isArray(items) ? items : []
+    const template: MenuItemConstructorOptions[] = []
+    for (const raw of list) {
+      if (!raw || typeof raw !== 'object') continue
+      const item = raw as { label?: unknown; action?: unknown }
+      if (typeof item.label !== 'string' || typeof item.action !== 'string') continue
+      const action = item.action
+      template.push({
+        label: item.label,
+        click: () => event.sender.send('shell:menu-action', action),
+      })
+    }
+    if (!win || template.length === 0) return false
+    Menu.buildFromTemplate(template).popup({ window: win })
+    return true
+  })
   // Пользовательский звук tasks-notify по слотам ('rel' — перемещение, 'ho' — выдача).
   // Файлы: userData/sounds/custom-<slot>.<ext>. В plugin-data только имя файла, бинарь — на диске.
   ipcMain.handle('sound:pick', async (_event, slot: unknown) => {

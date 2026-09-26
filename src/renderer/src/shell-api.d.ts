@@ -311,6 +311,10 @@ interface ShellApi {
   onTasksOpen(cb: (url: string) => void): void
   /** main просит открыть новую вкладку с URL (напр. из ссылки в письме/уведомлении) */
   onOpenNewTab(cb: (url: string) => void): void
+  /** Контекстное меню оболочки (напр. ПКМ по вкладке): native-попап в main */
+  popupMenu(items: { label: string; action: string }[]): Promise<boolean>
+  /** Клик по пункту контекстного меню: main шлёт 'shell:menu-action' */
+  onMenuAction(cb: (action: string) => void): void
   /** Выбрать свой звук уведомления для слота ('rel' | 'ho'); null — отмена/неподходящий файл */
   pickSound(slot: 'rel' | 'ho'): Promise<{ file: string; name: string } | null>
   /** Байты сохранённого звука слота для проигрывания (null — нет своего файла) */
