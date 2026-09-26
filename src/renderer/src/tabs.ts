@@ -112,6 +112,10 @@ export function closeTab(id: number): void {
   if (!o || index < 0) return
   const [tab] = tabs.splice(index, 1)
   if (menuTabId === id) menuTabId = 0
+  // Первая вкладка — единственный опросный хост (isPrimary). При сдвиге головы списка
+  // флаг надо пересчитать, иначе полисер задачи 6 останется без хоста.
+  tab.isPrimary = false
+  if (tabs.length > 0) tabs[0].isPrimary = true
   o.hooks.onClosed(tab)
   try {
     tab.view.remove()

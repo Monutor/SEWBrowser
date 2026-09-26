@@ -236,6 +236,19 @@ describe('closeTab', () => {
     assert.equal(tabsModule.isActiveTab(fresh), true)
     assert.equal(h.container.children.length, 1)
   })
+
+  it('пересчитывает isPrimary первой вкладки после её закрытия', () => {
+    setup()
+    const a = tabsModule.openTab('https://a.mvideoeldorado.ru/')
+    const b = tabsModule.openTab('https://b.mvideoeldorado.ru/')
+    assert.ok(a && b)
+    assert.equal(a.isPrimary, true)
+    assert.equal(b.isPrimary, false)
+    tabsModule.closeTab(a.id)
+    // Новой головой списка стала b — она и должна быть единственным опросным хостом
+    assert.equal(b.isPrimary, true)
+    assert.equal(tabsModule.primaryView() === b.view, true)
+  })
 })
 
 describe('focusOrOpenTab', () => {
@@ -347,5 +360,21 @@ describe('полоса вкладок', () => {
     h.menuActions[0]('close')
     assert.equal(tabsModule.listTabs().length, 1)
     assert.equal(tabsModule.listTabs()[0].url, 'https://sew.mvideoeldorado.ru/v2/')
+  })
+
+  it('меню close-right закрывает всё справа от неактивной вкладки, слева выживают', () => {
+    const h = setup()
+    const a = tabsModule.openTab('https://a.mvideoeldorado.ru/')
+    const b = tabsModule.openTab('https://b.mvideoeldorado.ru/')
+    const c = tabsModule.openTab('https://c.mvideoeldorado.ru/')
+    const d = tabsModule.openTab('https://d.mvideoeldorado.ru/')
+    assert.ok(a && b && c && d)
+    // Активна d (открыта последней), а меню открываем ПКМ по b
+    fire(h.strip.children[1], 'contextmenu', { preventDefault(): void {}, clientX: 0, clientY: 0 })
+    h.menuActions[0]('close-right')
+    assert.deepEqual(tabsModule.listTabs().map((t) => t.id), [a.id, b.id])
+    assert.deepEqual(h.closed, [c.id, d.id])
+    // Активной была d (закрыта) — ремонтируем на правого соседа
+    assert.equal(tabsModule.isActiveTab(b), true)
   })
 })
