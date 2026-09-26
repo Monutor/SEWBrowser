@@ -18,6 +18,16 @@ function __tnGetSettings(cb) {
   } catch (e) { cb({ objectId: 'S187', intervalSec: 60, sound: true }); }
 }
 
+/**
+ * Перехват Bearer из запросов самой SPA: fetch + setRequestHeader на прототипе.
+ * Вызывается из __tnArm во всех вкладках и неоднократно (__tnInit при загрузке,
+ * затем take-скрипт оболочки при промоушене вкладки в хост), поэтому идемпотентен.
+ * Флаг ставится ДО обёрток и именно поэтому: повторный вход не должен ни обернуть
+ * window.fetch/XHR второй раз (двойная обёртка ломает страницу), ни частично
+ * повторить уже упавшую обёртку. Оборачивает, но НИЧЕГО не отправляет — только
+ * читает заголовки чужих запросов, поэтому вызов в непривилегированной вкладке
+ * безопасен: ни одного запроса от себя плагин здесь не делает.
+ */
 function __tnHookAuth() {
   if (window.__tnHooked) return;
   window.__tnHooked = true;
@@ -174,10 +184,14 @@ function __tnTick() {
  * вкладке уже отработал и вышел.
  */
 function __tnArm() {
-  if (window.__tnArmed) return;                // идемпотентно: без двойного таймера
-  if (window.__shellPollHost === false) return; // не хост
-  window.__tnArmed = 1;
+  // Перехват Bearer ставим ВСЕМ вкладкам и ДО гвардов хоста: он пассивен
+  // (оборачивает fetch/XHR, сам ничего не шлёт) и безопасен вне хоста, а без
+  // него promoted-вкладка осталась бы без Bearer — к моменту, когда оболочка
+  // проставит ей флаг, SPA давно отгрузила данные и перехватывать нечего.
   __tnHookAuth();
+  if (window.__tnArmed) return;                // идемпотентно: без двойного таймера
+  if (window.__shellPollHost === false) return; // не хост: только перехват, опрос не поднимаем
+  window.__tnArmed = 1;
   window.__tasksNotifyReq = window.__tasksNotifyReq || [];
   window.__tasksNotifyState = window.__tasksNotifyState || { lastTick: '', lastCount: 0, lastError: '' };
   __tnGetSettings(function (st) {
