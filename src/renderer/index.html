@@ -27,6 +27,11 @@
     </div>
   </div>
 
+  <div id="tabbar">
+    <div id="tabbar-strip"></div>
+    <button type="button" id="tabbar-new" title="Новая вкладка (Ctrl+T)" aria-label="Новая вкладка">+</button>
+  </div>
+
   <div id="toolbar">
     <button id="btn-back" title="Назад" aria-label="Назад"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"
         stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -563,7 +568,7 @@
     </div>
   </div>
 
-  <webview id="site" allowpopups></webview>
+  <div id="tab-views"></div>
 
   <script type="module" src="./src/main.ts"></script>
 </body>
