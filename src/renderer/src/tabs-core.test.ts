@@ -29,6 +29,29 @@ describe('normalizeTabUrl', () => {
   it('возвращает пустую строку на неразбираемом URL', () => {
     assert.equal(normalizeTabUrl('http://'), '')
   })
+
+  // Кейсы ниже фиксируют url.href-нормализацию: результат НЕ равен вводу дословно.
+  // tab.url в слое вкладок всегда равен результату normalizeTabUrl, и по нему идёт
+  // дедупликация URL по строке в focusOrOpenTab — без этих тестов рефакторинг
+  // regex'ов тихо научился бы ломать дедупликацию (один и тот же адрес из двух
+  // форм ввода перестал бы совпадать). Ожидания зафиксированы фактическим
+  // запуском node, а не выведены умозрительно.
+  it('приводит хост к нижнему регистру через url.href', () => {
+    assert.equal(
+      normalizeTabUrl('https://SEW.MVIDEOELDORADO.RU/v2/'),
+      'https://sew.mvideoeldorado.ru/v2/',
+    )
+  })
+  it('дописывает / к пустому пути через url.href', () => {
+    assert.equal(normalizeTabUrl('https://A.RU'), 'https://a.ru/')
+  })
+  it('percent-encoding не-ASCII и пробелов через url.href', () => {
+    assert.equal(
+      normalizeTabUrl('https://a.ru/путь?q=значение'),
+      'https://a.ru/%D0%BF%D1%83%D1%82%D1%8C?q=%D0%B7%D0%BD%D0%B0%D1%87%D0%B5%D0%BD%D0%B8%D0%B5',
+    )
+    assert.equal(normalizeTabUrl('https://a.ru/my path'), 'https://a.ru/my%20path')
+  })
 })
 
 describe('hostOfTabUrl', () => {
