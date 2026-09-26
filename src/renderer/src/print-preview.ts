@@ -48,7 +48,14 @@ export async function renderPdfThumbnails(
   try {
     // isEvalSupported в pdf.js 6.x удалён вместе с веткой font→eval
     // (CVE-2024-4367), отдельный флаг больше не нужен.
-    const loading = pdfjs.getDocument({ data: bytes })
+    // Копия, а не сам буфер: getDataProp() для обычного Uint8Array отдаёт тот же
+    // объект, а getDocument() кладёт data.buffer в transfer-list (build/pdf.mjs:
+    // sendWithPromise('GetDocRequest', docParams, data ? [data.buffer] : null)) —
+    // без копии буфер вызывающего сразу станет detached (byteLength === 0), а
+    // контроллер переиспользует те же байты для «Показать все» и «Сохранить как
+    // PDF». Контракт функции — не портить входной аргумент в любом случае.
+    const payload = bytes.slice()
+    const loading = pdfjs.getDocument({ data: payload })
     task = loading
     const doc = await loading.promise
     const pageCount = doc.numPages
