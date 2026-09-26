@@ -2221,17 +2221,17 @@ function wireToolbar(): void {
     if (config) void navigate(config.startUrl)
   })
   document.getElementById('btn-mvideo')?.addEventListener('click', () => {
-    void navigate('https://www.mvideo.ru/')
+    focusOrOpenTab('https://www.mvideo.ru/')
   })
   document.getElementById('btn-reload')?.addEventListener('click', () => {
     const view = activeView()
     if (view) view.reload()
   })
   document.getElementById('btn-barcode')?.addEventListener('click', () => {
-    void navigate('https://monutor.github.io/warehouse-barcode-generator/')
+    focusOrOpenTab('https://monutor.github.io/warehouse-barcode-generator/')
   })
   document.getElementById('btn-products')?.addEventListener('click', () => {
-    void navigate('https://monutor.github.io/DataBaseProducts/')
+    focusOrOpenTab('https://monutor.github.io/DataBaseProducts/')
   })
   document.getElementById('btn-accounts')?.addEventListener('click', () => void openAccounts(true))
   document.getElementById('btn-screenshot')?.addEventListener('click', () => void captureActiveTabScreenshot())
