@@ -1117,7 +1117,15 @@ async function clearSessionAndLogout(): Promise<void> {
   try {
     await window.shell.clearSession()
     closeSettings()
-    activeView()?.reload()
+    // Сессия общая для всего окна — перезагружаем ВСЕ вкладки, иначе неактивные
+    // продолжают рендерить залогиненную SEW до ручного F5.
+    for (const tab of listTabs()) {
+      try {
+        tab.view.reload()
+      } catch (err) {
+        console.warn('[shell] tab reload failed:', err)
+      }
+    }
     setStatus('сессия очищена')
   } catch (err) {
     console.warn('[shell] failed to clear session:', err)
@@ -1375,7 +1383,17 @@ async function clearStorageTarget(target: 'cache' | 'cookies'): Promise<void> {
   }
   try {
     await window.shell.clearStorage(target)
-    if (target === 'cookies') activeView()?.reload()
+    if (target === 'cookies') {
+      // Куки общие для всего окна — перезагружаем ВСЕ вкладки, иначе неактивные
+      // продолжают рендерить залогиненную SEW до ручного F5.
+      for (const tab of listTabs()) {
+        try {
+          tab.view.reload()
+        } catch (err) {
+          console.warn('[shell] tab reload failed:', err)
+        }
+      }
+    }
     await refreshStoragePanel()
     setStatus(target === 'cache' ? 'кэш очищен' : 'куки очищены')
   } catch (err) {
@@ -2118,8 +2136,17 @@ function wireTabEvents(tab: ShellTab): void {
       }
     } else {
       // Показываем заблокированный хост — так проще дополнять allowlist
-      if (isActiveTab(tab)) setStatus(`blocked: ${hostOf(event.url) || event.url}`)
-      void view.loadURL(tab.lastAllowedUrl).catch((err) => console.warn('[shell] bounce-back failed:', err))
+      const blocked = hostOf(event.url) || event.url
+      if (isActiveTab(tab)) setStatus(`blocked: ${blocked}`)
+      // Откатываемся на lastAllowedUrl, но только если он сам разрешён: вкладка,
+      // открытая по не-allowlisted ссылке, иначе зациклится сама на себя
+      // (did-navigate → bounce-back на тот же URL → did-navigate → …).
+      const fallback = tab.lastAllowedUrl
+      if (!fallback || !isAllowed(fallback)) {
+        if (isActiveTab(tab)) showError(`Хост ${blocked} не разрешён allowlist`)
+        return
+      }
+      void view.loadURL(fallback).catch((err) => console.warn('[shell] bounce-back failed:', err))
     }
   })
   view.addEventListener('did-navigate-in-page', (event) => {
@@ -3309,6 +3336,10 @@ async function init(): Promise<void> {
         updateAddressBar()
         applyZoomForCurrentPage()
         updateActiveTab()
+        // Фоновая вкладка могла догрузить форму входа, пока была неактивной —
+        // при возврате фокуса проверяем её (checkLoginForm сам гасит повтор
+        // через loginPrompted/accountsOpen).
+        void checkLoginForm(false)
       },
       onClosed: () => {
         refreshTabBar()
