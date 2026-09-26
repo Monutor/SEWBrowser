@@ -8,8 +8,9 @@
 
 <body>
   <div id="titlebar">
-    <span class="app-title"><img class="app-icon" src="./icon.png" alt="" /><span
+    <span class="app-title"><span class="app-logo"><img class="app-icon" src="./icon.png" alt="" /></span><span
         class="app-name">SEW-Браузер</span><span class="app-version" id="app-version"></span></span>
+    <div id="titlebar-title"></div>
     <div class="window-controls">
       <button id="btn-min" title="Свернуть" aria-label="Свернуть"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"
           stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -101,7 +102,14 @@
         <polyline points="23 4 23 10 17 10"></polyline>
         <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
       </svg></button>
-    <input id="address" spellcheck="false" autocomplete="off" />
+    <label class="omnibox" for="address">
+      <span class="omnibox-lock" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="11" width="16" height="10" rx="3"></rect>
+          <path d="M8 11V7a4 4 0 0 1 8 0v4"></path>
+        </svg></span>
+      <input id="address" spellcheck="false" autocomplete="off" />
+    </label>
     <button id="btn-accounts" title="Аккаунты SEW (Ctrl+Shift+L)">&#128273;</button>
     <button id="btn-downloads" title="Загрузки">&#128229;</button>
     <button id="btn-screenshot" title="Снимок вкладки (Ctrl+Shift+S)">&#128247;</button>

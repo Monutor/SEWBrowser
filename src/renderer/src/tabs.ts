@@ -1,4 +1,4 @@
-import { clampTabIndex, cycleTabIndex, normalizeTabUrl, tabTitle } from './tabs-core.ts'
+import { clampTabIndex, cycleTabIndex, normalizeTabUrl, tabFavicon, tabTitle } from './tabs-core.ts'
 
 /**
  * Менеджер вкладок: по одному живому <webview> на вкладку, все работают одновременно.
@@ -13,6 +13,15 @@ export interface ShellTab {
   url: string
   title: string
   lastAllowedUrl: string
+  /**
+   * Глубина истории вкладки. У <webview> нет canGoBack, поэтому считаем сами:
+   * navCount — текущая позиция, maxNav — самая глубокая, до которой доходили.
+   * Отслеживается ради тусклых кнопок «назад/вперёд» в тулбаре.
+   */
+  navCount: number
+  maxNav: number
+  /** Переход, который мы сами запустили: -1 назад, 1 вперёд, 0 — нет. */
+  pendingHistory: -1 | 0 | 1
 }
 
 export interface TabsHooks {
@@ -112,6 +121,9 @@ export function openTab(rawUrl: string, opts?: { activate?: boolean }): ShellTab
     url,
     title: tabTitle('', url),
     lastAllowedUrl: url,
+    navCount: 0,
+    maxNav: 0,
+    pendingHistory: 0,
   }
   tabs.push(tab)
   o.container.appendChild(view)
@@ -208,6 +220,33 @@ export function setTabTitle(tab: ShellTab, pageTitle: string): void {
   renderTabBar()
 }
 
+/** Отмечаем переход по нашей кнопке «назад/вперёд»: применим его в did-navigate. */
+export function noteTabHistory(tab: ShellTab, delta: -1 | 1): void {
+  tab.pendingHistory = delta
+}
+
+/** Обычная навигация в did-navigate: новая запись истории, хвост обрезается. */
+export function noteTabNavigated(tab: ShellTab): void {
+  if (tab.pendingHistory !== 0) {
+    const next = tab.navCount + tab.pendingHistory
+    tab.pendingHistory = 0
+    if (next >= 1 && next <= tab.maxNav) {
+      tab.navCount = next
+      return
+    }
+  }
+  tab.navCount = tab.maxNav + 1
+  tab.maxNav = tab.navCount
+}
+
+export function canTabGoBack(tab: ShellTab): boolean {
+  return tab.navCount > 1
+}
+
+export function canTabGoForward(tab: ShellTab): boolean {
+  return tab.navCount < tab.maxNav
+}
+
 export function refreshTabBar(): void {
   renderTabBar()
 }
@@ -251,6 +290,8 @@ function renderTabBar(): void {
 function createTabButton(tab: ShellTab): HTMLButtonElement {
   const button = document.createElement('button')
   button.type = 'button'
+  const fav = document.createElement('span')
+  fav.className = 'tab-btn-fav'
   const label = document.createElement('span')
   label.className = 'tab-btn-label'
   const close = document.createElement('button')
@@ -263,7 +304,7 @@ function createTabButton(tab: ShellTab): HTMLButtonElement {
     if (typeof stop.stopPropagation === 'function') stop.stopPropagation()
     closeTab(tab.id)
   })
-  button.append(label, close)
+  button.append(fav, label, close)
   button.addEventListener('click', () => {
     activateTab(tab)
   })
@@ -286,7 +327,13 @@ function updateTabButton(button: HTMLButtonElement, tab: ShellTab): void {
   button.className = tab.id === activeId ? 'tab-btn active' : 'tab-btn'
   // Подсказка — полный заголовок вкладки (спека §6.3), не URL
   button.title = tab.title
-  const label = button.children[0]
+  const fav = button.children[0]
+  if (fav) {
+    const icon = tabFavicon(tab.url)
+    fav.textContent = icon.letter
+    fav.setAttribute('style', `background:${icon.color}`)
+  }
+  const label = button.children[1]
   if (label) label.textContent = tab.title
 }
 

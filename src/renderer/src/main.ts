@@ -7,12 +7,16 @@ import {
 import {
   activeTab,
   activeView,
+  canTabGoBack,
+  canTabGoForward,
   closeTab,
   cycleTab,
   focusOrOpenTab,
   initTabs,
   isActiveTab,
   listTabs,
+  noteTabHistory,
+  noteTabNavigated,
   openTab,
   primaryTab,
   selectTabIndex,
@@ -22,6 +26,9 @@ import {
 } from './tabs'
 
 const addressInput = document.getElementById('address') as HTMLInputElement | null
+const titlebarTitle = document.getElementById('titlebar-title') as HTMLElement | null
+const btnBack = document.getElementById('btn-back') as HTMLButtonElement | null
+const btnForward = document.getElementById('btn-forward') as HTMLButtonElement | null
 const statusEl = document.getElementById('status') as HTMLElement | null
 const toastEl = document.getElementById('toast') as HTMLElement | null
 const taskAlertRoot = document.getElementById('task-alert') as HTMLElement | null
@@ -954,6 +961,24 @@ function updateAddressBar(): void {
   } catch {
     // webview ещё не готов — игнорируем
   }
+}
+
+/** Заголовок активной страницы по центру titlebar (как в макете). */
+function updateTitlebarTitle(): void {
+  if (!titlebarTitle) return
+  const tab = activeTab()
+  titlebarTitle.textContent = tab ? tab.title : ''
+}
+
+/**
+ * Тусклые «назад/вперёд», когда переходить некуда. У <webview> нет canGoBack,
+ * поэтому состояние ведём сами: переход назад/вперёд включает одну сторону,
+ * обычная навигация включает «назад» и гасит «вперёд».
+ */
+function updateNavButtons(): void {
+  const tab = activeTab()
+  if (btnBack) btnBack.classList.toggle('nav-off', !tab || !canTabGoBack(tab))
+  if (btnForward) btnForward.classList.toggle('nav-off', !tab || !canTabGoForward(tab))
 }
 
 async function navigate(url: string): Promise<void> {
@@ -2059,13 +2084,17 @@ async function handleShortcut(name: string): Promise<void> {
       void openTemplates()
       break
     case 'back': {
-      const view = activeView()
-      if (view) view.goBack()
+      const tab = activeTab()
+      if (!tab || !canTabGoBack(tab)) break
+      noteTabHistory(tab, -1)
+      tab.view.goBack()
       break
     }
     case 'forward': {
-      const view = activeView()
-      if (view) view.goForward()
+      const tab = activeTab()
+      if (!tab || !canTabGoForward(tab)) break
+      noteTabHistory(tab, 1)
+      tab.view.goForward()
       break
     }
     case 'fullscreen':
@@ -2209,13 +2238,17 @@ function wireShortcuts(): void {
 }
 
 function wireToolbar(): void {
-  document.getElementById('btn-back')?.addEventListener('click', () => {
-    const view = activeView()
-    if (view) view.goBack()
+  btnBack?.addEventListener('click', () => {
+    const tab = activeTab()
+    if (!tab || !canTabGoBack(tab)) return
+    noteTabHistory(tab, -1)
+    tab.view.goBack()
   })
-  document.getElementById('btn-forward')?.addEventListener('click', () => {
-    const view = activeView()
-    if (view) view.goForward()
+  btnForward?.addEventListener('click', () => {
+    const tab = activeTab()
+    if (!tab || !canTabGoForward(tab)) return
+    noteTabHistory(tab, 1)
+    tab.view.goForward()
   })
   document.getElementById('btn-home')?.addEventListener('click', () => {
     if (config) void navigate(config.startUrl)
@@ -2281,6 +2314,7 @@ function wireTabEvents(tab: ShellTab): void {
   })
   view.addEventListener('page-title-updated', (event) => {
     setTabTitle(tab, event.title)
+    if (isActiveTab(tab)) updateTitlebarTitle()
   })
   view.addEventListener('did-navigate', (event) => {
     // Новый документ = новое window → флаг готовности старого хука мёртв.
@@ -2289,8 +2323,11 @@ function wireTabEvents(tab: ShellTab): void {
     console.log('[shell] did-navigate:', event.url)
     if (isAllowed(event.url)) {
       setTabUrl(tab, event.url)
+      noteTabNavigated(tab)
       if (isActiveTab(tab)) {
         updateAddressBar()
+        updateTitlebarTitle()
+        updateNavButtons()
         applyZoomForCurrentPage()
         updateActiveTab()
       }
@@ -2332,6 +2369,7 @@ function wireTabEvents(tab: ShellTab): void {
     } catch {
       // заголовок недоступен — останется хост
     }
+    if (isActiveTab(tab)) updateTitlebarTitle()
     // Появилась форма входа? Предлагаем выбрать аккаунт (с паузой —
     // SPA достраивает форму уже после события загрузки)
     if (isActiveTab(tab)) setTimeout(() => void checkLoginForm(false), 1200)
@@ -3512,6 +3550,8 @@ async function init(): Promise<void> {
       },
       onActivated: () => {
         updateAddressBar()
+        updateTitlebarTitle()
+        updateNavButtons()
         applyZoomForCurrentPage()
         updateActiveTab()
         // Оверлей сети и findbar описывают предыдущую вкладку, на новой они

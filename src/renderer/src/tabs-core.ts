@@ -52,6 +52,18 @@ export function clampTabIndex(count: number, oneBased: number): number {
 }
 
 /**
+ * Фавиконка вкладки: буква хоста + детерминированный цвет от того же хоста
+ * (без сети и без favicon сайта — цвет одинаковый при каждом запуске).
+ */
+export function tabFavicon(url: string): { letter: string; color: string } {
+  const host = hostOfTabUrl(url)
+  if (!host) return { letter: '?', color: 'hsl(220, 12%, 45%)' }
+  let hash = 0
+  for (let i = 0; i < host.length; i += 1) hash = (hash * 31 + host.charCodeAt(i)) % 360
+  return { letter: host[0].toUpperCase(), color: `hsl(${hash}, 55%, 45%)` }
+}
+
+/**
  * Разбирает ответ гостя из window.__shellNewTabReq и оставляет только
  * корректные http(s)-ссылки — всё остальное (мусор, javascript:, mailto:) пропускаем.
  */

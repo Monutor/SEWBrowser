@@ -316,7 +316,7 @@ describe('setTabUrl и setTabTitle', () => {
     assert.equal(a.url, 'https://a.mvideoeldorado.ru/v2/relocation/tasks')
     assert.equal(a.title, 'Задания на перемещение')
     const button = h.strip.children[0]
-    assert.equal(button.children[0].textContent, 'Задания на перемещение')
+    assert.equal(button.children[1].textContent, 'Задания на перемещение')
   })
 
   it('подпись без заголовка страницы равна хосту', () => {
@@ -325,7 +325,22 @@ describe('setTabUrl и setTabTitle', () => {
     assert.ok(a)
     tabsModule.setTabTitle(a, '   ')
     assert.equal(a.title, 'a.mvideoeldorado.ru')
-    assert.equal(h.strip.children[0].children[0].textContent, 'a.mvideoeldorado.ru')
+    assert.equal(h.strip.children[0].children[1].textContent, 'a.mvideoeldorado.ru')
+  })
+
+  it('фавиконка — буква хоста с цветом, меняется вместе с адресом', () => {
+    const h = setup()
+    const a = tabsModule.openTab('https://a.mvideoeldorado.ru/')
+    assert.ok(a)
+    const fav = h.strip.children[0].children[0]
+    assert.equal(fav.className, 'tab-btn-fav')
+    assert.equal(fav.textContent, 'A')
+    const first = fav.getAttribute('style')
+    assert.ok(first && first.includes('hsl('))
+    tabsModule.setTabUrl(a, 'https://b.mvideoeldorado.ru/v2/')
+    const moved = h.strip.children[0].children[0]
+    assert.equal(moved.textContent, 'B')
+    assert.notEqual(moved.getAttribute('style'), first)
   })
 })
 
@@ -337,7 +352,7 @@ describe('полоса вкладок', () => {
     assert.ok(a)
     assert.equal(h.strip.children.length, 2)
     assert.ok(h.strip.children[1].className.includes('active'))
-    assert.equal(h.strip.children[1].children[1].className, 'tab-btn-close')
+    assert.equal(h.strip.children[1].children[2].className, 'tab-btn-close')
   })
 
   it('клик по кнопке активирует вкладку', () => {
@@ -355,7 +370,7 @@ describe('полоса вкладок', () => {
     tabsModule.openTab('https://b.mvideoeldorado.ru/')
     assert.ok(a)
     const stop = { stopPropagation(): void {} }
-    fire(h.strip.children[0].children[1], 'click', stop)
+    fire(h.strip.children[0].children[2], 'click', stop)
     assert.equal(tabsModule.listTabs().length, 1)
     assert.equal(tabsModule.isActiveTab(a), false)
   })

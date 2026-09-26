@@ -117,3 +117,25 @@ describe('extractNewTabUrls', () => {
     assert.deepEqual(extractNewTabUrls('не json'), [])
   })
 })
+
+describe('tabFavicon', () => {
+  it('буква — первая буква хоста, цвет детерминирован', async () => {
+    const { tabFavicon } = await import('./tabs-core.ts')
+    const fav = tabFavicon('https://sew.mvideoeldorado.ru/v2/')
+    assert.equal(fav.letter, 'S')
+    // Один и тот же хост — один и тот же цвет при каждом запуске
+    assert.equal(fav.color, tabFavicon('https://sew.mvideoeldorado.ru/other').color)
+    assert.match(fav.color, /^hsl\(\d{1,3}, 55%, 45%\)$/)
+  })
+  it('разные хосты — разные цвета', async () => {
+    const { tabFavicon } = await import('./tabs-core.ts')
+    assert.notEqual(
+      tabFavicon('https://sew.mvideoeldorado.ru/').color,
+      tabFavicon('https://www.mvideo.ru/').color,
+    )
+  })
+  it('хост не разобрать — заглушка', async () => {
+    const { tabFavicon } = await import('./tabs-core.ts')
+    assert.equal(tabFavicon('мусор').letter, '?')
+  })
+})

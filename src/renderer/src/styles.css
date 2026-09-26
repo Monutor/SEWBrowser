@@ -1,10 +1,24 @@
 :root {
-  --bg: #1e1f22;
-  --chrome-bg: #2b2d31;
-  --accent: #4a9eff;
-  --text: #e5e5e5;
-  --text-dim: rgba(229, 229, 229, 0.6);
-  --danger: #e5534b;
+  /* Палитра хрома — тёмная тема design-mockup.html */
+  --bg: #0f1115;
+  --chrome: #171a20;
+  --chrome-2: #1e222b;
+  --surface: #1a1e26;
+  --content: #11131a;
+  --text: #e8eaf1;
+  --text-2: #9aa3b2;
+  --text-3: #6b7485;
+  --border: #272d39;
+  --border-strong: #333a48;
+  --accent: #5a90ff;
+  --accent-2: #7aa8ff;
+  --accent-soft: rgba(90, 144, 255, 0.14);
+  --danger: #ff6b5f;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  /* Старые имена — алиасы: на них завязаны оверлеи, загрузки и настройки,
+     поэтому перекраска хрома не требует правок в их блоках */
+  --chrome-bg: var(--chrome);
+  --text-dim: var(--text-2);
 }
 
 * {
@@ -28,26 +42,40 @@ body {
   top: 0;
   left: 0;
   right: 0;
-  height: 36px;
+  height: 40px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: var(--chrome-bg);
+  padding: 0 8px;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--border);
   -webkit-app-region: drag;
 }
 
 .app-title {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding-left: 12px;
+  gap: 9px;
+  padding-left: 4px;
   font-size: 12px;
   color: var(--text-dim);
+}
+
+.app-logo {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, #2f6cff, #6a3ce8);
+  box-shadow: 0 2px 6px rgba(47, 108, 255, 0.35);
+  flex: none;
 }
 
 .app-icon {
   width: 16px;
   height: 16px;
+  display: block;
 }
 
 .app-name {
@@ -56,26 +84,43 @@ body {
 }
 
 .app-version {
-  color: var(--text-dim);
+  color: var(--text-3);
   font-size: 11px;
+}
+
+/* Заголовок активной страницы по центру titlebar */
+#titlebar-title {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-3);
+  pointer-events: none;
 }
 
 .window-controls {
   display: flex;
-  height: 100%;
+  align-items: center;
+  gap: 6px;
 }
 
 .window-controls button {
-  width: 46px;
-  height: 100%;
+  width: 28px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: none;
   border: none;
-  color: var(--text);
+  border-radius: 6px;
+  color: var(--text-2);
   font-size: 13px;
   cursor: pointer;
+  transition: background 0.15s, color 0.15s;
   -webkit-app-region: no-drag;
 }
 
@@ -84,35 +129,45 @@ body {
 }
 
 .window-controls button:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--content);
+  color: var(--text);
+}
+
+.window-controls #btn-close:hover {
+  background: var(--danger);
+  color: #fff;
 }
 
 #toolbar {
   position: absolute;
-  top: 68px;
+  top: 80px;
   left: 0;
   right: 0;
-  height: 44px;
+  height: 46px;
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 0 12px;
-  background: var(--chrome-bg);
+  gap: 4px;
+  padding: 0 10px;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--border);
 }
 
 #toolbar button {
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
+  flex: none;
   background: none;
   border: none;
-  color: var(--text);
+  color: var(--text-2);
   font-size: 15px;
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: 9px;
+  transition: background 0.14s, color 0.14s;
 }
 
 #toolbar button:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--content);
+  color: var(--text);
 }
 
 #toolbar button svg {
@@ -120,23 +175,34 @@ body {
   margin: 0 auto;
 }
 
+/* Кнопки навигации тускнут, когда переходить некуда */
+#toolbar button.nav-off {
+  opacity: 0.35;
+  cursor: default;
+}
+
+#toolbar button.nav-off:hover {
+  background: none;
+  color: var(--text-2);
+}
+
 #btn-barcode svg {
   margin-top: 8px !important;
 }
 
-/* Панель вкладок навигации (отдельная полоса под тулбаром, y=112..144) */
+/* Лента ссылок плагина sew-pattern — в стиле bookmarks bar (y=126..160) */
 #tabstrip {
   position: absolute;
-  top: 112px;
+  top: 126px;
   left: 0;
   right: 0;
-  height: 32px;
+  height: 34px;
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 0 12px;
-  background: var(--chrome-bg);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  gap: 2px;
+  padding: 0 8px;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--border);
   /* <webview> рисует содержимое поверх обычных элементов — поднимаем ленту выше */
   z-index: 25;
 }
@@ -145,19 +211,19 @@ body {
   display: none;
 }
 
-/* Полоса вкладок браузера: между titlebar и toolbar (y=36..68) */
+/* Полоса вкладок браузера: приклеена к тулбару (y=40..80) */
 #tabbar {
   position: absolute;
-  top: 36px;
+  top: 40px;
   left: 0;
   right: 0;
-  height: 32px;
+  height: 40px;
   display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 8px;
-  background: var(--chrome-bg);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  align-items: flex-end;
+  gap: 3px;
+  padding: 6px 10px 0;
+  background: var(--chrome-2);
+  border-bottom: 1px solid var(--border);
   /* <webview> рисует содержимое поверх обычных элементов — поднимаем полосу выше */
   z-index: 30;
 }
@@ -165,10 +231,10 @@ body {
 #tabbar-strip {
   flex: 1;
   display: flex;
-  align-items: center;
-  gap: 4px;
+  align-items: flex-end;
+  gap: 3px;
   min-width: 0;
-  height: 100%;
+  height: 34px;
   overflow-x: auto;
   overflow-y: hidden;
 }
@@ -178,36 +244,68 @@ body {
 }
 
 .tab-btn {
+  position: relative;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 6px;
-  max-width: 200px;
-  height: 24px;
-  padding: 0 8px;
+  gap: 8px;
+  max-width: 230px;
+  height: 34px;
+  padding: 0 10px 4px;
   background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  border-radius: 6px;
-  color: var(--text-dim);
-  font-size: 12px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
+  color: var(--text-2);
+  font-size: 12.5px;
   font-weight: 500;
   cursor: default;
+  white-space: nowrap;
   -webkit-app-region: no-drag;
 }
 
 .tab-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--content);
   color: var(--text);
 }
 
 .tab-btn.active {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--surface);
+  border-color: var(--border);
   color: var(--text);
-  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+/* Акцентная черта снизу у активной вкладки */
+.tab-btn.active::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0.85;
+}
+
+/* Фавиконка вкладки: цветной кружок с первой буквой хоста */
+.tab-btn-fav {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  color: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 .tab-btn-label {
+  max-width: 150px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -215,30 +313,50 @@ body {
 
 .tab-btn-close {
   flex: 0 0 auto;
-  padding: 0 2px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
   background: none;
   border: none;
-  color: inherit;
-  font-size: 14px;
+  border-radius: 50%;
+  color: var(--text-3);
+  font-size: 15px;
   line-height: 1;
   cursor: default;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.tab-btn:hover .tab-btn-close,
+.tab-btn.active .tab-btn-close {
+  opacity: 1;
+}
+
+.tab-btn-close:hover {
+  background: var(--content);
+  color: var(--text);
 }
 
 #tabbar-new {
+  position: relative;
+  z-index: 1;
   flex: 0 0 auto;
-  width: 24px;
-  height: 24px;
+  width: 30px;
+  height: 30px;
+  margin-bottom: 2px;
   background: none;
   border: none;
-  border-radius: 6px;
-  color: var(--text);
-  font-size: 16px;
+  border-radius: 9px;
+  color: var(--text-2);
+  font-size: 18px;
   line-height: 1;
   cursor: default;
+  transition: background 0.16s, color 0.16s;
 }
 
 #tabbar-new:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--content);
+  color: var(--text);
 }
 
 #tabs {
@@ -259,33 +377,33 @@ body {
 
 .tab {
   flex-shrink: 0;
-  max-width: 160px;
-  height: 24px;
+  max-width: 180px;
+  height: 26px;
   padding: 0 10px;
   display: flex;
   align-items: center;
   gap: 8px;
   background: transparent;
   border: none;
-  border-bottom: 2px solid transparent;
-  border-radius: 6px 6px 0 0;
-  color: var(--text-dim);
+  border-radius: 8px;
+  color: var(--text-2);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  transition: background 0.14s, color 0.14s;
 }
 
 .tab:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--content);
   color: var(--text);
 }
 
 .tab.active {
   color: var(--accent);
-  border-bottom-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 /* Шапка группы вкладок по папкам в ленте. При отсутствии папок не рендерится. */
@@ -330,7 +448,7 @@ body {
 /* Выпадающий список вкладок папки под лентой (раскрытие как у групп Chrome/Edge). */
 #tab-group-panel {
   position: absolute;
-  top: 144px;
+  top: 160px;
   z-index: 30;
   width: 100%;
   max-width: 430px;
@@ -437,20 +555,58 @@ body {
   color: var(--text);
 }
 
+/* Адресная строка — пилюля с замком, как в макете */
+.omnibox {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 14px;
+  background: var(--content);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+
+.omnibox:focus-within {
+  border-color: var(--accent);
+  background: var(--chrome-2);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.omnibox-lock {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.omnibox-lock svg {
+  width: 11px;
+  height: 11px;
+  display: block;
+}
+
 #address {
   flex: 1;
-  height: 30px;
-  background: #1a1b1e;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  padding: 0 10px;
+  min-width: 0;
+  height: 100%;
+  background: transparent;
+  border: none;
+  padding: 0;
   color: var(--text);
-  font-size: 13px;
+  font-size: 13.5px;
   outline: none;
 }
 
-#address:focus {
-  border-color: var(--accent);
+#address::placeholder {
+  color: var(--text-3);
 }
 
 #status {
@@ -461,7 +617,7 @@ body {
 
 #task-alert {
   position: fixed;
-  top: 124px;
+  top: 138px;
   left: 50%;
   z-index: 100;
   display: flex;
@@ -620,7 +776,7 @@ body {
 /* Баннер автообновления */
 #updatebar {
   position: absolute;
-  top: 148px;
+  top: 162px;
   left: 12px;
   z-index: 20;
   display: flex;
@@ -676,7 +832,7 @@ body {
 /* Панель поиска по странице */
 #findbar {
   position: absolute;
-  top: 148px;
+  top: 162px;
   right: 12px;
   z-index: 20;
   display: flex;
@@ -735,7 +891,7 @@ body {
 /* Оверлей ошибки сети */
 #error-overlay {
   position: absolute;
-  top: 112px;
+  top: 126px;
   left: 0;
   right: 0;
   bottom: 0;
@@ -2353,7 +2509,7 @@ body {
 /* Контейнер гостей: 144px сверху (36 titlebar + 32 tabbar + 44 toolbar + 32 tabstrip) */
 #tab-views {
   position: absolute;
-  top: 144px;
+  top: 160px;
   left: 0;
   right: 0;
   bottom: 0;
