@@ -1062,6 +1062,292 @@ body {
   filter: brightness(1.1);
 }
 
+/* Диалог печати: слева настройки, справа превью страниц (как в Chrome) */
+#print-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: rgba(9, 10, 14, 0.6);
+}
+
+#print-overlay[hidden] {
+  display: none;
+}
+
+.print-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(980px, calc(100% - 48px));
+  height: min(720px, calc(100% - 48px));
+  background: var(--chrome);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.print-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.print-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.print-x {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  color: var(--text-2);
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  cursor: default;
+}
+
+.print-x:hover {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+.print-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.print-settings {
+  width: 280px;
+  flex: none;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+}
+
+.print-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.print-label {
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.print-settings select,
+.print-settings input[type='number'] {
+  height: 30px;
+  padding: 0 8px;
+  color: var(--text);
+  background: var(--content);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 13px;
+  outline: none;
+}
+
+.print-settings select:focus,
+.print-settings input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.print-range-custom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.print-range-custom[hidden] {
+  display: none;
+}
+
+.print-range-custom input {
+  width: 64px;
+}
+
+.print-dash {
+  color: var(--text-3);
+}
+
+.print-link {
+  margin-left: auto;
+  padding: 0;
+  font-size: 11.5px;
+  color: var(--text-2);
+  background: transparent;
+  border: none;
+  cursor: default;
+  text-decoration: underline;
+}
+
+.print-link:hover {
+  color: var(--text);
+}
+
+.print-margins {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 8px;
+}
+
+.print-margins .print-label {
+  grid-column: 1 / -1;
+}
+
+.print-margins label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.print-margins input {
+  width: 100%;
+}
+
+.print-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.print-preview {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.print-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--text-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.print-status {
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.print-thumbs {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 12px;
+}
+
+.print-thumb {
+  width: 132px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: default;
+}
+
+.print-thumb.current {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.print-thumbs-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--text-3);
+  border-top: 1px solid var(--border);
+}
+
+.print-thumbs-foot button {
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--chrome-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: default;
+}
+
+.print-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.print-foot-spacer {
+  flex: 1;
+}
+
+.print-btn {
+  height: 32px;
+  padding: 0 16px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--chrome-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: default;
+}
+
+.print-btn:hover:not(:disabled) {
+  background: var(--surface);
+}
+
+.print-btn:disabled {
+  opacity: 0.45;
+}
+
+.print-btn.primary {
+  color: #fff;
+  background: var(--accent);
+  border-color: transparent;
+}
+
+.print-btn.primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
 /* Окно настроек */
 #settings-overlay {
   position: absolute;

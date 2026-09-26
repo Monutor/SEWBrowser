@@ -200,6 +200,100 @@
     </div>
   </div>
 
+  <div id="print-overlay" hidden>
+    <div class="print-panel">
+      <div class="print-head">
+        <span class="print-title" id="print-title">Документ</span>
+        <button id="print-cancel-x" class="print-x" title="Закрыть" aria-label="Закрыть">&times;</button>
+      </div>
+      <div class="print-body">
+        <div class="print-settings" id="print-settings">
+          <label class="print-field">
+            <span class="print-label">Назначение</span>
+            <select id="print-destination"></select>
+          </label>
+          <label class="print-field" id="print-printer-row">
+            <span class="print-label">Принтер</span>
+            <select id="print-printer"></select>
+          </label>
+          <label class="print-field">
+            <span class="print-label">Диапазон</span>
+            <select id="print-range-mode">
+              <option value="all">Все страницы</option>
+              <option value="current">Текущая</option>
+              <option value="custom">Страницы…</option>
+            </select>
+          </label>
+          <div class="print-range-custom" id="print-range-custom" hidden>
+            <input id="print-range-from" type="number" min="1" step="1" aria-label="С первой страницы" />
+            <span class="print-dash">–</span>
+            <input id="print-range-to" type="number" min="1" step="1" aria-label="По последнюю страницу" />
+            <button type="button" id="print-no-margins" class="print-link">Поля: нет</button>
+          </div>
+          <label class="print-field">
+            <span class="print-label">Копии</span>
+            <input id="print-copies" type="number" min="1" max="99" step="1" />
+          </label>
+          <label class="print-field">
+            <span class="print-label">Ориентация</span>
+            <select id="print-landscape">
+              <option value="portrait">Книжная</option>
+              <option value="landscape">Альбомная</option>
+            </select>
+          </label>
+          <label class="print-field">
+            <span class="print-label">Бумага</span>
+            <select id="print-page-size">
+              <option value="A4">A4</option>
+              <option value="A3">A3</option>
+              <option value="A5">A5</option>
+              <option value="A6">A6</option>
+              <option value="Letter">Letter</option>
+              <option value="Legal">Legal</option>
+              <option value="Tabloid">Tabloid</option>
+            </select>
+          </label>
+          <div class="print-margins">
+            <span class="print-label">Поля, мм</span>
+            <label>верх <input id="print-margin-top" type="number" min="0" max="50" step="1" /></label>
+            <label>низ <input id="print-margin-bottom" type="number" min="0" max="50" step="1" /></label>
+            <label>лево <input id="print-margin-left" type="number" min="0" max="50" step="1" /></label>
+            <label>право <input id="print-margin-right" type="number" min="0" max="50" step="1" /></label>
+          </div>
+          <label class="print-field">
+            <span class="print-label">Масштаб, %</span>
+            <input id="print-scale" type="number" min="10" max="200" step="5" />
+          </label>
+          <label class="print-check">
+            <input id="print-background" type="checkbox" />
+            Печатать фон
+          </label>
+          <label class="print-check">
+            <input id="print-header-footer" type="checkbox" />
+            Колонтитулы (номера и дата)
+          </label>
+        </div>
+        <div class="print-preview">
+          <div class="print-preview-head">
+            <span id="print-page-counter">Страница 1 из 1</span>
+            <span id="print-status" class="print-status"></span>
+          </div>
+          <div class="print-thumbs" id="print-thumbs"></div>
+          <div class="print-thumbs-foot">
+            <span id="print-thumbs-note"></span>
+            <button type="button" id="print-show-all" hidden>Показать все</button>
+          </div>
+        </div>
+      </div>
+      <div class="print-foot">
+        <button type="button" id="print-cancel" class="print-btn">Отмена</button>
+        <span class="print-foot-spacer"></span>
+        <button type="button" id="print-save" class="print-btn">Сохранить как PDF</button>
+        <button type="button" id="print-go" class="print-btn primary">Печать</button>
+      </div>
+    </div>
+  </div>
+
   <div id="settings-overlay" hidden>
     <div class="settings-card">
       <div class="settings-title">Настройки</div>
