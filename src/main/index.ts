@@ -44,6 +44,18 @@ let updaterInterval: NodeJS.Timeout | null = null
 function guestShortcutName(input: Input): string | null {
   const mod = input.control || input.meta
   const { key, code } = input
+  // Хоткеи вкладок идут ДО F5/templates: Ctrl+Shift+T (шаблоны) должен
+  // остаться за более ранним правилом KeyT, поэтому у него проверка !input.shift.
+  if (mod && (key === 'Tab' || code === 'Tab')) {
+    if (input.shift) return 'prev-tab'
+    if (input.control || input.meta) return 'next-tab'
+    return null
+  }
+  if (mod && !input.shift && /^Digit[1-9]$/.test(code)) {
+    return `tab-${code.slice(5)}` as 'tab-1'
+  }
+  if (mod && (key === 't' || code === 'KeyT') && !input.shift && !input.alt) return 'new-tab'
+  if (mod && (key === 'w' || code === 'KeyW') && !input.shift && !input.alt) return 'close-tab'
   if (key === 'F5') return mod ? 'hard-reload' : 'reload'
   if (mod && code === 'KeyR') return 'reload'
   if (mod && input.shift && code === 'KeyL') return 'accounts'
