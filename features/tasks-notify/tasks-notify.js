@@ -165,18 +165,28 @@ function __tnTick() {
   });
 }
 
-(function __tnInit() {
-  try {
-    // Не хост-вкладка: оболочка опрашивает задания только из первой вкладки,
-    // здесь молчим — иначе N вкладок = N одинаковых уведомлений.
-    if (window.__shellPollHost === false) return;
-    __tnHookAuth();
-    window.__tasksNotifyReq = window.__tasksNotifyReq || [];
-    window.__tasksNotifyState = window.__tasksNotifyState || { lastTick: '', lastCount: 0, lastError: '' };
-    __tnGetSettings(function (st) {
-      try { if (__tnTimer) clearInterval(__tnTimer); } catch (e) {}
-      __tnTick();
-      __tnTimer = setInterval(__tnTick, st.intervalSec * 1000);
-    });
-  } catch (e) {}
-})();
+/**
+ * Arm опроса: ставит перехват Bearer, готовит очередь и включает таймер.
+ * Идемпотентен (window.__tnArmed) — без второго setInterval.
+ * Вызывается дважды: на старте вкладки (__tnInit) и снаружи из take-скрипта
+ * оболочки (window.__tnArmTasksNotify), когда вкладка становится первой:
+ * код плагина повторно не инжектится, а __tnInit в непривилегированной
+ * вкладке уже отработал и вышел.
+ */
+function __tnArm() {
+  if (window.__tnArmed) return;                // идемпотентно: без двойного таймера
+  if (window.__shellPollHost === false) return; // не хост
+  window.__tnArmed = 1;
+  __tnHookAuth();
+  window.__tasksNotifyReq = window.__tasksNotifyReq || [];
+  window.__tasksNotifyState = window.__tasksNotifyState || { lastTick: '', lastCount: 0, lastError: '' };
+  __tnGetSettings(function (st) {
+    try { if (__tnTimer) clearInterval(__tnTimer); } catch (e) {}
+    __tnTick();
+    __tnTimer = setInterval(__tnTick, st.intervalSec * 1000);
+  });
+}
+
+// Точка входа для оболочки (main.ts, скрипт 'tasks-take')
+try { window.__tnArmTasksNotify = __tnArm; } catch (e) {}
+(function __tnInit() { try { __tnArm(); } catch (e) {} })();

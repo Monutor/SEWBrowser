@@ -892,7 +892,13 @@ async function pumpTasksNotify(): Promise<boolean> {
     const rawTake = await guestJS<string>(
       tab,
       'tasks-take',
-      '(function(){try{var q=window.__tasksNotifyReq;if(!Array.isArray(q))return "[]";' +
+      // Здесь же поднимаем arm: если первая вкладка закрылась, primaryTab()
+      // переехал на другую, а её __tnInit уже отработал и вышел (гость не был
+      // хостом на момент загрузки) — код плагина повторно не инжектится, флаг
+      // оболочка обновляет только на did-finish-load. Флаг ставим ДО arm'а.
+      '(function(){try{window.__shellPollHost = true;' +
+        'if (typeof window.__tnArmTasksNotify === "function") window.__tnArmTasksNotify();' +
+        'var q=window.__tasksNotifyReq;if(!Array.isArray(q))return "[]";' +
         'try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})()',
     ).catch((err) => {
       if (!tasksNotifyDiagged) {
