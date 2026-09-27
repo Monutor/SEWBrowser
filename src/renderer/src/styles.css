@@ -1416,6 +1416,147 @@ body {
   display: none;
 }
 
+/* Справочник: оверлей-карточка в две колонки (клавиши | возможности) */
+#help-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(9, 10, 14, 0.6);
+}
+
+#help-overlay[hidden] {
+  display: none;
+}
+
+.help-card {
+  display: flex;
+  flex-direction: column;
+  width: min(980px, calc(100% - 48px));
+  max-height: calc(100% - 48px);
+  background: var(--chrome);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.help-head {
+  display: flex;
+  align-items: center;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.help-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.help-x {
+  margin-left: auto;
+  width: 26px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 13px;
+  cursor: default;
+}
+
+.help-x:hover {
+  background: var(--content);
+  color: var(--text);
+}
+
+.help-cols {
+  display: flex;
+  gap: 18px;
+  padding: 14px;
+  overflow: auto;
+}
+
+.help-col {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.help-h {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-3);
+}
+
+.help-keys,
+.help-feats {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.help-key {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.help-key dt {
+  flex: 0 0 190px;
+  color: var(--text-3);
+  text-align: right;
+}
+
+.help-key dd {
+  margin: 0;
+  color: var(--text-2);
+}
+
+.help-key kbd,
+.help-note kbd,
+.help-feat kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--content);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.help-note {
+  margin: 12px 0 0;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.help-feat {
+  font-size: 12px;
+}
+
+.help-feat dt {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.help-feat dd {
+  margin: 2px 0 0;
+  color: var(--text-2);
+}
+
+.help-k {
+  color: var(--text);
+}
+
 .shot-card {
   display: flex;
   flex-direction: column;

@@ -117,7 +117,8 @@
     <button id="btn-screenshot" title="Снимок вкладки (Ctrl+Shift+S)">&#128247;</button>
     <button id="btn-scans" title="Сканы (папка HP-софта)">&#128194;</button>
     <button id="btn-templates" title="Шаблоны SEW (Ctrl+Shift+T)">&#128196;</button>
-    <button id="btn-settings" title="Настройки">&#9881;</button>
+    <button id="btn-help" title="Справочник (F1)" aria-label="Справочник">?</button>
+  <button id="btn-settings" title="Настройки">&#9881;</button>
     <div id="downloads" hidden title="Загрузки"></div>
   </div>
 
@@ -306,6 +307,61 @@
         <span class="shot-foot-spacer"></span>
         <button type="button" id="shot-copy" class="shot-btn">Копировать</button>
         <button type="button" id="shot-save" class="shot-btn primary">Сохранить как…</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="help-overlay" hidden>
+    <div class="help-card">
+      <div class="help-head">
+        <span class="help-title">Справочник</span>
+        <button type="button" id="help-close-x" class="help-x" title="Закрыть (Esc)" aria-label="Закрыть">✕</button>
+      </div>
+      <div class="help-cols">
+        <section class="help-col">
+          <h2 class="help-h">Клавиши</h2>
+          <dl class="help-keys">
+            <div class="help-key"><dt><kbd>F5</kbd></dt><dd>Обновить страницу</dd></div>
+            <div class="help-key"><dt><kbd>Ctrl</kbd>+<kbd>F5</kbd></dt><dd>Жёсткая перезагрузка (без кэша)</dd></div>
+            <div class="help-key"><dt><kbd>F11</kbd></dt><dd>Полный экран</dd></div>
+            <div class="help-key"><dt><kbd>Ctrl</kbd>+<kbd>L</kbd></dt><dd>Перейти к адресной строке</dd></div>
+            <div class="help-key"><dt><kbd>Ctrl</kbd>+<kbd>T</kbd></dt><dd>Новая вкладка</dd></div>
+            <div class="help-key"><dt><kbd>Ctrl</kbd>+<kbd>W</kbd></dt><dd>Закрыть вкладку</dd></div>
+            <div class="help-key"><dt><kbd>Ctrl</kbd>+<kbd>Tab</kbd></dt><dd>Следующая вкладка</dd></div>
+            <div class="help-key"><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd></dt><dd>Предыдущая вкладка</dd></div>
+            <div class="help-key"><dt><kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>9</kbd></dt><dd>Переключиться на вкладку по номеру</dd></div>
+            <div class="help-key"><dt><kbd>Ctrl</kbd>+клик, средняя кнопка</dt><dd>Открыть ссылку в новой вкладке</dd></div>
+            <div class="help-key"><dt><kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd></dt><dd>Назад / вперёд</dd></div>
+            <div class="help-key"><dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>Поиск по странице</dd></div>
+            <div class="help-key"><dt><kbd>Ctrl</kbd>+<kbd>P</kbd></dt><dd>Печать страницы</dd></div>
+            <div class="help-key"><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></dt><dd>Снимок экрана</dd></div>
+            <div class="help-key"><dt><kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>−</kbd> / <kbd>0</kbd></dt><dd>Увеличить, уменьшить, сбросить масштаб</dd></div>
+            <div class="help-key"><dt><kbd>Ctrl</kbd>+<kbd>,</kbd></dt><dd>Настройки</dd></div>
+            <div class="help-key"><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd></dt><dd>Учётные записи SEW</dd></div>
+            <div class="help-key"><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd></dt><dd>Шаблоны SEW</dd></div>
+            <div class="help-key"><dt><kbd>F1</kbd></dt><dd>Этот справочник</dd></div>
+            <div class="help-key"><dt><kbd>Esc</kbd></dt><dd>Закрыть панель или окно</dd></div>
+          </dl>
+          <p class="help-note">Клавиши <kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>9</kbd> перехватывает оболочка, поэтому в текстовом поле страницы не сработают.</p>
+        </section>
+        <section class="help-col">
+          <h2 class="help-h">Что умеет браузер</h2>
+          <dl class="help-feats">
+            <div class="help-feat"><dt>Вкладки</dt><dd>Открывайте ссылки в отдельных вкладках, перетаскивайте вкладки мышью, правым кликом закрывайте вкладку, справа или все остальные.</dd></div>
+            <div class="help-feat"><dt>Разделённое окно</dt><dd>Правым кликом по вкладке — «Разделить окно»: две панели рядом, переключение кликом по странице, сворачивание по <kbd>Esc</kbd>.</dd></div>
+            <div class="help-feat"><dt>Печать</dt><dd>Диалог с настройками, живым предпросмотром страниц, сохранением в PDF и отправкой на принтер. Настройки запоминаются.</dd></div>
+            <div class="help-feat"><dt>Снимки экрана</dt><dd>Снимок открывается в предпросмотре: можно скопировать в буфер обмена или сохранить в выбранную папку.</dd></div>
+            <div class="help-feat"><dt>Уведомления о заданиях</dt><dd>Оповещение о новых заданиях на перемещение и выдачу, звук, переход к заданию из уведомления. Показываются заданное время, затем скрываются сами.</dd></div>
+            <div class="help-feat"><dt>Сканеры HP</dt><dd>Папки со сканами, запуск программы сканирования, защита от повторного открытия одного и того же файла.</dd></div>
+            <div class="help-feat"><dt>Лента ссылок</dt><dd>Свои ссылки под тулбаром, группировка по папкам, переход открывает вкладку.</dd></div>
+            <div class="help-feat"><dt>Учётные записи и шаблоны</dt><dd>Хранение логинов и паролей SEW, отправка шаблонов прямо со страницы.</dd></div>
+            <div class="help-feat"><dt>Загрузки</dt><dd>История загрузок с фильтром по сотруднику, папка сохранения по умолчанию настраивается прямо в этом окне.</dd></div>
+            <div class="help-feat"><dt>Меню адреса</dt><dd>Кнопка <span class="help-k">⋮</span> справа от адреса: масштаб, поиск по странице, копирование адреса, печать.</dd></div>
+            <div class="help-feat"><dt>Разрешённые сайты</dt><dd>Список allowlist в настройках: всё остальное открывается во внешнем браузере.</dd></div>
+            <div class="help-feat"><dt>Обновления</dt><dd>Приложение само проверяет обновления и предлагает установить новое.</dd></div>
+            <div class="help-feat"><dt>Внешние ссылки</dt><dd>Ссылки на почту, телефоны и сторонние сайты открываются в системном приложении.</dd></div>
+          </dl>
+        </section>
       </div>
     </div>
   </div>

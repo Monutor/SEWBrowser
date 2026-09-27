@@ -72,6 +72,7 @@ function guestShortcutName(input: Input): string | null {
   if (input.alt && (key === 'Left' || key === 'ArrowLeft')) return 'back'
   if (input.alt && (key === 'Right' || key === 'ArrowRight')) return 'forward'
   if (key === 'F11') return 'fullscreen'
+  if (key === 'F1' && !mod) return 'help'
   if (key === 'Escape' || key === 'Esc') return 'escape'
   return null
 }

@@ -2175,6 +2175,9 @@ async function handleShortcut(name: string): Promise<void> {
         console.warn('[shell] fullscreen toggle failed:', err)
       }
       break
+    case 'help':
+      toggleHelp()
+      break
     case 'print':
       void openPrintDialog(activeTab())
       break
@@ -2198,6 +2201,10 @@ async function handleShortcut(name: string): Promise<void> {
       break
     case 'escape':
       cancelFolderPasswordPrompt()
+      if (helpOverlay && !helpOverlay.hidden) {
+        closeHelp()
+        break
+      }
       if (addressMenu?.isOpen()) {
         addressMenu.close()
         break
@@ -2269,6 +2276,7 @@ function shortcutFromEvent(event: KeyboardEvent): ShortcutName | null {
   if (event.altKey && key === 'ArrowLeft') return 'back'
   if (event.altKey && key === 'ArrowRight') return 'forward'
   if (key === 'F11') return 'fullscreen'
+  if (key === 'F1' && !mod) return 'help'
   if (key === 'Escape') return 'escape'
   return null
 }
@@ -2292,6 +2300,32 @@ async function captureActiveTabScreenshot(): Promise<void> {
  * умолчанию; на диск ничего не пишется, пока пользователь не нажмёт
  * «Сохранить как…» или «Копировать».
  */
+const helpOverlay = document.getElementById('help-overlay') as HTMLElement | null
+
+/** Справочник по клавишам и возможностям. Содержимое статичное — в разметке. */
+function openHelp(): void {
+  if (!helpOverlay) return
+  helpOverlay.hidden = false
+}
+
+function closeHelp(): void {
+  if (!helpOverlay) return
+  helpOverlay.hidden = true
+}
+
+function toggleHelp(): void {
+  if (helpOverlay?.hidden) openHelp()
+  else closeHelp()
+}
+
+function wireHelp(): void {
+  document.getElementById('btn-help')?.addEventListener('click', toggleHelp)
+  document.getElementById('help-close-x')?.addEventListener('click', closeHelp)
+  helpOverlay?.addEventListener('click', (event) => {
+    if (event.target === helpOverlay) closeHelp()
+  })
+}
+
 function openShotPreview(result: ScreenshotResult): void {
   if (!result || !result.ok || !result.dataUrl) {
     setStatus('снимок не удался')
@@ -4065,6 +4099,7 @@ async function init(): Promise<void> {
   wireErrorOverlay()
   wireSettings()
   wireDownloads()
+  wireHelp()
   wireTemplates()
   wireTabs()
   wireFolderPasswordPrompt()

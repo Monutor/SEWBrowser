@@ -313,6 +313,7 @@ type ShortcutName =
   | 'back'
   | 'forward'
   | 'fullscreen'
+  | 'help'
   | 'print'
   | 'screenshot'
   | 'find'
