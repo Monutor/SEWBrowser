@@ -63,6 +63,7 @@ import {
 } from './guest'
 import { normalizeUrl, hostOf, isAllowed as isAllowedUrl, resolveTasksUrl, formatSize, errText, withTimeout, formatDateTime } from './util'
 import { captureActiveTabScreenshot, closeShotPreviewIfOpen, openShotPreview, playShutterClick, wireShotPreview } from './screenshot'
+import { wireDownloads, openDownloads, closeDownloads, isDownloadsOpen, downloadsOverlayEl } from './downloads-overlay'
 import { initSettings, wireSettings, openSettings, closeSettings, isSettingsOpen, settingsOverlayEl, type SettingsDeps } from './settings-overlay'
 import {
   TN_ALERT_TTL_DEFAULT_SEC,
@@ -155,12 +156,6 @@ const errorText = document.getElementById('error-text') as HTMLElement | null
 
 // Настройки
 // Загрузки
-const downloadsEl = document.getElementById('downloads') as HTMLElement | null
-const downloadsOverlay = document.getElementById('downloads-overlay') as HTMLElement | null
-const downloadsHistory = document.getElementById('downloads-history') as HTMLElement | null
-const downloadsFilter = document.getElementById('downloads-filter') as HTMLSelectElement | null
-let downloadsOpen = false
-let downloadsRecords: DownloadedFile[] = []
 
 const templatesOverlay = document.getElementById('templates-overlay') as HTMLElement | null
 const templatesList = document.getElementById('templates-list') as HTMLElement | null
@@ -458,293 +453,7 @@ async function fillLogin(accountId: string): Promise<void> {
   }
 }
 
-// ---------- Загрузки ----------
 
-interface DownloadState {
-  name: string
-  status: 'active' | 'done' | 'error'
-  percent: number
-  received: number
-  path?: string
-}
-
-const downloads = new Map<number, DownloadState>()
-let downloadsHideTimer: ReturnType<typeof setTimeout> | null = null
-
-function formatBytes(n: number): string {
-  if (!n || n < 0) return ''
-  if (n < 1024) return `${n} Б`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} КБ`
-  return `${(n / 1024 / 1024).toFixed(1)} МБ`
-}
-
-function renderDownloads(): void {
-  if (!downloadsEl) return
-  if (downloadsHideTimer) {
-    clearTimeout(downloadsHideTimer)
-    downloadsHideTimer = null
-  }
-  const active = [...downloads.entries()].filter(([, d]) => d.status === 'active')
-  if (active.length > 0) {
-    const [[, current], ...rest] = active
-    const extra = rest.length > 0 ? ` (+${rest.length})` : ''
-    const progress =
-      current.percent >= 0 ? ` — ${current.percent}%` : ` — ${formatBytes(current.received)}`
-    downloadsEl.textContent = `↓ ${current.name}${progress}${extra}`
-    downloadsEl.classList.toggle('done', false)
-    downloadsEl.onclick = null
-    downloadsEl.hidden = false
-    return
-  }
-  const last = [...downloads.values()].pop()
-  if (!last) {
-    downloadsEl.hidden = true
-    downloadsEl.onclick = null
-    return
-  }
-  if (last.status === 'done') {
-    downloadsEl.textContent = `✓ ${last.name}`
-    downloadsEl.classList.toggle('done', true)
-    const path = last.path
-    downloadsEl.onclick = path ? () => void window.shell.showItemInFolder(path) : null
-  } else {
-    downloadsEl.textContent = `✕ ${last.name}`
-    downloadsEl.classList.toggle('done', false)
-    downloadsEl.onclick = null
-  }
-  downloadsEl.hidden = false
-  downloadsHideTimer = setTimeout(() => {
-    if (downloadsEl) downloadsEl.hidden = true
-  }, 6000)
-}
-
-function pruneDownloads(): void {
-  while (downloads.size > 20) {
-    const oldestDone = [...downloads.keys()].find((id) => downloads.get(id)?.status !== 'active')
-    if (oldestDone === undefined) break
-    downloads.delete(oldestDone)
-  }
-}
-
-/**
- * Папка сохранения файлов по умолчанию. Показываем путь или «Загрузки»,
- * если папка не задана (= системная) либо её больше нет на диске — тогда
- * подпись вводит в заблуждение.
- */
-async function renderDownloadsDir(): Promise<void> {
-  const el = document.getElementById('downloads-dir')
-  if (!el) return
-  let dir = ''
-  try {
-    dir = (await window.shell.getConfig()).downloadsDir ?? ''
-  } catch (err) {
-    console.warn('[shell] failed to read downloads dir:', err)
-  }
-  el.textContent = dir || 'Загрузки (системная)'
-  el.title = dir
-}
-
-async function pickDownloadsDir(): Promise<void> {
-  try {
-    const dir = await window.shell.pickDownloadsDir()
-    if (dir) {
-      await renderDownloadsDir()
-      setStatus('папка сохранения изменена')
-    }
-  } catch (err) {
-    console.warn('[shell] failed to pick downloads dir:', err)
-  }
-}
-
-async function resetDownloadsDir(): Promise<void> {
-  try {
-    await window.shell.setConfig({ downloadsDir: '' })
-    await renderDownloadsDir()
-    setStatus('папка сохранения — системные «Загрузки»')
-  } catch (err) {
-    console.warn('[shell] failed to reset downloads dir:', err)
-  }
-}
-
-function wireDownloads(): void {
-  document.getElementById('btn-downloads')?.addEventListener('click', () => void openDownloads())
-  document.getElementById('downloads-close')?.addEventListener('click', closeDownloads)
-  document.getElementById('downloads-clear')?.addEventListener('click', () => void clearDownloadsHistory())
-  downloadsFilter?.addEventListener('change', () => renderDownloadsHistory(downloadsRecords))
-  document.getElementById('downloads-dir-pick')?.addEventListener('click', () => void pickDownloadsDir())
-  document.getElementById('downloads-dir-reset')?.addEventListener('click', () => void resetDownloadsDir())
-  window.shell.onDownload((event) => {
-    if (event.type === 'started') {
-      downloads.set(event.id, {
-        name: event.name,
-        status: 'active',
-        percent: -1,
-        received: 0,
-        path: event.path,
-      })
-    } else if (event.type === 'progress') {
-      const current = downloads.get(event.id)
-      if (current && current.status === 'active') {
-        current.percent = event.percent ?? -1
-        current.received = event.received ?? 0
-      }
-    } else if (event.ok) {
-      const current = downloads.get(event.id)
-      if (current) {
-        current.status = 'done'
-        current.path = event.path
-      } else {
-        downloads.set(event.id, { name: event.name, status: 'done', percent: 100, received: 0, path: event.path })
-      }
-    } else if (event.cancelled) {
-      downloads.delete(event.id)
-    } else {
-      const current = downloads.get(event.id)
-      if (current) current.status = 'error'
-      else downloads.set(event.id, { name: event.name, status: 'error', percent: -1, received: 0 })
-    }
-    pruneDownloads()
-    renderDownloads()
-    // Окно истории открыто — подтягиваем свежие записи
-    if (downloadsOpen) void refreshDownloadsHistory()
-  })
-}
-
-// ---------- Окно «Загрузки»: история файлов ----------
-
-function whoLabel(rec: DownloadedFile): string {
-  if (!rec.fio) return 'неизвестно'
-  return rec.tabNum ? `${rec.fio} (${rec.tabNum})` : rec.fio
-}
-
-function rebuildDownloadsFilter(): void {
-  if (!downloadsFilter) return
-  const current = downloadsFilter.value
-  const seen = new Set<string>()
-  downloadsFilter.innerHTML = ''
-  const all = document.createElement('option')
-  all.value = ''
-  all.textContent = 'Все сотрудники'
-  downloadsFilter.append(all)
-  for (const rec of downloadsRecords) {
-    const key = rec.fio ?? ''
-    if (seen.has(key)) continue
-    seen.add(key)
-    const opt = document.createElement('option')
-    opt.value = key
-    opt.textContent = rec.fio ? whoLabel(rec) : 'Неизвестно'
-    downloadsFilter.append(opt)
-  }
-  // Выбор переживает обновление, если сотрудник ещё есть в списке
-  downloadsFilter.value = Array.from(downloadsFilter.options).some((o) => o.value === current)
-    ? current
-    : ''
-}
-
-function renderDownloadsHistory(records: DownloadedFile[]): void {
-  if (!downloadsHistory) return
-  downloadsRecords = records
-  rebuildDownloadsFilter()
-  const filter = downloadsFilter?.value ?? ''
-  const visible = filter ? records.filter((r) => (r.fio ?? '') === filter) : records
-  downloadsHistory.innerHTML = ''
-  if (visible.length === 0) {
-    const empty = document.createElement('span')
-    empty.textContent = records.length === 0 ? 'Пока ничего не скачано' : 'Нет записей для этого сотрудника'
-    downloadsHistory.append(empty)
-    return
-  }
-  for (const rec of visible) {
-    const row = document.createElement('div')
-    row.className = 'download-row'
-    const icon = document.createElement('span')
-    icon.className = 'download-icon'
-    icon.textContent = rec.state === 'done' ? '✓' : '✕'
-    const info = document.createElement('div')
-    info.className = 'download-info'
-    const name = document.createElement('span')
-    name.className = 'download-name'
-    name.textContent = rec.name
-    name.title = rec.path || rec.name
-    name.addEventListener('click', () => void openHistoryFile(rec))
-    const meta = document.createElement('span')
-    meta.className = 'download-meta'
-    const sizePart = rec.bytes > 0 ? `${formatSize(rec.bytes)} · ` : ''
-    const whoPart = rec.fio ? ` · ${whoLabel(rec)}` : ' · неизвестно'
-    meta.textContent = `${sizePart}${formatDateTime(rec.finishedAt)}${whoPart}${rec.state === 'error' ? ' · ошибка' : ''}`
-    info.append(name, meta)
-    const show = document.createElement('button')
-    show.textContent = '📁'
-    show.title = 'Показать в папке'
-    show.addEventListener('click', () => void showHistoryFile(rec))
-    const del = document.createElement('button')
-    del.className = 'dl-remove'
-    del.textContent = '✕'
-    del.title = 'Убрать из списка'
-    del.addEventListener('click', () => void deleteHistoryRecord(rec.id))
-    row.append(icon, info, show, del)
-    downloadsHistory.append(row)
-  }
-}
-
-async function refreshDownloadsHistory(): Promise<void> {
-  try {
-    renderDownloadsHistory(await window.shell.listDownloads())
-  } catch (err) {
-    console.warn('[shell] downloads history failed:', err)
-  }
-}
-
-async function openDownloads(): Promise<void> {
-  if (!downloadsOverlay) return
-  downloadsOverlay.hidden = false
-  downloadsOpen = true
-  await refreshDownloadsHistory()
-  void renderDownloadsDir()
-}
-
-function closeDownloads(): void {
-  downloadsOpen = false
-  if (downloadsOverlay) downloadsOverlay.hidden = true
-}
-
-async function openHistoryFile(rec: DownloadedFile): Promise<void> {
-  try {
-    const ok = await window.shell.openDownloadFile(rec.id)
-    if (!ok) setStatus('файл не найден (перемещён или удалён)')
-  } catch (err) {
-    console.warn('[shell] open download failed:', err)
-  }
-}
-
-async function showHistoryFile(rec: DownloadedFile): Promise<void> {
-  try {
-    const ok = await window.shell.showDownload(rec.id)
-    if (!ok) setStatus('файл не найден (перемещён или удалён)')
-  } catch (err) {
-    console.warn('[shell] show download failed:', err)
-  }
-}
-
-async function deleteHistoryRecord(id: string): Promise<void> {
-  try {
-    renderDownloadsHistory(await window.shell.removeDownload(id))
-  } catch (err) {
-    console.warn('[shell] remove download failed:', err)
-  }
-}
-
-async function clearDownloadsHistory(): Promise<void> {
-  try {
-    renderDownloadsHistory(await window.shell.clearDownloads())
-  } catch (err) {
-    console.warn('[shell] clear downloads failed:', err)
-  }
-}
-
-// ---------- Внешние протоколы (mailto:, tel:) ----------
-
-/** Не http(s) — отдаём внешнему приложению, а не оверлею ошибки */
 // ---------- Шорткаты ----------
 
 async function handleShortcut(name: string): Promise<void> {
@@ -874,7 +583,7 @@ async function handleShortcut(name: string): Promise<void> {
       if (templatesManageOpen) closeTemplatesManage()
       else if (templatesOpen) closeTemplates()
       else if (accountsOpen) closeAccounts()
-      else if (downloadsOpen) closeDownloads()
+      else if (isDownloadsOpen()) closeDownloads()
       else if (tabsOpen) closeTabs()
       else if (isFindActive()) closeFind()
       else if (isSettingsOpen()) closeSettings()
@@ -1935,7 +1644,7 @@ function wireOverlayDismiss(): void {
   const pairs: Array<[HTMLElement | null, () => void]> = [
     [settingsOverlayEl(), closeSettings],
     [accountsOverlay, closeAccounts],
-    [downloadsOverlay, closeDownloads],
+    [downloadsOverlayEl(), closeDownloads],
     [tabsOverlay, closeTabs],
     [templatesOverlay, closeTemplates],
     [templatesManageOverlay, closeTemplatesManage],
