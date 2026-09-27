@@ -1,7 +1,6 @@
 import './styles.css'
 import { createTaskAlert, formatTaskAlertText, getTaskAlertUrls } from './task-alert'
 import { createAddressMenu, type AddressMenuController } from './address-menu'
-import { createShotPreview, type ShotPreviewController } from './shot-preview'
 import {
   bytesToBase64,
   createPrintDialog,
@@ -63,6 +62,7 @@ import {
   LINK_TAKE,
 } from './guest'
 import { normalizeUrl, hostOf, isAllowed as isAllowedUrl, resolveTasksUrl, formatSize, errText, withTimeout, formatDateTime } from './util'
+import { captureActiveTabScreenshot, closeShotPreviewIfOpen, openShotPreview, playShutterClick, wireShotPreview } from './screenshot'
 
 /**
  * Обёртки над чистыми функциями из util.ts: подставляют конфиг, чтобы в коде
@@ -82,8 +82,6 @@ const addressInput = document.getElementById('address') as HTMLInputElement | nu
 let addressMenu: AddressMenuController | null = null
 /** Диалог печати; собирается в wirePrintDialog */
 let printDialog: PrintDialogController | null = null
-/** Превью снимка экрана; собирается в wireShotPreview */
-let shotPreview: ShotPreviewController | null = null
 /** Диалог пароля защищённой папки; собирается в init */
 let folderPrompt: FolderPasswordPromptController | null = null
 
@@ -1806,8 +1804,7 @@ async function handleShortcut(name: string): Promise<void> {
         printDialog.close()
         break
       }
-      if (shotPreview?.isOpen()) {
-        shotPreview.close()
+      if (closeShotPreviewIfOpen()) {
         break
       }
       // Последним приоритетом: разделение сворачиваем, когда все панели закрыты
@@ -1874,25 +1871,6 @@ function shortcutFromEvent(event: KeyboardEvent): ShortcutName | null {
   return null
 }
 
-/** Снимок активной вкладки: PNG приходит в превью, на диск пишет сам пользователь */
-async function captureActiveTabScreenshot(): Promise<void> {
-  const view = activeView()
-  if (!view) {
-    setStatus('нет активной вкладки')
-    return
-  }
-  try {
-    openShotPreview(await window.shell.captureScreenshot(view.getWebContentsId()))
-  } catch {
-    setStatus('снимок не удался')
-  }
-}
-
-/**
- * Открывает превью снимка. main отдаёт PNG как data URL и имя файла по
- * умолчанию; на диск ничего не пишется, пока пользователь не нажмёт
- * «Сохранить как…» или «Копировать».
- */
 const helpOverlay = document.getElementById('help-overlay') as HTMLElement | null
 
 /** Справочник по клавишам и возможностям. Содержимое статичное — в разметке. */
@@ -1917,54 +1895,6 @@ function wireHelp(): void {
   helpOverlay?.addEventListener('click', (event) => {
     if (event.target === helpOverlay) closeHelp()
   })
-}
-
-function openShotPreview(result: ScreenshotResult): void {
-  if (!result || !result.ok || !result.dataUrl) {
-    setStatus('снимок не удался')
-    return
-  }
-  const guestId = activeView()?.getWebContentsId() ?? 0
-  if (!guestId) {
-    setStatus('нет активной вкладки')
-    return
-  }
-  const shown = shotPreview?.open({
-    dataUrl: result.dataUrl,
-    name: result.name || 'снимок.png',
-    guestId,
-  })
-  if (!shown) setStatus('снимок не удался')
-}
-
-/**
- * Характерный щелчок затвора при успешном снимке — два коротких щелчка
- * с интервалом, как у механического затвора. Синтезируем на месте (WebAudio),
- * чтобы не тащить звуковой файл в проект; по образцу playTnBeep.
- */
-function playShutterClick(): void {
-  try {
-    const ctx = new AudioContext()
-    const gain = ctx.createGain()
-    gain.connect(ctx.destination)
-    gain.gain.value = 0.22
-    // Два щелчка: первый резкий, второй чуть тише и ниже — так узнаётся затвор
-    for (const [delayMs, freq] of [[0, 1800], [70, 1250]] as const) {
-      const osc = ctx.createOscillator()
-      const env = ctx.createGain()
-      osc.type = 'square'
-      osc.frequency.value = freq
-      // Быстрый спад: иначе щелчок превращается в квак
-      env.gain.setValueAtTime(0, ctx.currentTime + delayMs / 1000)
-      env.gain.linearRampToValueAtTime(1, ctx.currentTime + delayMs / 1000 + 0.002)
-      env.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delayMs / 1000 + 0.05)
-      osc.connect(env)
-      env.connect(gain)
-      osc.start(ctx.currentTime + delayMs / 1000)
-      osc.stop(ctx.currentTime + delayMs / 1000 + 0.06)
-    }
-    setTimeout(() => { ctx.close().catch(() => undefined) }, 500)
-  } catch { /* звук не критичен для снимка */ }
 }
 
 function wireShortcuts(): void {
@@ -2024,39 +1954,6 @@ function wireAddressMenu(): void {
   } catch {
     /* гость ещё не готов */
   }
-}
-
-/** Превью снимка экрана: картинка + «Сохранить как…» / «Копировать» */
-function wireShotPreview(): void {
-  const overlay = document.getElementById('shot-overlay') as HTMLElement | null
-  const image = document.getElementById('shot-image') as HTMLImageElement | null
-  const caption = document.getElementById('shot-caption') as HTMLElement | null
-  const save = document.getElementById('shot-save') as HTMLButtonElement | null
-  const copy = document.getElementById('shot-copy') as HTMLButtonElement | null
-  const closeX = document.getElementById('shot-close-x') as HTMLButtonElement | null
-  if (!overlay || !image || !caption || !save || !copy || !closeX) return
-  shotPreview = createShotPreview(
-    { overlay, image, caption, save, copy, close: closeX },
-    {
-      onSave: (shot) => {
-        void window.shell
-          .saveScreenshotAs(shot.dataUrl, shot.guestId)
-          .then((res) => {
-            if (res && res.ok) setStatus('снимок сохранён')
-            // false = пользователь отменил диалог — молчим, как и в печати
-            else if (res) setStatus('не удалось сохранить снимок')
-          })
-          .catch(() => setStatus('не удалось сохранить снимок'))
-      },
-      onCopy: (shot) => {
-        void window.shell
-          .copyScreenshotImage(shot.dataUrl)
-          .then((ok) => setStatus(ok ? 'снимок в буфере обмена' : 'не удалось скопировать'))
-          .catch(() => setStatus('не удалось скопировать'))
-      },
-      onOpen: () => playShutterClick(),
-    },
-  )
 }
 
 /** Ширина миниатюры превью печати, CSS-px. Должна совпадать с .print-thumb в styles.css. */
