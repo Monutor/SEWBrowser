@@ -1,7 +1,8 @@
 // Статусная строка, всплывающее уведомление и оверлей ошибки.
 // Ссылки на DOM берутся лениво (внутри функций), а не на верхнем уровне.
 
-import { activeView } from './tabs'
+import { activeTab, activeView } from './tabs'
+import { guestJS } from './guest'
 
 let toastTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -59,4 +60,26 @@ export function wireErrorOverlay(): void {
     hideError()
     view.reload()
   })
+}
+
+export interface StatusPollingDeps {
+  config(): { debug?: boolean } | null
+}
+
+/**
+ * Периодически пишет в статусную строку счётчик запросов гостевой страницы
+ * (window.__sewDataLog). В режиме debug добавляет пометку. Страница может
+ * быть ещё не готова — тогда такт просто пропускается.
+ */
+export function startStatusPolling(deps: StatusPollingDeps): void {
+  setInterval(async () => {
+    const tab = activeTab()
+    if (!tab) return
+    try {
+      const count = await guestJS<unknown>(tab, 'datalog-count', '(window.__sewDataLog || []).length')
+      setStatus(deps.config()?.debug ? `req: ${count} · debug` : `req: ${count}`, false)
+    } catch {
+      // страница ещё не готова — игнорируем
+    }
+  }, 2000)
 }

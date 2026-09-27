@@ -1,119 +1,43 @@
 import './styles.css'
-import { createTaskAlert, formatTaskAlertText, getTaskAlertUrls } from './task-alert'
+import { createTaskAlert } from './task-alert'
 import { createAddressMenu, type AddressMenuController } from './address-menu'
-import {
-  bytesToBase64,
-  createPrintDialog,
-  normalizePrintSettings,
-  PRINT_PAPER_NAMES,
-  printOptions,
-  printToPdfOptions,
-  suggestedPdfName,
-  type PrintDialogController,
-  type PrintDialogElements,
-  type PrintDialogHooks,
-} from './print-dialog'
-import { openFind, closeFind, isFindActive, isFindInput, renderFindCount, wireFindbar } from './findbar'
-import { wireUpdater, checkForUpdatesManually } from './updatebar'
+import { openFind, closeFind, wireFindbar } from './findbar'
+import { wireUpdater } from './updatebar'
 import {
   createFolderPasswordPrompt,
   passwordPromptEl,
   type FolderPasswordPromptController,
 } from './folder-prompt'
-import {
-  hostOfTabUrl,
-  extractNewTabUrls,
-  normalizeFaviconUrl,
-} from './tabs-core.ts'
-import {
-  activeTab,
-  activeView,
-  canTabGoBack,
-  canTabGoForward,
-  closeTab,
-  cycleTab,
-  focusOrOpenTab,
-  initTabs,
-  isActiveTab,
-  listTabs,
-  noteTabHistory,
-  noteTabNavigated,
-  openTab,
-  primaryTab,
-  selectTabIndex,
-  setTabFavicon,
-  setTabTitle,
-  setTabUrl,
-  setSplitFocus,
-  splitPaneOf,
-  isSplit,
-  unsplit,
-  type ShellTab,
-} from './tabs'
-
-import { setStatus, hideToast, showError, hideError, wireErrorOverlay } from './status-ui'
-import {
-  injectPlugins,
-  pushPluginStores,
-  guestJS,
-  isExternalProtocol,
-  lastGuestErr,
-  LINK_HOOK,
-  LINK_TAKE,
-} from './guest'
-import { normalizeUrl, hostOf, isAllowed as isAllowedUrl, resolveTasksUrl, formatSize, errText, withTimeout, formatDateTime } from './util'
-import { captureActiveTabScreenshot, closeShotPreviewIfOpen, openShotPreview, playShutterClick, wireShotPreview } from './screenshot'
+import { activeTab, activeView, focusOrOpenTab, initTabs, listTabs, openTab } from './tabs'
+import { setStatus, startStatusPolling, hideError, wireErrorOverlay } from './status-ui'
+import { pushPluginStores, guestJS, lastGuestErr } from './guest'
+import { isAllowed as isAllowedUrl, resolveTasksUrl } from './util'
+import { captureActiveTabScreenshot, wireShotPreview } from './screenshot'
+import { isHelpOpen, closeHelp, toggleHelp, wireHelp } from './help-overlay'
 import { initShortcuts, wireShortcuts } from './shortcuts'
-import { shortcutFromEvent } from './shortcuts-core.ts'
-import { initTabsOverlay, isTabsOpen, tabsOverlayEl, openTabs, closeTabs, refreshTabsList, openEditForm, saveCurrentTab, deleteTab, moveTab, moveTabToFolder, openFolderForm, saveCurrentFolder, deleteFolder, wireTabs } from './tabs-overlay'
-import { initLinkStrip, isGroupPanelOpen, currentViewUrl, renderStrip, closeGroupPanel, updateActiveTab, createTabRow, tabRowButton } from './link-strip'
-import { initNavStore, isFolderCollapsed, UNASSIGNED_FOLDER, generateTabId, hasUserFolders, orderedGroups, tabsInFolder, generateFolderId, saveFolders, toggleFolderCollapse, fillFolderSelect, saveTabs, buildTabsJson, exportTabs, importTabs, type NavStoreDeps } from './nav-store'
-import { openTemplates, closeTemplates, closeTemplatesManage, isTemplatesOpen, isTemplatesManageOpen, templatesOverlayEl, templatesManageOverlayEl, wireTemplates, type TemplatesDeps } from './templates-overlay'
 import {
-  openAccounts,
-  closeAccounts,
-  wireAccounts,
-  checkLoginForm,
-  isAccountsOpen,
-  accountsOverlayEl,
-  setLoginPrompted,
-} from './accounts-overlay'
-import { wireDownloads, openDownloads, closeDownloads, isDownloadsOpen, downloadsOverlayEl } from './downloads-overlay'
-import { initSettings, wireSettings, openSettings, closeSettings, isSettingsOpen, settingsOverlayEl, type SettingsDeps } from './settings-overlay'
+  initTabsOverlay, tabsOverlayEl, closeTabs, refreshTabsList, openEditForm, deleteTab, moveTab, moveTabToFolder, wireTabs,
+} from './tabs-overlay'
+import { initLinkStrip, currentViewUrl, renderStrip, closeGroupPanel, updateActiveTab } from './link-strip'
+import { initNavStore, orderedGroups } from './nav-store'
 import {
-  TN_ALERT_TTL_DEFAULT_SEC,
-  initBridges,
-  normalizeTnAlertTtl,
-  playTnSound,
-  readTnAlertTtl,
-  resetTnCustomAudio,
-  setTnSoundFile,
-  setTnSoundFiles,
-  startScansBridge,
-  startSewHelperBridge,
-  startTasksNotifyBridge,
-  tnSoundFile,
-} from './bridges'
-import { isGuestReady, initTabEvents, startLinkIntake, wireTabEvents, type TabEventsDeps } from './tab-events'
-import {
-  closePrintDialogIfOpen,
-  initPrintBridge,
-  openPrintDialog,
-  printElements,
-  schedulePrintRefresh,
-  wirePrintDialog,
-} from './print-bridge'
+  closeTemplates, closeTemplatesManage, templatesOverlayEl, templatesManageOverlayEl, wireTemplates,
+} from './templates-overlay'
+import { openAccounts, closeAccounts, wireAccounts, checkLoginForm, accountsOverlayEl, setLoginPrompted } from './accounts-overlay'
+import { wireDownloads, closeDownloads, downloadsOverlayEl } from './downloads-overlay'
+import { initSettings, wireSettings, closeSettings, settingsOverlayEl } from './settings-overlay'
+import { initBridges, startScansBridge, startSewHelperBridge, startTasksNotifyBridge } from './bridges'
+import { initTabEvents, startLinkIntake, wireTabEvents } from './tab-events'
+import { initPrintBridge, openPrintDialog, wirePrintDialog } from './print-bridge'
 import { wireToolbar } from './toolbar'
 import { initAddressBar, updateAddressBar, updateTitlebarTitle, updateNavButtons, navigate, applyZoomForCurrentPage, changeZoom } from './address-bar'
 
-/**
- * Обёртки над чистыми функциями из util.ts: подставляют конфиг, чтобы в коде
- * не мериться allowlist-ом и базовым URL вручную в каждом месте.
- */
+/** Разрешён ли URL: allowlist выключен — да; иначе хост должен попасть под шаблон. */
 function isAllowed(url: string): boolean {
   return isAllowedUrl(url, config?.allowlist, config?.allowlistEnabled ?? false)
 }
 
+/** Адрес страницы задач: относительный путь дополняем адресом текущей страницы. */
 function tasksUrl(url: string): string {
   const base = activeView()?.getURL() || config?.startUrl || ''
   return resolveTasksUrl(url, base, config?.startUrl || '')
@@ -159,11 +83,10 @@ const taskAlert = taskAlertRoot && taskAlertTitle && taskAlertText && taskAlertO
       text: taskAlertText,
       open: taskAlertOpen,
       all: taskAlertAll,
-      close: taskAlertClose,
+      close: taskAlertClose
     })
   : null
 const toolbar = document.getElementById('toolbar') as HTMLElement | null
-
 
 // Оверлей ошибки сети
 const errorOverlay = document.getElementById('error-overlay') as HTMLElement | null
@@ -172,59 +95,12 @@ const errorText = document.getElementById('error-text') as HTMLElement | null
 // Настройки
 // Загрузки
 
-
 // Вкладки навигации
 
 let config: ShellConfig | null = null
 let plugins: PluginInfo[] = []
 /** Все плагины (включая выключенные) — для настроек */
 let allPlugins: { name: string; enabled: boolean }[] = []
-
-/**
- * Статус пишется в настройки; разовые подсказки (toast=true) дополнительно
- * всплывают тостом справа внизу на 3.5 c. Технический счётчик (polling)
- * идёт с toast=false, чтобы не спамить.
- */
-/**
- * Минимальный window.chrome для перенесённых content-скриптов Chrome-расширений.
- * storage.local — из снапшота window.__shellPluginStores, который оболочка пушит
- * в страницу при инжекте и обновляет при изменениях: у <webview> НЕТ preload,
- * поэтому window.shell в гостевой странице отсутствует и IPC оттуда недоступен
- * (данные плагинов — шаблоны и т.п., несекретные; credentials/куки/конфиг таким
- * путём не отдаются вообще). Запись — в снапшот + оппортунистически в IPC.
- * Сообщения от оболочки — через window.__chromeShimReceive (fan-out по onMessage).
- * Имя текущего плагина loader кладёт в window.__shellPluginName перед его кодом.
- */
-/** Забрать снапшот данных всех плагинов из main и положить в гостевую страницу */
-
-// ---------- Оверлей ошибки сети ----------
-
-const helpOverlay = document.getElementById('help-overlay') as HTMLElement | null
-
-/** Справочник по клавишам и возможностям. Содержимое статичное — в разметке. */
-function openHelp(): void {
-  if (!helpOverlay) return
-  helpOverlay.hidden = false
-}
-
-function closeHelp(): void {
-  if (!helpOverlay) return
-  helpOverlay.hidden = true
-}
-
-function toggleHelp(): void {
-  if (helpOverlay?.hidden) openHelp()
-  else closeHelp()
-}
-
-function wireHelp(): void {
-  document.getElementById('btn-help')?.addEventListener('click', toggleHelp)
-  document.getElementById('help-close-x')?.addEventListener('click', closeHelp)
-  helpOverlay?.addEventListener('click', (event) => {
-    if (event.target === helpOverlay) closeHelp()
-  })
-}
-
 
 function wireAddressMenu(): void {
   const popup = document.getElementById('address-menu') as HTMLElement | null
@@ -257,7 +133,7 @@ function wireAddressMenu(): void {
       },
       onPrint: () => {
         void openPrintDialog(activeTab())
-      },
+      }
     },
   )
   // Подпись масштаба должна совпадать с реальным зумом активной вкладки
@@ -267,24 +143,6 @@ function wireAddressMenu(): void {
     /* гость ещё не готов */
   }
 }
-
-
-
-
-function startStatusPolling(): void {
-  setInterval(async () => {
-    const tab = activeTab()
-    if (!tab) return
-    try {
-      const count = await guestJS<unknown>(tab, 'datalog-count', '(window.__sewDataLog || []).length')
-      setStatus(config?.debug ? `req: ${count} · debug` : `req: ${count}`, false)
-    } catch {
-      // страница ещё не готова — игнорируем
-    }
-  }, 2000)
-}
-
-// ---------- Вкладки навигации ----------
 
 function wireOverlayDismiss(): void {
   const pairs: Array<[HTMLElement | null, () => void]> = [
@@ -329,7 +187,7 @@ async function init(): Promise<void> {
       setZoomConfig: async (zoom) => {
         config = await window.shell.setConfig({ zoom })
       },
-      getAddressMenu: () => addressMenu,
+      getAddressMenu: () => addressMenu
     },
   )
   initPrintBridge({
@@ -337,7 +195,7 @@ async function init(): Promise<void> {
     savePrintConfig: async (print) => {
       config = await window.shell.setConfig({ print })
     },
-    currentViewUrl,
+    currentViewUrl
   })
   initTabEvents({
     plugins: () => plugins,
@@ -350,7 +208,7 @@ async function init(): Promise<void> {
     updateAddressBar,
     updateNavButtons,
     applyZoomForCurrentPage,
-    updateActiveTab,
+    updateActiveTab
   })
   startLinkIntake()
   wireToolbar(
@@ -362,16 +220,16 @@ async function init(): Promise<void> {
       captureActiveTabScreenshot,
       wireAddressMenu,
       wirePrintDialog,
-      wireShotPreview,
+      wireShotPreview
     },
   )
   initShortcuts({
     config: () => config,
     cancelFolderPasswordPrompt,
     getAddressMenu: () => addressMenu,
-    isHelpOpen: () => Boolean(helpOverlay && !helpOverlay.hidden),
+    isHelpOpen,
     closeHelp,
-    toggleHelp,
+    toggleHelp
   })
   wireShortcuts()
   wireFindbar()
@@ -387,7 +245,7 @@ async function init(): Promise<void> {
     gotoStartUrl: (url) => {
       if (addressInput) addressInput.value = url
       void navigate(url)
-    },
+    }
   })
   wireSettings()
   wireAccounts()
@@ -398,7 +256,7 @@ async function init(): Promise<void> {
     config: () => config,
     promptFolderPassword,
     requireFolderPassword,
-    cancelFolderPasswordPrompt,
+    cancelFolderPasswordPrompt
   })
   initLinkStrip({
     config: () => config,
@@ -407,7 +265,7 @@ async function init(): Promise<void> {
     moveTab,
     openEditForm,
     deleteTab,
-    moveTabToFolder,
+    moveTabToFolder
   })
   initNavStore({
     config: () => config,
@@ -417,11 +275,11 @@ async function init(): Promise<void> {
     },
     renderStrip,
     refreshTabsList,
-    closeGroupPanel,
+    closeGroupPanel
   })
   wireTabs()
   folderPrompt = createFolderPasswordPrompt({
-    findFolder: (folderId) => orderedGroups().find((g) => g.id === folderId),
+    findFolder: (folderId) => orderedGroups().find((g) => g.id === folderId)
   })
     folderPrompt.wire()
   wireUpdater()
@@ -471,17 +329,17 @@ async function init(): Promise<void> {
         // Вкладку переставили, опросная сменилась — гасим опрос в прежней.
         // Новый хост поднимет его сам при первом взятии очереди (tasks-take).
         void guestJS<void>(tab, 'poll-host-off', 'window.__shellPollHost = false;').catch(() => {})
-      },
-    },
+      }
+    }
   })
-  startStatusPolling()
+  startStatusPolling({ config: () => config })
   startLinkIntake()
   initBridges({
     config: () => config,
     plugins: () => plugins,
     taskAlert: () => taskAlert,
     tasksUrl,
-    isAllowed,
+    isAllowed
   })
   startSewHelperBridge()
   startScansBridge()
