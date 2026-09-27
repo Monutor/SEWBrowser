@@ -279,6 +279,17 @@ body {
   font-weight: 600;
 }
 
+/* Разделённое окно: акцентные грани у кнопок обеих панелей показывают, что эти
+   две вкладки работают как сплит. box-shadow, а не border, — чтобы не прыгала
+   ширина кнопки. Разделитель панелей у #tab-views ниже того же цвета. */
+.tab-btn[data-pane='left'] {
+  box-shadow: 2px 0 0 0 var(--accent);
+}
+
+.tab-btn[data-pane='right'] {
+  box-shadow: -2px 0 0 0 var(--accent);
+}
+
 /* Перетаскивание вкладок: полупрозрачная перетаскиваемая и метка места вставки */
 .tab-btn.dragging {
   opacity: 0.45;
@@ -2982,5 +2993,5 @@ body {
   box-sizing: border-box;
 }
 #tab-views[data-split] > webview:first-of-type {
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--accent);
 }

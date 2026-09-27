@@ -604,6 +604,10 @@ function wireTabDrag(button: HTMLButtonElement, tab: ShellTab): void {
 
 function updateTabButton(button: HTMLButtonElement, tab: ShellTab): void {
   button.className = tab.id === activeId ? 'tab-btn active' : 'tab-btn'
+  // Метка панели — визуальная подсказка «эта вкладка в сплите» (рисуется в CSS)
+  const pane = splitPaneOf(tab)
+  if (pane) button.setAttribute('data-pane', pane)
+  else button.removeAttribute('data-pane')
   // Подсказка — полный заголовок вкладки (спека §6.3), не URL
   button.title = tab.title
   const fav = button.children[0]

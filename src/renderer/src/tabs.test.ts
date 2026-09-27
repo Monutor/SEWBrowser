@@ -696,3 +696,31 @@ describe('split view', () => {
     assert.equal(tabsModule.isSplit(), false)
   })
 })
+describe('подсказка разделённого окна', () => {
+  it('кнопки обеих панелей помечены data-pane, после свертывания метка снята', () => {
+    setup()
+    tabsModule.openTab('https://a.ru/1')
+    tabsModule.openTab('https://b.ru/2')
+    // вне разделения метки нет
+    assert.equal(tabButton(0).getAttribute('data-pane'), null)
+    assert.equal(tabButton(1).getAttribute('data-pane'), null)
+    tabsModule.splitView()
+    assert.equal(tabButton(0).getAttribute('data-pane'), 'left')
+    assert.equal(tabButton(1).getAttribute('data-pane'), 'right')
+    tabsModule.unsplit()
+    assert.equal(tabButton(0).getAttribute('data-pane'), null)
+    assert.equal(tabButton(1).getAttribute('data-pane'), null)
+  })
+
+  it('новая вкладка в разделении получает метку своей панели', () => {
+    setup()
+    tabsModule.openTab('https://a.ru/1')
+    tabsModule.openTab('https://b.ru/2')
+    tabsModule.splitView()
+    tabsModule.setSplitFocus('right')
+    tabsModule.openTab('https://c.ru/3')
+    // порядок панелей: слева старая левая, справа новая
+    assert.equal(tabButton(0).getAttribute('data-pane'), 'left')
+    assert.equal(tabButton(1).getAttribute('data-pane'), 'right')
+  })
+})
