@@ -279,6 +279,30 @@ body {
   font-weight: 600;
 }
 
+/* Перетаскивание вкладок: полупрозрачная перетаскиваемая и метка места вставки */
+.tab-btn.dragging {
+  opacity: 0.45;
+}
+
+.tab-btn.drop-before::before,
+.tab-btn.drop-after::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+}
+
+.tab-btn.drop-before::before {
+  left: -2px;
+}
+
+.tab-btn.drop-after::before {
+  right: -2px;
+}
+
 /* Акцентная черта снизу у активной вкладки */
 .tab-btn.active::after {
   content: '';

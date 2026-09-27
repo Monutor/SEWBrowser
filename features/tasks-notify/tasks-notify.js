@@ -116,7 +116,13 @@ function __tnTrim(seen, now) {
 }
 
 function __tnTick() {
-  if (__tnBusy) return;
+    if (__tnBusy) return;
+    // Вкладку перестали опрашивать (переставили вкладки, и опросная сменилась):
+    // молча прекращаем идти в BFF и пушить в очередь, которую никто не читает.
+    if (window.__shellPollHost === false) {
+      try { window.__tasksNotifyState = { lastTick: new Date().toISOString(), lastCount: 0, lastError: 'не опросная вкладка' }; } catch (e) {}
+      return;
+    }
   // Bearer перехватывается из запросов самой SPA; пока она ничего не послала
   // (первый тик после захода) — опрос пропускаем, иначе гарантированный 401
   if (!__tnBearer) {

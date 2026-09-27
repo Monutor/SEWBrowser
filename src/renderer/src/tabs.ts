@@ -33,6 +33,13 @@ export interface TabsHooks {
   wire: (tab: ShellTab) => void
   onActivated: (tab: ShellTab) => void
   onClosed: (tab: ShellTab) => void
+  /**
+   * Первая вкладка — опросный хост. При перестановке вкладок хост меняется,
+   * и оболочка должна гасить опрос в прежней (иначе она продолжает пушить
+   * задания в очередь, которую никто не читает). При закрытии вкладки хост
+   * просто исчезает вместе с ней, поэтому хук зовется только от moveTab.
+   */
+  onPrimaryChanged?: (tab: ShellTab) => void
 }
 
 export interface TabsOptions {
@@ -175,6 +182,30 @@ export function closeTab(id: number): void {
     renderTabBar()
     o.hooks.onActivated(next)
     return
+  }
+  renderTabBar()
+}
+
+/**
+ * Переставить вкладку на позицию toIndex (порядок вкладок = порядок массива).
+ * Опросный хост — первая вкладка, поэтому при перестановке он меняется:
+ * прежнему хосту оболочка гасит опрос, а новый поднимет его сам при первом
+ * взятии очереди. Активная вкладка не меняется.
+ */
+export function moveTab(id: number, toIndex: number): void {
+  const o = options
+  if (!o) return
+  const from = tabs.findIndex((tab) => tab.id === id)
+  if (from < 0) return
+  const to = Math.max(0, Math.min(tabs.length - 1, Math.floor(toIndex)))
+  if (to === from) return
+  const previousPrimary = tabs[0]
+  const [tab] = tabs.splice(from, 1)
+  tabs.splice(to, 0, tab)
+  if (tabs[0] !== previousPrimary) {
+    previousPrimary.isPrimary = false
+    tabs[0].isPrimary = true
+    o.hooks.onPrimaryChanged?.(previousPrimary)
   }
   renderTabBar()
 }
@@ -337,7 +368,89 @@ function createTabButton(tab: ShellTab): HTMLButtonElement {
     mouse.preventDefault()
     showTabMenu(tab)
   })
+  wireTabDrag(button, tab)
   return button
+}
+
+/** Перетаскиваемая вкладка (0 — не перетаскиваем). */
+let dragTabId = 0
+
+/**
+ * Место вставки при броске на targetId. Считаем по индексам, без геометрии:
+ * тянем вправо (с меньшего индекса на больший) — вставляем после цели, иначе
+ * до неё. Так перетаскивание вправо всегда даёт ожидаемый порядок, и правило
+ * работает одинаково при любой ширине окна.
+ */
+function dropIndexFor(targetId: number): number {
+  const from = tabs.findIndex((tab) => tab.id === dragTabId)
+  const target = tabs.findIndex((tab) => tab.id === targetId)
+  if (from < 0 || target < 0 || from === target) return -1
+  return from < target ? target + 1 : target
+}
+
+/**
+ * Классы состояния перетаскивания. Полоса работает через className (так же,
+ * как updateTabButton), а не через classList, — чтобы не расходились два
+ * способа задать один и тот же набор классов.
+ */
+function markTabDrag(button: HTMLButtonElement, marks: { drag?: boolean; before?: boolean; after?: boolean }): void {
+  const active = button.className.includes(' active')
+  const parts = ['tab-btn']
+  if (active) parts.push('active')
+  if (marks.drag) parts.push('dragging')
+  if (marks.before) parts.push('drop-before')
+  if (marks.after) parts.push('drop-after')
+  button.className = parts.join(' ')
+}
+
+function clearDropMarks(): void {
+  for (const button of stripButtons.values()) {
+    if (button.className.includes('drop-')) markTabDrag(button, {})
+  }
+}
+
+function wireTabDrag(button: HTMLButtonElement, tab: ShellTab): void {
+  button.draggable = true
+  button.addEventListener('dragstart', (event) => {
+    const drag = event as DragEvent
+    dragTabId = tab.id
+    markTabDrag(button, { drag: true })
+    // Без setData Firefox не начинает перетаскивание. Тип у drag.dataTransfer
+    // в тестовом дубле может отсутствовать — отсюда проверка.
+    if (drag.dataTransfer) {
+      drag.dataTransfer.effectAllowed = 'move'
+      drag.dataTransfer.setData('text/plain', String(tab.id))
+    }
+  })
+  button.addEventListener('dragover', (event) => {
+    if (!dragTabId || dragTabId === tab.id) return
+    const over = event as DragEvent
+    // Без preventDefault браузер не согласится на drop.
+    over.preventDefault()
+    if (over.dataTransfer) over.dataTransfer.dropEffect = 'move'
+    clearDropMarks()
+    const from = tabs.findIndex((t) => t.id === dragTabId)
+    const target = tabs.findIndex((t) => t.id === tab.id)
+    markTabDrag(button, from < target ? { after: true } : { before: true })
+  })
+  button.addEventListener('dragleave', () => {
+    if (button.className.includes('drop-')) markTabDrag(button, {})
+  })
+  button.addEventListener('drop', (event) => {
+    const drop = event as DragEvent
+    drop.preventDefault()
+    const to = dropIndexFor(tab.id)
+    const dragged = dragTabId
+    clearDropMarks()
+    markTabDrag(button, {})
+    dragTabId = 0
+    if (to >= 0) moveTab(dragged, to)
+  })
+  button.addEventListener('dragend', () => {
+    clearDropMarks()
+    if (button.className.includes('dragging')) markTabDrag(button, {})
+    dragTabId = 0
+  })
 }
 
 function updateTabButton(button: HTMLButtonElement, tab: ShellTab): void {

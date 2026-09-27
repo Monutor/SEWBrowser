@@ -76,6 +76,16 @@ function fire(el: FakeEl, type: string, event: unknown = { preventDefault(): voi
   }
 }
 
+/** Полоса последнего setup() — нужна кейсам перетаскивания, чтобы дотянуться до кнопок. */
+let lastStrip: FakeEl | null = null
+
+/** Кнопка вкладки по позиции на полосе (0 — самая левая). */
+function tabButton(index: number): FakeEl {
+  const button = lastStrip?.children[index]
+  assert.ok(button, `нет кнопки вкладки на позиции ${index}`)
+  return button
+}
+
 // Подмена document до импорта tabs.ts: модуль дёргает document только внутри функций
 const fakeDocument = {
   createElement: (tag: string): FakeEl => mkEl(tag),
@@ -93,6 +103,8 @@ interface Harness {
   closed: number[]
   blocked: string[]
   popupItems: Array<{ label: string; action: string }>
+  /** Вкладки, у которых перестановка забрала статус опросного хоста */
+  demoted: number[]
   /** Зарегистрированные обработчики onMenuAction — тест шлёт в них action вручную */
   menuActions: Array<(action: string) => void>
 }
@@ -104,7 +116,8 @@ function setup(
   const container = mkEl('div')
   const strip = mkEl('div')
   const newTab = mkEl('button')
-  const h: Harness = { container, strip, newTab, wired: [], activated: [], closed: [], blocked: [], popupItems: [], menuActions: [] }
+  const h: Harness = { container, strip, newTab, wired: [], activated: [], closed: [], blocked: [], popupItems: [], demoted: [], menuActions: [] }
+  lastStrip = strip
   ;(globalThis as unknown as { window: unknown }).window = {
     shell: {
       popupMenu: (items: Array<{ label: string; action: string }>): Promise<boolean> => {
@@ -129,6 +142,7 @@ function setup(
       wire: (tab) => h.wired.push(tab.id),
       onActivated: (tab) => h.activated.push(tab.id),
       onClosed: (tab) => h.closed.push(tab.id),
+      onPrimaryChanged: (tab) => h.demoted.push(tab.id),
     },
   })
   return h
@@ -284,6 +298,95 @@ describe('primaryTab', () => {
     assert.equal(tabsModule.primaryView(), tabsModule.primaryTab()?.view)
     assert.notEqual(tabsModule.activeTab()?.id, tabsModule.primaryTab()?.id)
     h.newTab.remove()
+  })
+})
+
+describe('moveTab', () => {
+  it('переставляет вкладку в конец и не меняет активную', () => {
+    const h = setup()
+    const a = tabsModule.openTab('https://a.mvideoeldorado.ru/')
+    const b = tabsModule.openTab('https://b.mvideoeldorado.ru/')
+    const c = tabsModule.openTab('https://c.mvideoeldorado.ru/')
+    assert.ok(a && b && c)
+    tabsModule.activateTab(c)
+    tabsModule.moveTab(a!.id, 2)
+    assert.deepEqual(tabsModule.listTabs().map((t) => t.id), [b!.id, c!.id, a!.id])
+    assert.equal(tabsModule.activeTab()?.id, c!.id)
+    // Полоса перестроилась в новом порядке (подпись без заголовка — хост)
+    assert.deepEqual(h.strip.children.map((el) => el.children[1].textContent), ['b.mvideoeldorado.ru', 'c.mvideoeldorado.ru', 'a.mvideoeldorado.ru'])
+    assert.deepEqual(h.demoted, [a!.id])
+  })
+
+  it('переставляет в начало и двигает статус опросного хоста', () => {
+    const h = setup()
+    const a = tabsModule.openTab('https://a.mvideoeldorado.ru/')
+    const b = tabsModule.openTab('https://b.mvideoeldorado.ru/')
+    const c = tabsModule.openTab('https://c.mvideoeldorado.ru/')
+    assert.ok(a && b && c)
+    tabsModule.moveTab(c!.id, 0)
+    assert.deepEqual(tabsModule.listTabs().map((t) => t.id), [c!.id, a!.id, b!.id])
+    assert.equal(c!.isPrimary, true)
+    assert.equal(a!.isPrimary, false)
+    assert.equal(tabsModule.primaryTab()?.id, c!.id)
+    // Прежний хост один раз сообщил, что опрос надо гасить
+    assert.deepEqual(h.demoted, [a!.id])
+  })
+
+  it('перестановка внутри позиции хозяина не трогает статус хоста', () => {
+    const h = setup()
+    const a = tabsModule.openTab('https://a.mvideoeldorado.ru/')
+    const b = tabsModule.openTab('https://b.mvideoeldorado.ru/')
+    const c = tabsModule.openTab('https://c.mvideoeldorado.ru/')
+    assert.ok(a && b && c)
+    tabsModule.moveTab(b!.id, 2)
+    assert.deepEqual(tabsModule.listTabs().map((t) => t.id), [a!.id, c!.id, b!.id])
+    assert.equal(a!.isPrimary, true)
+    assert.deepEqual(h.demoted, [])
+  })
+
+  it('перенос в ту же позицию и несуществующую вкладку игнорирует, индексы за границами зажимает', () => {
+    const h = setup()
+    const a = tabsModule.openTab('https://a.mvideoeldorado.ru/')
+    const b = tabsModule.openTab('https://b.mvideoeldorado.ru/')
+    assert.ok(a && b)
+    // Та же позиция — ничего не делаем
+    tabsModule.moveTab(a!.id, 0)
+    assert.deepEqual(tabsModule.listTabs().map((t) => t.id), [a!.id, b!.id])
+    // Несуществующая вкладка — ничего не делаем
+    tabsModule.moveTab(4242, 0)
+    assert.deepEqual(tabsModule.listTabs().map((t) => t.id), [a!.id, b!.id])
+    // Индексы за границами зажимаются: 99 — это конец, -5 — это начало
+    tabsModule.moveTab(a!.id, 99)
+    assert.deepEqual(tabsModule.listTabs().map((t) => t.id), [b!.id, a!.id])
+    tabsModule.moveTab(a!.id, -5)
+    assert.deepEqual(tabsModule.listTabs().map((t) => t.id), [a!.id, b!.id])
+    // Первая вкладка вернулась на первое место и снова стала хостом
+    assert.equal(a!.isPrimary, true)
+    assert.equal(tabsModule.primaryTab()?.id, a!.id)
+  })
+
+  it('броск вправо ставит вкладку после цели, влево — перед ней', () => {
+    setup()
+    const a = tabsModule.openTab('https://a.mvideoeldorado.ru/')
+    const b = tabsModule.openTab('https://b.mvideoeldorado.ru/')
+    const c = tabsModule.openTab('https://c.mvideoeldorado.ru/')
+    const d = tabsModule.openTab('https://d.mvideoeldorado.ru/')
+    assert.ok(a && b && c && d)
+    // Тянем первую вкладку на третью: вправо — встаём после неё
+    fire(tabButton(0), 'dragstart')
+    fire(tabButton(2), 'dragover')
+    assert.ok(tabButton(2).className.includes('drop-after'))
+    fire(tabButton(2), 'drop')
+    assert.deepEqual(tabsModule.listTabs().map((t) => t.id), [b!.id, c!.id, d!.id, a!.id])
+    // Тянем последнюю на первую: влево — встаём перед ней
+    fire(tabButton(3), 'dragstart')
+    fire(tabButton(0), 'dragover')
+    assert.ok(tabButton(0).className.includes('drop-before'))
+    fire(tabButton(0), 'drop')
+    assert.deepEqual(tabsModule.listTabs().map((t) => t.id), [a!.id, b!.id, c!.id, d!.id])
+    // Маркер снят, перетаскиваемая вкладка не осталась призрачной
+    assert.equal(tabButton(0).className.includes('drop-'), false)
+    assert.equal(tabButton(0).className.includes('dragging'), false)
   })
 })
 

@@ -3983,6 +3983,11 @@ async function init(): Promise<void> {
           if (key.startsWith(`${tab.id}:`)) delete lastGuestErr[key]
         }
       },
+      onPrimaryChanged: (tab) => {
+        // Вкладку переставили, опросная сменилась — гасим опрос в прежней.
+        // Новый хост поднимет его сам при первом взятии очереди (tasks-take).
+        void guestJS<void>(tab, 'poll-host-off', 'window.__shellPollHost = false;').catch(() => {})
+      },
     },
   })
   startStatusPolling()
