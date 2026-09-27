@@ -67,7 +67,7 @@ function folderPasswordEl(): HTMLInputElement {
   return document.getElementById('folder-password') as HTMLInputElement
 }
 function folderPwdFieldEl(): HTMLElement {
-  return document.getElementById('folder-password-field') as HTMLElement
+  return document.getElementById('folder-pwd-field') as HTMLElement
 }
 function folderSelectEl(): HTMLSelectElement {
   return document.getElementById('tab-folder') as HTMLSelectElement
