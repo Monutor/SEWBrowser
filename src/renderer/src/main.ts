@@ -63,6 +63,7 @@ import {
 } from './guest'
 import { normalizeUrl, hostOf, isAllowed as isAllowedUrl, resolveTasksUrl, formatSize, errText, withTimeout, formatDateTime } from './util'
 import { captureActiveTabScreenshot, closeShotPreviewIfOpen, openShotPreview, playShutterClick, wireShotPreview } from './screenshot'
+import { initAddressBar, updateAddressBar, updateTitlebarTitle, updateNavButtons, navigate, applyZoomForCurrentPage, changeZoom } from './address-bar'
 
 /**
  * Обёртки над чистыми функциями из util.ts: подставляют конфиг, чтобы в коде
@@ -687,111 +688,6 @@ async function pumpTasksNotify(): Promise<boolean> {
   } catch {
     return false
   }
-}
-
-function updateAddressBar(): void {
-  if (!addressInput) return
-  const view = activeView()
-  if (!view) return
-  try {
-    addressInput.value = view.getURL() ?? ''
-  } catch {
-    // webview ещё не готов — игнорируем
-  }
-}
-
-/** Заголовок активной страницы по центру titlebar (как в макете). */
-function updateTitlebarTitle(): void {
-  if (!titlebarTitle) return
-  const tab = activeTab()
-  titlebarTitle.textContent = tab ? tab.title : ''
-}
-
-/**
- * Тусклые «назад/вперёд», когда переходить некуда. У <webview> нет canGoBack,
- * поэтому состояние ведём сами: переход назад/вперёд включает одну сторону,
- * обычная навигация включает «назад» и гасит «вперёд».
- */
-function updateNavButtons(): void {
-  const tab = activeTab()
-  if (btnBack) btnBack.classList.toggle('nav-off', !tab || !canTabGoBack(tab))
-  if (btnForward) btnForward.classList.toggle('nav-off', !tab || !canTabGoForward(tab))
-}
-
-async function navigate(url: string): Promise<void> {
-  const target = normalizeUrl(url)
-  if (!target) return
-  if (isAllowed(target)) {
-    const view = activeView()
-    if (!view) return
-    try {
-      await view.loadURL(target)
-    } catch (err) {
-      console.warn('[shell] loadURL failed:', err)
-    }
-  } else {
-    setStatus('blocked by allowlist')
-  }
-}
-
-// ---------- Зум ----------
-
-const ZOOM_STEPS = [0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2]
-
-function nearestZoomIndex(factor: number): number {
-  let best = 0
-  for (let i = 1; i < ZOOM_STEPS.length; i++) {
-    if (Math.abs(ZOOM_STEPS[i] - factor) < Math.abs(ZOOM_STEPS[best] - factor)) best = i
-  }
-  return best
-}
-
-/** Применяет запомненный для текущего хоста зум (вызывается при навигации) */
-function applyZoomForCurrentPage(): void {
-  if (!config) return
-  const view = activeView()
-  if (!view) return
-  try {
-    const host = hostOf(view.getURL() ?? '')
-    const factor = (host && config.zoom[host]) || 1
-    view.setZoomFactor(factor)
-    addressMenu?.syncZoom(factor)
-  } catch {
-    // webview ещё не готов — применится при следующей навигации
-  }
-}
-
-async function changeZoom(dir: 1 | -1 | 'reset'): Promise<void> {
-  if (!config) return
-  const view = activeView()
-  if (!view) return
-  let current = 1
-  try {
-    current = view.getZoomFactor()
-  } catch {
-    // страница не готова — нечего масштабировать
-    return
-  }
-  const next =
-    dir === 'reset'
-      ? 1
-      : ZOOM_STEPS[Math.min(ZOOM_STEPS.length - 1, Math.max(0, nearestZoomIndex(current) + dir))]
-  try {
-    view.setZoomFactor(next)
-  } catch {
-    return
-  }
-  addressMenu?.syncZoom(next)
-  const host = hostOf(view.getURL() ?? '')
-  if (host) {
-    config.zoom[host] = Math.round(next * 100) / 100
-    try {
-      config = await window.shell.setConfig({ zoom: config.zoom })
-    } catch (err) {
-      console.warn('[shell] failed to persist zoom:', err)
-    }
-  }
-  setStatus(`${Math.round(next * 100)}%`)
 }
 
 // ---------- Оверлей ошибки сети ----------
@@ -3416,6 +3312,18 @@ async function init(): Promise<void> {
   }
   applyAppVersion()
 
+  initAddressBar(
+    { address: addressInput, titlebarTitle, back: btnBack, forward: btnForward },
+    {
+      isAllowed,
+      config: () => config,
+      setZoomConfig: async (zoom) => {
+        config = await window.shell.setConfig({ zoom })
+      },
+      getAddressMenu: () => addressMenu,
+    },
+  )
+
   wireToolbar()
   wireShortcuts()
   wireFindbar()
@@ -3425,9 +3333,9 @@ async function init(): Promise<void> {
   wireHelp()
   wireTemplates()
   wireTabs()
-    folderPrompt = createFolderPasswordPrompt({
-      findFolder: (folderId) => orderedGroups().find((g) => g.id === folderId),
-    })
+  folderPrompt = createFolderPasswordPrompt({
+    findFolder: (folderId) => orderedGroups().find((g) => g.id === folderId),
+  })
     folderPrompt.wire()
   wireUpdater()
   wireOverlayDismiss()
