@@ -15,6 +15,7 @@ docs/
 .aider*
 .openai/
 .gemini/
+.superpowers/
 *.code-workspace
 
 # Editors / OS
