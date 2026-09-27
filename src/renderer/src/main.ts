@@ -52,6 +52,10 @@ let printPrinters: ShellPrinter[] = []
  *  Замыкание из wirePrintDialog: контроллер эти куски не ведёт, а держит
  *  только скрытость строки, поэтому звать его приходится из openPrintDialog */
 let printPanelSync: (() => void) | null = null
+/** Вкладка, снятая при открытии диалога. Хоткеи висят на window, поэтому
+ *  Ctrl+Tab/Ctrl+3 переводит активную вкладку, пока печать открыта: без
+ *  фиксации цели превью, системная печать и имя PDF уехали бы на чужой документ */
+let printTargetView: SewWebViewElement | null = null
 const titlebarTitle = document.getElementById('titlebar-title') as HTMLElement | null
 const btnBack = document.getElementById('btn-back') as HTMLButtonElement | null
 const btnForward = document.getElementById('btn-forward') as HTMLButtonElement | null
@@ -2356,11 +2360,26 @@ function printElements(): PrintDialogElements | null {
   return out as PrintDialogElements
 }
 
+/** Снять отложенный пересчёт превью: перед новым таймером и перед «Показать все» */
+function cancelScheduledPrintRefresh(): void {
+  if (printRefreshTimer === null) return
+  window.clearTimeout(printRefreshTimer)
+  printRefreshTimer = null
+}
+
 /** Пересчёт превью с debounce: поля меняются мышью, PDF печатать не каждый раз */
 function schedulePrintRefresh(): void {
-  if (printRefreshTimer !== null) window.clearTimeout(printRefreshTimer)
+  cancelScheduledPrintRefresh()
   printRefreshTimer = window.setTimeout(() => {
     printRefreshTimer = null
+    // Пока идёт печать/сохранение/«Показать все», refresh() нельзя: он сбрасывает
+    // busy в своём finally и вернул бы кнопки под системным диалогом (или
+    // перебил renderAllThumbs по generation и сбросил showAll). Поэтому не
+    // пропускаем пересчёт, а перевзводим таймер — окно занятости узкое.
+    if (printDialog?.isBusy()) {
+      schedulePrintRefresh()
+      return
+    }
     void printDialog?.refresh()
   }, 250)
 }
@@ -2379,16 +2398,21 @@ async function openPrintDialog(tab: ShellTab | null): Promise<void> {
     return
   }
   if (printDialog.isOpen()) return
+  // Цель печати фиксируем здесь и навсегда: хоткеи слушаются на window, оверлей их
+  // не перехватывает, поэтому Ctrl+Tab/Ctrl+3 во время печати сделал бы активной
+  // другую вкладку — и превью, печать и имя PDF поехали бы на чужой документ
+  printTargetView = tab.view ?? activeView()
   await printDialog.open(normalizePrintSettings(config?.print))
   // Контроллер пересобрал «Назначение» и заполнил поля — досинхронизируем нашу
   // часть (строка принтера, список бумаги) под фактический выбор
   printPanelSync?.()
 }
 
-/** Заголовок документа для шапки диалога и имени PDF */
+/** Заголовок документа для шапки диалога и имени PDF — всегда у зафиксированной
+ *  цели печати, иначе Ctrl+Tab переименовал бы сохраняемый файл */
 function titleForPrint(): string {
   try {
-    return activeView()?.getTitle() ?? ''
+    return (printTargetView ?? activeView())?.getTitle() ?? ''
   } catch {
     return ''
   }
@@ -2397,7 +2421,9 @@ function titleForPrint(): string {
 function wirePrintDialog(): void {
   const elements = printElements()
   if (!elements) return
-  const view = () => activeView()
+  // Цель, снятая при открытии диалога; activeView() — запасной путь, если
+  // openPrintDialog цели не зафиксировал (например, гость не дал view)
+  const view = (): SewWebViewElement | null => printTargetView ?? activeView()
 
   // Строка «Принтер» в разметке пустая: контроллер умеет только скрывать её,
   // содержимое собираем здесь через DOM API (без innerHTML — текст небезопасен)
@@ -2457,13 +2483,17 @@ function wirePrintDialog(): void {
   }
   printPanelSync = syncPrintPanel
 
-  // Слои: тост (#toast, 50) во время печати только шумит под затемнением, а
-  // карточка задачи (#task-alert, 100) легла бы прямо на панель. Поэтому на
-  // время показа поднимаем оверлей над обоими, а тост гасим вместе с таймером.
-  const watchPrintLayers = (): void => {
+  // Слои и срок жизни цели: тост (#toast, 50) во время печати только шумит под
+  // затемнением, а карточка задачи (#task-alert, 100) легла бы прямо на панель.
+  // Поэтому на время показа поднимаем оверлей над обоими, тост гасим вместе с
+  // таймером, а по закрытию забываем цель печати.
+  const watchPrintOverlay = (): void => {
     const apply = (): void => {
       const visible = !elements.overlay.hidden
       elements.overlay.style.zIndex = visible ? String(PRINT_OVERLAY_Z) : ''
+      // Диалог закрыт (любой путь: Отмена, крестик, Escape, клик по фону,
+      // closeNow после печати) — цель больше не нужна
+      if (!visible) printTargetView = null
       if (!visible || !toastEl) return
       toastEl.hidden = true
       if (toastTimer) {
@@ -2523,17 +2553,21 @@ function wirePrintDialog(): void {
   // refresh() уже прочитает исправленные значения
   elements.destination.addEventListener('change', syncPrintPanel)
   // «Поля: нет» проставляет значения через fill(): ни input, ни change оно не
-  // порождает, а клик по <button> их тоже не даёт — превью без refresh останется
-  // старым, поэтому зовём пересчёт явно
-  elements.noMargins.addEventListener('click', () => {
-    void printDialog?.refresh()
-  })
+  // порождает, а клик по <button> их тоже не даёт — превью без пересчёта
+  // осталось бы старым. Идём через schedulePrintRefresh: refresh() напрямую
+  // сбросил бы busy, если клик пришёлся на печать/сохранение (их кнопки
+  // блокируются, а поля полей — нет)
+  elements.noMargins.addEventListener('click', schedulePrintRefresh)
+  // «Показать все» — самое свежее намерение пользователя, поэтому отложенный
+  // пересчёт снимаем: иначе он отработал бы сразу после runAction и опять
+  // показал только первые 10 миниатюр (refresh обнуляет showAll)
+  elements.showAll.addEventListener('click', cancelScheduledPrintRefresh)
   // Клик по фону оверлея закрывает диалог
   elements.overlay.addEventListener('click', (event) => {
     if (event.target === elements.overlay) printDialog?.close()
   })
   document.getElementById('print-cancel-x')?.addEventListener('click', () => printDialog?.close())
-  watchPrintLayers()
+  watchPrintOverlay()
   syncPrintPanel()
 }
 
