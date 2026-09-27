@@ -63,6 +63,7 @@ import {
 } from './guest'
 import { normalizeUrl, hostOf, isAllowed as isAllowedUrl, resolveTasksUrl, formatSize, errText, withTimeout, formatDateTime } from './util'
 import { captureActiveTabScreenshot, closeShotPreviewIfOpen, openShotPreview, playShutterClick, wireShotPreview } from './screenshot'
+import { initTabsOverlay, isTabsOpen, tabsOverlayEl, openTabs, closeTabs, refreshTabsList, openEditForm, saveCurrentTab, deleteTab, moveTab, moveTabToFolder, openFolderForm, saveCurrentFolder, deleteFolder, wireTabs } from './tabs-overlay'
 import { initLinkStrip, isGroupPanelOpen, currentViewUrl, renderStrip, closeGroupPanel, updateActiveTab, createTabRow, tabRowButton } from './link-strip'
 import { initNavStore, isFolderCollapsed, UNASSIGNED_FOLDER, generateTabId, hasUserFolders, orderedGroups, tabsInFolder, generateFolderId, saveFolders, toggleFolderCollapse, fillFolderSelect, saveTabs, buildTabsJson, exportTabs, importTabs, type NavStoreDeps } from './nav-store'
 import { openTemplates, closeTemplates, closeTemplatesManage, isTemplatesOpen, isTemplatesManageOpen, templatesOverlayEl, templatesManageOverlayEl, wireTemplates, type TemplatesDeps } from './templates-overlay'
@@ -171,26 +172,6 @@ const errorText = document.getElementById('error-text') as HTMLElement | null
 
 
 // Вкладки навигации
-const tabsOverlay = document.getElementById('tabs-overlay') as HTMLElement | null
-const tabsList = document.getElementById('tabs-list') as HTMLElement | null
-const tabForm = document.getElementById('tab-form') as HTMLElement | null
-const tabNameInput = document.getElementById('tab-name') as HTMLInputElement | null
-const tabUrlInput = document.getElementById('tab-url') as HTMLInputElement | null
-const tabsExport = document.getElementById('tabs-export') as HTMLElement | null
-const tabsImport = document.getElementById('tabs-import') as HTMLElement | null
-const tabsImportFile = document.getElementById('tabs-import-file') as HTMLInputElement | null
-const folderForm = document.getElementById('folder-form') as HTMLElement | null
-const folderNameInput = document.getElementById('folder-name') as HTMLInputElement | null
-const folderProtect = document.getElementById('folder-protect') as HTMLInputElement | null
-const folderPassword = document.getElementById('folder-password') as HTMLInputElement | null
-const folderPwdField = document.getElementById('folder-pwd-field') as HTMLElement | null
-const tabFolderSelect = document.getElementById('tab-folder') as HTMLSelectElement | null
-let editingTabId: string | null = null
-let editingFolderId: string | null = null
-/** ID папок, свёрнутых в оверлее (sentinel UNASSIGNED_FOLDER — «без папки»). */
-/** ID папки, развёрнутой списком под лентой (по одному). null — все свёрнуты. */
-/** Обработчик клика вне выпадающего списка папки; удерживается для снятия. */
-let tabsOpen = false
 
 let config: ShellConfig | null = null
 let plugins: PluginInfo[] = []
@@ -352,7 +333,7 @@ async function handleShortcut(name: string): Promise<void> {
       else if (isTemplatesOpen()) closeTemplates()
       else if (isAccountsOpen()) closeAccounts()
       else if (isDownloadsOpen()) closeDownloads()
-      else if (tabsOpen) closeTabs()
+      else if (isTabsOpen()) closeTabs()
       else if (isFindActive()) closeFind()
       else if (isSettingsOpen()) closeSettings()
       else if (document.activeElement === addressInput && addressInput) addressInput.blur()
@@ -506,285 +487,12 @@ function startStatusPolling(): void {
 
 // ---------- Вкладки навигации ----------
 
-function openTabs(): void {
-  if (!tabsOverlay) return
-  editingTabId = null
-  editingFolderId = null
-  resetFolderForm()
-  tabForm && (tabForm.hidden = true)
-  refreshTabsList()
-  tabsOverlay.hidden = false
-  tabsOpen = true
-}
-
-function closeTabs(): void {
-  if (!tabsOverlay) return
-  tabsOverlay.hidden = true
-  tabsOpen = false
-  editingTabId = null
-  editingFolderId = null
-  resetFolderForm()
-  tabForm && (tabForm.hidden = true)
-}
-
-function refreshTabsList(): void {
-  if (!tabsList || !config) return
-  const cfg = config
-  tabsList.innerHTML = ''
-  if (!hasUserFolders()) {
-    for (const tab of config.tabs) tabsList.append(createTabRow(tab))
-    return
-  }
-  // Вкладки без папки — плоским списком (без секции «Без папки»).
-  for (const tab of tabsInFolder(UNASSIGNED_FOLDER)) tabsList.append(createTabRow(tab))
-  for (const group of orderedGroups()) {
-    if (group.id === UNASSIGNED_FOLDER) continue
-    const groupTabs = tabsInFolder(group.id)
-    const section = document.createElement('div')
-    section.className = 'folder-section' + (isFolderCollapsed(group.id) ? ' collapsed' : '')
-    section.dataset.folderId = group.id
-    const header = document.createElement('div')
-    header.className = 'folder-header'
-    const chevron = document.createElement('span')
-    chevron.className = 'folder-chevron'
-    chevron.textContent = isFolderCollapsed(group.id) ? '▶' : '▼'
-    const titleEl = document.createElement('span')
-    titleEl.className = 'folder-name'
-    titleEl.textContent = group.name
-    const count = document.createElement('span')
-    count.className = 'folder-count'
-    count.textContent = String(groupTabs.length)
-    header.append(chevron, titleEl, count)
-    // Сворачивание секции по клику на шапке (кнопки переименования/удаления — отдельно).
-    header.addEventListener('click', (event) => {
-      const target = event.target as HTMLElement | null
-      if (target && target.closest('.folder-rename, .folder-del')) return
-      toggleFolderCollapse(group.id)
-    })
-    if (group.id !== UNASSIGNED_FOLDER) {
-      const rename = tabRowButton('✎', 'Переименовать', () => openFolderForm(cfg.folders.find((f) => f.id === group.id)))
-      rename.className = 'folder-rename'
-      header.append(rename)
-      const del = tabRowButton('🗑', 'Удалить папку (вкладки станут «без папки»)', () => void deleteFolder(group.id), 'folder-del')
-      header.append(del)
-    }
-    section.append(header)
-    const body = document.createElement('div')
-    body.className = 'folder-tabs'
-    if (!groupTabs.length) {
-      const empty = document.createElement('div')
-      empty.className = 'tabs-empty-hint'
-      empty.textContent = 'Нет вкладок'
-      body.append(empty)
-    }
-    for (const tab of groupTabs) body.append(createTabRow(tab))
-    section.append(body)
-    tabsList.append(section)
-  }
-}
-
-function openEditForm(tab: NavTab): void {
-  editingTabId = tab.id
-  if (tabNameInput) tabNameInput.value = tab.name
-  if (tabUrlInput) tabUrlInput.value = tab.url
-  if (tabFolderSelect) fillFolderSelect(tabFolderSelect, tab.folderId)
-  tabForm && (tabForm.hidden = false)
-  tabNameInput?.focus()
-}
-
-function resetForm(): void {
-  editingTabId = null
-  if (tabNameInput) tabNameInput.value = ''
-  if (tabUrlInput) tabUrlInput.value = ''
-  tabForm && (tabForm.hidden = true)
-}
-
-async function saveCurrentTab(): Promise<void> {
-  const name = tabNameInput?.value.trim() ?? ''
-  const urlRaw = tabUrlInput?.value.trim() ?? ''
-  if (!name || !urlRaw) {
-    setStatus('Укажите название и ссылку')
-    return
-  }
-  const url = normalizeUrl(urlRaw)
-  let folderId: string | undefined
-  if (tabFolderSelect) {
-    const v = tabFolderSelect.value
-    folderId = v === UNASSIGNED_FOLDER ? undefined : v
-  } else {
-    const existing = config?.tabs.find((t) => t.id === editingTabId)
-    folderId = existing?.folderId
-  }
-  const tabs = [...(config?.tabs ?? [])]
-  if (editingTabId) {
-    const i = tabs.findIndex((t) => t.id === editingTabId)
-    if (i !== -1) tabs[i] = { ...tabs[i], name, url, folderId }
-  } else {
-    tabs.push({ id: generateTabId(), name, url, folderId })
-  }
-  await saveTabs(tabs)
-  resetForm()
-}
-
-async function deleteTab(id: string): Promise<void> {
-  if (!config || !window.confirm('Удалить вкладку?')) return
-  const tabs = config.tabs.filter((t) => t.id !== id)
-  await saveTabs(tabs)
-}
-
-// Перемещение вкладки вверх/вниз внутри своей папки (или «без папки»).
-async function moveTab(id: string, dir: number): Promise<void> {
-  if (!config) return
-  const tabs = config.tabs
-  const target = tabs.find((t) => t.id === id)
-  if (!target) return
-  const groupId = target.folderId ?? UNASSIGNED_FOLDER
-  const groupTabs = tabs.filter((t) => (t.folderId ?? UNASSIGNED_FOLDER) === groupId)
-  const idx = groupTabs.findIndex((t) => t.id === id)
-  const j = idx + dir
-  if (idx === -1 || j < 0 || j >= groupTabs.length) return
-  const iFull = tabs.findIndex((t) => t.id === id)
-  const jFull = tabs.findIndex((t) => t.id === groupTabs[j].id)
-  ;[tabs[iFull], tabs[jFull]] = [tabs[jFull], tabs[iFull]]
-  await saveTabs(tabs)
-}
-
-// Смена папки вкладки (из селектора в оверлее).
-async function moveTabToFolder(id: string, folderId: string | null): Promise<void> {
-  if (!config) return
-  const tabs = [...config.tabs]
-  const i = tabs.findIndex((t) => t.id === id)
-  if (i === -1) return
-  tabs[i] = { ...tabs[i], folderId: folderId ?? undefined }
-  await saveTabs(tabs)
-}
-
-// ---------- Папки для вкладок ----------
-
-function openFolderForm(folder?: NavFolder): void {
-  editingFolderId = folder?.id ?? null
-  if (folderNameInput) folderNameInput.value = folder?.name ?? ''
-  // Защита: для уже защищённой папки галочка включена, поле пустое (пароль не показываем).
-  if (folderProtect) {
-    folderProtect.checked = !!folder?.passwordId
-    if (folderPassword) folderPassword.placeholder = folder?.passwordId ? 'Новый пароль (пусто = без изменений)' : ''
-  }
-  toggleFolderPasswordField()
-  folderForm && (folderForm.hidden = false)
-  folderNameInput?.focus()
-}
-
-function resetFolderForm(): void {
-  editingFolderId = null
-  if (folderNameInput) folderNameInput.value = ''
-  if (folderProtect) folderProtect.checked = false
-  if (folderPassword) { folderPassword.value = ''; folderPassword.placeholder = '' }
-  toggleFolderPasswordField()
-  folderForm && (folderForm.hidden = true)
-}
-
-/** Показать/скрыть поле пароля в зависимости от галочки «защитить папку». */
-function toggleFolderPasswordField(): void {
-  const show = folderProtect?.checked ?? false
-  if (folderPwdField) folderPwdField.hidden = !show
-  if (show && folderPassword) folderPassword.focus()
-}
-
-async function saveCurrentFolder(): Promise<void> {
-  const name = folderNameInput?.value.trim() ?? ''
-  if (!name) {
-    setStatus('Укажите название папки')
-    return
-  }
-  const protectChecked = folderProtect?.checked ?? false
-  // Пароль тримим сразу: пробелы по краям не значимы (хранилище тоже тримит),
-  // иначе пароль из одних пробелов молча снимал бы защиту или лочил папку.
-  const password = (folderPassword?.value ?? '').trim()
-  const folders = [...(config?.folders ?? [])]
-  if (editingFolderId) {
-    const i = folders.findIndex((f) => f.id === editingFolderId)
-    if (i !== -1) {
-      const existing = folders[i]
-      // Снятие или смена пароля уже защищённой папки — только после проверки текущего пароля.
-      const touchesProtection = !protectChecked || Boolean(password)
-      if (existing.passwordId && touchesProtection && !(await requireFolderPassword(existing.id))) return
-      if (protectChecked && password) {
-        // Задать или заменить пароль.
-        const pid = await window.shell.saveFolderPassword(existing.id, password)
-        folders[i] = { ...existing, name, ...(pid ? { passwordId: pid } : {}) }
-        if (!pid) setStatus('Шифрохранилище недоступно — папка без пароля')
-      } else if (!protectChecked) {
-        // Снять защиту.
-        await window.shell.clearFolderPassword(existing.id)
-        folders[i] = { ...existing, name, passwordId: undefined }
-      } else if (existing.passwordId) {
-        // Галочка включена, но пароль пустой — оставляем старый (редактирование имени).
-        folders[i] = { ...existing, name }
-      } else {
-        // Галочка включена, пароль пустой и раньше его не было — без защиты (с предупреждением).
-        folders[i] = { ...existing, name, passwordId: undefined }
-        setStatus('Пароль пустой — папка сохранена без защиты')
-      }
-    }
-  } else {
-    const id = generateFolderId()
-    if (protectChecked && password) {
-      const pid = await window.shell.saveFolderPassword(id, password)
-      folders.push({ id, name, ...(pid ? { passwordId: pid } : {}) })
-      if (!pid) setStatus('Шифрохранилище недоступно — папка без пароля')
-    } else {
-      // Галка защиты с пустым паролем — папка без защиты, но не молча.
-      if (protectChecked) setStatus('Пароль пустой — папка создана без защиты')
-      folders.push({ id, name })
-    }
-  }
-  await saveFolders(folders)
-  resetFolderForm()
-}
-
-async function deleteFolder(id: string): Promise<void> {
-  // Защищённую папку удаляем только после проверки пароля.
-  if (!(await requireFolderPassword(id))) return
-  if (!config || !window.confirm('Удалить папку? Вкладки из неё станут «без папки».')) return
-  const folders = config.folders.filter((f) => f.id !== id)
-  // Вкладки удалённой папки переходят в «без папки».
-  const tabs = config.tabs.map((t) => (t.folderId === id ? { ...t, folderId: undefined } : t))
-  await Promise.all([saveFolders(folders), saveTabs(tabs)])
-}
-
-
-function wireTabs(): void {
-  document.getElementById('tab-add')?.addEventListener('click', () => void openTabs())
-  document.getElementById('tab-manage')?.addEventListener('click', () => void openTabs())
-  document.getElementById('tab-add-new')?.addEventListener('click', () => { resetForm(); openEditForm({ id: '', name: '', url: '' }) })
-  tabsExport?.addEventListener('click', () => void exportTabs())
-  tabsImport?.addEventListener('click', () => { if (tabsImportFile) tabsImportFile.click() })
-  tabsImportFile?.addEventListener('change', (e: Event) => {
-    const file = (e.target as HTMLInputElement).files?.[0]
-    if (file) void importTabs(file)
-    // Снимаем значение, чтобы повторный выбор того же файла снова сработал
-    if (tabsImportFile) tabsImportFile.value = ''
-  })
-  document.getElementById('tab-save')?.addEventListener('click', () => void saveCurrentTab())
-  document.getElementById('tab-cancel')?.addEventListener('click', () => { resetForm() })
-  document.getElementById('tabs-close')?.addEventListener('click', closeTabs)
-  tabNameInput?.addEventListener('keydown', (e: KeyboardEvent) => { if (e.key === 'Enter') void saveCurrentTab() })
-  tabUrlInput?.addEventListener('keydown', (e: KeyboardEvent) => { if (e.key === 'Enter') void saveCurrentTab() })
-  document.getElementById('folder-add-new')?.addEventListener('click', () => openFolderForm())
-  document.getElementById('folder-save')?.addEventListener('click', () => void saveCurrentFolder())
-  document.getElementById('folder-cancel')?.addEventListener('click', () => resetFolderForm())
-  folderProtect?.addEventListener('change', toggleFolderPasswordField)
-  folderNameInput?.addEventListener('keydown', (e: KeyboardEvent) => { if (e.key === 'Enter') void saveCurrentFolder() })
-}
-
-
-// Клик строго по фону оверлея (мимо карточки) закрывает модалку
 function wireOverlayDismiss(): void {
   const pairs: Array<[HTMLElement | null, () => void]> = [
     [settingsOverlayEl(), closeSettings],
     [accountsOverlayEl(), closeAccounts],
     [downloadsOverlayEl(), closeDownloads],
-    [tabsOverlay, closeTabs],
+    [tabsOverlayEl(), closeTabs],
     [templatesOverlayEl(), closeTemplates],
     [templatesManageOverlayEl(), closeTemplatesManage],
     [passwordPromptEl(), cancelFolderPasswordPrompt],
@@ -879,6 +587,12 @@ async function init(): Promise<void> {
   wireDownloads()
   wireHelp()
   wireTemplates({ plugins: () => plugins })
+  initTabsOverlay({
+    config: () => config,
+    promptFolderPassword,
+    requireFolderPassword,
+    cancelFolderPasswordPrompt,
+  })
   initLinkStrip({
     config: () => config,
     promptFolderPassword,
