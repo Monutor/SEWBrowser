@@ -195,7 +195,8 @@ export function suggestedPdfName(title: string): string {
 
 export interface PrintDialogElements {
   /** Контейнер всех полей настроек. Слушатель с debounce на него вешает
-   *  вызывающий код (main.ts) и зовёт refresh() — в контроллере таймеров нет */
+   *  вызывающий код (print-bridge.ts) и зовёт refresh() — в контроллере
+   *  таймеров нет */
   settings: HTMLElement
   overlay: HTMLElement
   title: HTMLElement
@@ -275,7 +276,8 @@ interface ThumbsPainted {
 /**
  * Контроллер диалога печати. Не знает ни про Electron, ни про webview —
  * всё через хуки, поэтому тестируется под node --test с FakeEl.
- * Таймеров нет: debounce пересчёта превью живёт в вызывающем коде (main.ts).
+ * Таймеров нет: debounce пересчёта превью живёт в вызывающем коде
+ * (print-bridge.ts).
  */
 export function createPrintDialog(elements: PrintDialogElements, hooks: PrintDialogHooks): PrintDialogController {
   let open = false

@@ -28,7 +28,7 @@ export function isAccountsOpen(): boolean {
   return accountsOpen
 }
 
-/** Состояние «уже предлагали вход» — нужно main.ts и tab-events. */
+/** Состояние «уже предлагали вход» — нужно tab-events (сброс при навигации). */
 export function getLoginPrompted(): boolean {
   return loginPrompted
 }
