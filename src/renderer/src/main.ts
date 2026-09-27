@@ -859,6 +859,15 @@ let linkIntakeTimer: ReturnType<typeof setTimeout> | null = null
  */
 const linkHookReady = new WeakSet<SewWebViewElement>()
 
+/**
+ * Гости, в которых уже пришёл dom-ready. executeJavaScript до него бросает
+ * «The WebView must be attached to the DOM…», поэтому проверку формы входа
+ * запускаем только по готовым гостям — иначе переключение на ещё грузящуюся
+ * вкладку засоряет консоль предупреждением. Снимается на новом документе
+ * (did-navigate), как и linkHookReady.
+ */
+const guestReady = new WeakSet<SewWebViewElement>()
+
 async function pumpLinkIntake(): Promise<boolean> {
   const view = activeView()
   if (!view) return false
@@ -1734,7 +1743,11 @@ async function hasLoginForm(): Promise<boolean> {
 }
 
 async function checkLoginForm(manual: boolean): Promise<void> {
-  if (!activeTab()) return
+  const tab = activeTab()
+  if (!tab) return
+  // Гость может быть ещё не готов (вкладка только что открыта или переключились
+  // на грузящуюся) — executeJavaScript бросит, а проверять форму там нечего.
+  if (!guestReady.has(tab.view)) return
   if (accountsOpen) return
   if (!manual && loginPrompted) return
   if (!(await hasLoginForm())) return
@@ -2711,6 +2724,7 @@ async function loadTabFavicon(tab: ShellTab): Promise<void> {
 function wireTabEvents(tab: ShellTab): void {
   const view = tab.view
   view.addEventListener('dom-ready', () => {
+    guestReady.add(view)
     // Привязка гостевого webContents для перехвата хоткеев внутри страницы
     try {
       window.shell.attachGuest(view.getWebContentsId())
@@ -2726,6 +2740,7 @@ function wireTabEvents(tab: ShellTab): void {
     // Новый документ = новое window → флаг готовности старого хука мёртв.
     // did-navigate-in-page сюда НЕ попадает (там тот же документ, хук жив).
     linkHookReady.delete(view)
+    guestReady.delete(view)
     console.log('[shell] did-navigate:', event.url)
     if (isAllowed(event.url)) {
       setTabUrl(tab, event.url)
