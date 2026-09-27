@@ -25,10 +25,32 @@ async function renderPage(doc: pdfjs.PDFDocumentProxy, pageNo: number, width: nu
   return canvas.toDataURL('image/png')
 }
 
+/**
+ * Уступить между страницами при порционном рендере.
+ * Гонка rAF с таймаутом здесь не оптимизация, а условие работоспособности:
+ * в Electron backgroundThrottling по умолчанию true, поэтому в свёрнутом или
+ * полностью перекрытом окне кадры не приходят вовсе — чистый rAF ждал бы вечно,
+ * renderPdfThumbnails не резолвился, а контроллер оставался в busy навсегда
+ * (публичный close() при busy выходит, то есть диалог переставал закрываться
+ * вообще). Резолвимся по ПЕРВОМУ из двух событий — кадру или таймауту в 100 мс;
+ * ветка-победитель гасит проигравший таймер, чтобы он не висел.
+ */
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => {
-    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => resolve())
-    else setTimeout(resolve, 16)
+    let timer: number | null = null
+    const done = (): void => {
+      if (timer !== null) {
+        window.clearTimeout(timer)
+        timer = null
+      }
+      resolve()
+    }
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => done())
+      timer = window.setTimeout(done, 100)
+    } else {
+      window.setTimeout(done, 16)
+    }
   })
 }
 

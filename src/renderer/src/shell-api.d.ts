@@ -1,6 +1,6 @@
 declare module '*.css'
 
-/** Размер бумаги, который понимает printToPDF (A0..A6, Legal, Letter, Tabloid, Ledger).
+/** Размер бумаги, который понимает printToPDF (A3, A4, A5, A6, Legal, Letter, Tabloid).
  *  У принтера набор уже — см. PrintPaperName: A6 в списке webview.print нет. */
 type PrintPageSizeName = 'A3' | 'A4' | 'A5' | 'A6' | 'Legal' | 'Letter' | 'Tabloid'
 

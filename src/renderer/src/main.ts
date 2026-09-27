@@ -2560,8 +2560,14 @@ function wirePrintDialog(): void {
   elements.noMargins.addEventListener('click', schedulePrintRefresh)
   // «Показать все» — самое свежее намерение пользователя, поэтому отложенный
   // пересчёт снимаем: иначе он отработал бы сразу после runAction и опять
-  // показал только первые 10 миниатюр (refresh обнуляет showAll)
-  elements.showAll.addEventListener('click', cancelScheduledPrintRefresh)
+  // показал только первые 10 миниатюр (refresh обнуляет showAll). Но снимать его
+  // «насовсем» тоже нельзя: правка поля, сделанная в предшествующие 250 мс, молча
+  // выпала бы из превью. Поэтому таймер сразу перевзводим — schedulePrintRefresh
+  // сам переждёт конца runAction (isBusy) и дольёт превью по актуальным полям.
+  elements.showAll.addEventListener('click', () => {
+    cancelScheduledPrintRefresh()
+    schedulePrintRefresh()
+  })
   // Клик по фону оверлея закрывает диалог
   elements.overlay.addEventListener('click', (event) => {
     if (event.target === elements.overlay) printDialog?.close()

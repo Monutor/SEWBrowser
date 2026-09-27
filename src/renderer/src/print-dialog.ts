@@ -466,7 +466,13 @@ export function createPrintDialog(elements: PrintDialogElements, hooks: PrintDia
       if (painted === null) return
       bytes = built
       takePainted(painted)
-      setStatus(thumbs.length > 0 ? notice : 'Не удалось построить предпросмотр')
+      // Сообщение о принтере («больше не доступен — печатаем в PDF») — единственный
+      // сигнал о том, что назначение молча сменилось, поэтому при упавшем рендере
+      // показываем его ВМЕСТЕ с ошибкой превью, а не вместо неё
+      const parts: string[] = []
+      if (thumbs.length === 0) parts.push('Не удалось построить предпросмотр')
+      if (notice) parts.push(notice)
+      setStatus(parts.join('. '))
       notice = ''
     } catch (err) {
       if (my !== generation || !open) return
@@ -608,7 +614,8 @@ export function createPrintDialog(elements: PrintDialogElements, hooks: PrintDia
         notice = `Принтер «${settings.deviceName}» больше не доступен — печатаем в PDF`
       }
     }
-    // Текст notice показывает refresh() поверх успешного превью, а не затирает
+    // Текст notice показывает refresh() поверх результата превью (при сбое рендера —
+    // вместе с ошибкой), а не затирает
     syncButtons()
     await refresh()
   }
