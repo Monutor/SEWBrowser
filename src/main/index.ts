@@ -582,59 +582,90 @@ function createWindow(): void {
      }
    })
    // ---------- Скриншот видимой области вкладки (PNG в папку загрузок + история) ----------
-   async function captureGuestScreenshot(guestId: unknown): Promise<{ ok: boolean; path?: string }> {
-     const guest = typeof guestId === 'number' ? webContents.fromId(guestId) : undefined
-     if (!guest || guest.isDestroyed()) return { ok: false }
-     let png: Buffer
-     try {
-       png = await guest.capturePage().then((image) => image.toPNG())
-     } catch (err) {
-       console.warn('[shell] screenshot capture failed:', err)
-       return { ok: false }
-     }
-     if (!png.length) return { ok: false }
-     const fileName = screenshotFileName()
-     const filePath = join(app.getPath('downloads'), fileName)
-     try {
-       writeFileSync(filePath, png)
-     } catch (err) {
-       console.warn('[shell] screenshot save failed:', err)
-       return { ok: false }
-     }
-     const now = new Date().toISOString()
-     try {
-       appendDownloadRecord({
-         id: randomUUID(),
-         name: fileName,
-         path: filePath,
-         bytes: png.length,
-         state: 'done',
-         startedAt: now,
-         finishedAt: now,
-         ...(await resolveAttribution(guest)),
-       })
-     } catch (err) {
-       console.warn('[shell] screenshot history failed:', err)
-     }
-     return { ok: true, path: filePath }
-   }
-   ipcMain.handle('screenshot:capture', (_event, guestId: unknown) => captureGuestScreenshot(guestId))
-   ipcMain.handle('screenshot:copy-image', async (_event, filePath: unknown) => {
-     // Путь прилетает из renderer — принимаем только нашу папку загрузок.
-     if (typeof filePath !== 'string' || !filePath) return false
-     try {
-       if (dirname(filePath) !== app.getPath('downloads')) return false
-       const png = readFileSync(filePath)
-       if (!png.length) return false
-       // Electron 44: синхронного clipboard.writeImage больше нет —
-       // только новый ClipboardItem-API (Blob вместо NativeImage).
-       await clipboard.write([new ClipboardItem({ 'image/png': new Blob([png], { type: 'image/png' }) })])
-       return true
-     } catch (err) {
-       console.warn('[shell] screenshot copy failed:', err)
-       return false
-     }
-   })
+   /**
+     * Снимок гостя. Файл НЕ сохраняется — PNG уходит в renderer как data URL,
+     * чтобы показать превью. На диск пишет только screenshot:save-as, когда
+     * пользователь сам нажал «Сохранить как…».
+     */
+   async function captureGuestScreenshot(guestId: unknown): Promise<{ ok: boolean; dataUrl?: string; name?: string }> {
+      const guest = typeof guestId === 'number' ? webContents.fromId(guestId) : undefined
+      if (!guest || guest.isDestroyed()) return { ok: false }
+      let png: Buffer
+      try {
+        png = await guest.capturePage().then((image) => image.toPNG())
+      } catch (err) {
+        console.warn('[shell] screenshot capture failed:', err)
+        return { ok: false }
+      }
+      if (!png.length) return { ok: false }
+      return { ok: true, dataUrl: `data:image/png;base64,${png.toString('base64')}`, name: screenshotFileName() }
+    }
+    ipcMain.handle('screenshot:capture', (_event, guestId: unknown) => captureGuestScreenshot(guestId))
+    /** Декодирует data URL с PNG и проверяет сигнатуру — иначе в файл уйдёт мусор */
+    function decodePngDataUrl(raw: unknown): Buffer | null {
+      if (typeof raw !== 'string' || !raw) return null
+      let payload = raw.trim()
+      if (payload.startsWith('data:')) {
+        const comma = payload.indexOf(',')
+        if (comma === -1) return null
+        payload = payload.slice(comma + 1)
+      }
+      payload = payload.replace(/\s+/g, '')
+      if (!payload) return null
+      let png: Buffer
+      try {
+        png = Buffer.from(payload, 'base64')
+      } catch {
+        return null
+      }
+      if (png.length < 8 || png.slice(1, 4).toString('latin1') !== 'PNG') return null
+      return png
+    }
+    ipcMain.handle('screenshot:copy-image', async (_event, dataUrl: unknown) => {
+      const png = decodePngDataUrl(dataUrl)
+      if (!png) return false
+      try {
+        // Electron 44: синхронного clipboard.writeImage больше нет —
+        // только новый ClipboardItem-API (Blob вместо NativeImage).
+        await clipboard.write([new ClipboardItem({ 'image/png': new Blob([png], { type: 'image/png' }) })])
+        return true
+      } catch (err) {
+        console.warn('[shell] screenshot copy failed:', err)
+        return false
+      }
+    })
+    // «Сохранить как…» из превью: диалог сохранения + запись на диск + история загрузок
+    ipcMain.handle('screenshot:save-as', async (_event, payload: unknown) => {
+      if (!payload || typeof payload !== 'object') return { ok: false }
+      const { dataUrl, guestId } = payload as { dataUrl?: unknown; guestId?: unknown }
+      const png = decodePngDataUrl(dataUrl)
+      if (!png) return { ok: false }
+      if (!mainWindow || mainWindow.isDestroyed()) return { ok: false }
+      const filePath = dialog.showSaveDialogSync(mainWindow, {
+        title: 'Сохранить снимок',
+        defaultPath: join(app.getPath('downloads'), screenshotFileName()),
+        filters: [{ name: 'PNG', extensions: ['png'] }],
+      })
+      if (!filePath) return { ok: false }
+      const guest = typeof guestId === 'number' ? webContents.fromId(guestId) : null
+      try {
+        writeFileSync(filePath, png)
+        appendDownloadRecord({
+          id: randomUUID(),
+          name: basename(filePath),
+          path: filePath,
+          bytes: png.length,
+          state: 'done',
+          startedAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+          ...(await resolveAttribution(guest)),
+        })
+        return { ok: true, path: filePath }
+      } catch (err) {
+        console.warn('[shell] screenshot save-as failed:', err)
+        return { ok: false }
+      }
+    })
    // ---------- PDF-просмотр (окно с кнопками «Скачать»/«Печать») ----------
     ipcMain.handle('pdf-viewer:save', async (_event, payload: unknown) => {
       if (!payload || typeof payload !== 'object') return false
@@ -1028,10 +1059,10 @@ function createWindow(): void {
           label: 'Снимок вкладки',
           click: () => {
             if (guest.isDestroyed()) return
-            // Тост с кнопкой «Копировать» покажет renderer по событию.
+            // Снимок идёт в renderer — он покажет превью с «Сохранить как…»/«Копировать».
             void captureGuestScreenshot(guest.id).then((result) => {
               if (!mainWindow || mainWindow.isDestroyed()) return
-              mainWindow.webContents.send('screenshot:saved', result)
+              mainWindow.webContents.send('screenshot:preview', result)
             })
           },
         },

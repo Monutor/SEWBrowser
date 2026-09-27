@@ -1399,6 +1399,129 @@ body {
   filter: brightness(1.1);
 }
 
+/* ---------- Превью снимка экрана ---------- */
+#shot-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: rgba(9, 10, 14, 0.6);
+}
+
+#shot-overlay[hidden] {
+  display: none;
+}
+
+.shot-card {
+  display: flex;
+  flex-direction: column;
+  width: min(1100px, calc(100% - 48px));
+  max-height: calc(100% - 48px);
+  background: var(--chrome);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.shot-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.shot-title {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.shot-x {
+  width: 28px;
+  height: 24px;
+  font-size: 14px;
+  color: var(--text-2);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: default;
+}
+
+.shot-x:hover {
+  color: #fff;
+  background: var(--danger);
+}
+
+/* Картинка вписывается целиком и не вылезает за карточку */
+.shot-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: 12px;
+  background: var(--content);
+}
+
+.shot-frame img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+}
+
+.shot-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.shot-foot-spacer {
+  flex: 1;
+}
+
+.shot-caption {
+  font-size: 12px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 45%;
+}
+
+.shot-btn {
+  height: 32px;
+  padding: 0 16px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--chrome-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: default;
+}
+
+.shot-btn:hover {
+  background: var(--surface);
+}
+
+.shot-btn.primary {
+  color: #fff;
+  background: var(--accent);
+  border-color: transparent;
+}
+
+.shot-btn.primary:hover {
+  filter: brightness(1.1);
+}
+
 /* Окно настроек */
 #settings-overlay {
   position: absolute;

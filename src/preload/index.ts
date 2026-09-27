@@ -138,6 +138,13 @@ interface AccountInfoLike {
   updatedAt: number
 }
 
+/** Результат снимка экрана: PNG в виде data URL, имя файла по умолчанию */
+interface ScreenshotCapture {
+  ok: boolean
+  dataUrl?: string
+  name?: string
+}
+
 const api = {
   getConfig: (): Promise<ShellConfigLike> => ipcRenderer.invoke('config:get'),
   setConfig: (patch: Partial<ShellConfigLike>): Promise<ShellConfigLike> =>
@@ -181,15 +188,18 @@ const api = {
   showDownload: (id: string): Promise<boolean> => ipcRenderer.invoke('downloads:show', id),
   /** Открыть файл из истории приложением по умолчанию */
   openDownloadFile: (id: string): Promise<boolean> => ipcRenderer.invoke('downloads:open', id),
-  /** Скриншот видимой области вкладки: PNG в папку загрузок + запись в историю */
-  captureScreenshot: (webContentsId: number): Promise<{ ok: boolean; path?: string }> =>
+  /** Скриншот видимой области вкладки: PNG приходит как data URL, файл не пишется */
+  captureScreenshot: (webContentsId: number): Promise<ScreenshotCapture> =>
     ipcRenderer.invoke('screenshot:capture', webContentsId),
-  /** Положить PNG скриншота (только из папки загрузок) в буфер обмена */
-  copyScreenshotImage: (filePath: string): Promise<boolean> =>
-    ipcRenderer.invoke('screenshot:copy-image', filePath),
+  /** Положить PNG из data URL в буфер обмена (файл не нужен) */
+  copyScreenshotImage: (dataUrl: string): Promise<boolean> =>
+    ipcRenderer.invoke('screenshot:copy-image', dataUrl),
+  /** «Сохранить как…» из превью: диалог сохранения + запись на диск + история */
+  saveScreenshotAs: (dataUrl: string, guestId: number): Promise<{ ok: boolean; path?: string }> =>
+    ipcRenderer.invoke('screenshot:save-as', { dataUrl, guestId }),
   /** Скриншот, запущенный из контекстного меню main (там нет возврата invoke) */
-  onScreenshotSaved: (cb: (result: { ok: boolean; path?: string }) => void): void => {
-    ipcRenderer.on('screenshot:saved', (_event, payload: { ok: boolean; path?: string }) => cb(payload))
+  onScreenshotPreview: (cb: (result: ScreenshotCapture) => void): void => {
+    ipcRenderer.on('screenshot:preview', (_event, payload: ScreenshotCapture) => cb(payload))
   },
   /** PDF-просмотр: сохранить документ в окно просмотра (диалог сохранения) */
   savePdf: (base64: string, name: string): Promise<boolean> =>

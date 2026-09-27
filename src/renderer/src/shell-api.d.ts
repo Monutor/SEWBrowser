@@ -221,10 +221,11 @@ interface DownloadedFile {
   tabNum?: string
 }
 
-/** Результат скриншота вкладки (PNG уже лежит в папке загрузок) */
+/** Результат снимка вкладки: PNG приходит как data URL, на диск ничего не пишется */
 interface ScreenshotResult {
   ok: boolean
-  path?: string
+  dataUrl?: string
+  name?: string
 }
 
 /** Результат узкого fetch-моста main-процесса (только allowlist-URL) */
@@ -354,8 +355,9 @@ interface ShellApi {
   showDownload(id: string): Promise<boolean>
   openDownloadFile(id: string): Promise<boolean>
   captureScreenshot(webContentsId: number): Promise<ScreenshotResult>
-  copyScreenshotImage(filePath: string): Promise<boolean>
-  onScreenshotSaved(cb: (result: ScreenshotResult) => void): void
+  copyScreenshotImage(dataUrl: string): Promise<boolean>
+  saveScreenshotAs(dataUrl: string, guestId: number): Promise<{ ok: boolean; path?: string }>
+  onScreenshotPreview(cb: (result: ScreenshotResult) => void): void
   savePdf(base64: string, name: string): Promise<boolean>
   saveCurrentPdf(): Promise<boolean>
   printPdf(): Promise<boolean>

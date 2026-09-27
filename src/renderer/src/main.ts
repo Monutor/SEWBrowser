@@ -1,6 +1,7 @@
 import './styles.css'
 import { createTaskAlert, formatTaskAlertText, getTaskAlertUrls } from './task-alert'
 import { createAddressMenu, type AddressMenuController } from './address-menu'
+import { createShotPreview, type ShotPreviewController } from './shot-preview'
 import {
   bytesToBase64,
   createPrintDialog,
@@ -49,6 +50,8 @@ const addressInput = document.getElementById('address') as HTMLInputElement | nu
 let addressMenu: AddressMenuController | null = null
 /** Диалог печати; собирается в wirePrintDialog */
 let printDialog: PrintDialogController | null = null
+/** Превью снимка экрана; собирается в wireShotPreview */
+let shotPreview: ShotPreviewController | null = null
 /** Debounce пересчёта превью печати (250 мс) */
 let printRefreshTimer: number | null = null
 /** Последний список принтеров от main — нужен строке «Принтер» диалога */
@@ -233,31 +236,6 @@ function setStatus(text: string, toast = true): void {
   toastTimer = setTimeout(() => {
     if (toastEl) toastEl.hidden = true
   }, 3500)
-}
-
-/**
- * Тост с кнопкой действия (напр. «Снимок сохранён» + «Копировать»).
- * Собирается через DOM API (без innerHTML — текст безопасен).
- */
-function setStatusAction(text: string, buttonLabel: string, onAction: () => void): void {
-  if (statusEl) statusEl.textContent = text
-  if (!toastEl || !text) return
-  toastEl.textContent = ''
-  const label = document.createElement('span')
-  label.textContent = text
-  const button = document.createElement('button')
-  button.type = 'button'
-  button.textContent = buttonLabel
-  button.addEventListener('click', () => {
-    if (toastEl) toastEl.hidden = true
-    onAction()
-  })
-  toastEl.append(label, document.createTextNode(' '), button)
-  toastEl.hidden = false
-  if (toastTimer) clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => {
-    if (toastEl) toastEl.hidden = true
-  }, 5000)
 }
 
 /**
@@ -2185,6 +2163,10 @@ async function handleShortcut(name: string): Promise<void> {
         printDialog.close()
         break
       }
+      if (shotPreview?.isOpen()) {
+        shotPreview.close()
+        break
+      }
       // Последним приоритетом: разделение сворачиваем, когда все панели закрыты
       if (isSplit()) {
         unsplit()
@@ -2248,7 +2230,7 @@ function shortcutFromEvent(event: KeyboardEvent): ShortcutName | null {
   return null
 }
 
-/** Скриншот активной вкладки: файл + история в main, тост с кнопкой «Копировать» здесь */
+/** Снимок активной вкладки: PNG приходит в превью, на диск пишет сам пользователь */
 async function captureActiveTabScreenshot(): Promise<void> {
   const view = activeView()
   if (!view) {
@@ -2256,11 +2238,33 @@ async function captureActiveTabScreenshot(): Promise<void> {
     return
   }
   try {
-    const guestId = view.getWebContentsId()
-    showScreenshotToast(await window.shell.captureScreenshot(guestId))
+    openShotPreview(await window.shell.captureScreenshot(view.getWebContentsId()))
   } catch {
     setStatus('снимок не удался')
   }
+}
+
+/**
+ * Открывает превью снимка. main отдаёт PNG как data URL и имя файла по
+ * умолчанию; на диск ничего не пишется, пока пользователь не нажмёт
+ * «Сохранить как…» или «Копировать».
+ */
+function openShotPreview(result: ScreenshotResult): void {
+  if (!result || !result.ok || !result.dataUrl) {
+    setStatus('снимок не удался')
+    return
+  }
+  const guestId = activeView()?.getWebContentsId() ?? 0
+  if (!guestId) {
+    setStatus('нет активной вкладки')
+    return
+  }
+  const shown = shotPreview?.open({
+    dataUrl: result.dataUrl,
+    name: result.name || 'снимок.png',
+    guestId,
+  })
+  if (!shown) setStatus('снимок не удался')
 }
 
 /**
@@ -2293,21 +2297,6 @@ function playShutterClick(): void {
   } catch { /* звук не критичен для снимка */ }
 }
 
-function showScreenshotToast(result: ScreenshotResult): void {
-  if (!result || !result.ok || !result.path) {
-    setStatus('снимок не удался')
-    return
-  }
-  playShutterClick()
-  const path = result.path
-  setStatusAction('Снимок сохранён', 'Копировать', () => {
-    window.shell
-      .copyScreenshotImage(path)
-      .then((ok) => setStatus(ok ? 'снимок в буфере обмена' : 'не удалось скопировать'))
-      .catch(() => setStatus('не удалось скопировать'))
-  })
-}
-
 function wireShortcuts(): void {
   // Шорткаты, когда фокус в shell-UI (тулбар, адресная строка).
   // Когда фокус внутри страницы — те же имена прилетают из main-процесса
@@ -2321,8 +2310,8 @@ function wireShortcuts(): void {
     void handleShortcut(name)
   })
   window.shell.onShortcut((name) => void handleShortcut(name))
-  // Скриншот из контекстного меню main: результат прилетает событием.
-  window.shell.onScreenshotSaved((result) => showScreenshotToast(result))
+  // Снимок из контекстного меню main: результат прилетает событием.
+  window.shell.onScreenshotPreview((result) => openShotPreview(result))
 }
 
 function wireAddressMenu(): void {
@@ -2365,6 +2354,39 @@ function wireAddressMenu(): void {
   } catch {
     /* гость ещё не готов */
   }
+}
+
+/** Превью снимка экрана: картинка + «Сохранить как…» / «Копировать» */
+function wireShotPreview(): void {
+  const overlay = document.getElementById('shot-overlay') as HTMLElement | null
+  const image = document.getElementById('shot-image') as HTMLImageElement | null
+  const caption = document.getElementById('shot-caption') as HTMLElement | null
+  const save = document.getElementById('shot-save') as HTMLButtonElement | null
+  const copy = document.getElementById('shot-copy') as HTMLButtonElement | null
+  const closeX = document.getElementById('shot-close-x') as HTMLButtonElement | null
+  if (!overlay || !image || !caption || !save || !copy || !closeX) return
+  shotPreview = createShotPreview(
+    { overlay, image, caption, save, copy, close: closeX },
+    {
+      onSave: (shot) => {
+        void window.shell
+          .saveScreenshotAs(shot.dataUrl, shot.guestId)
+          .then((res) => {
+            if (res && res.ok) setStatus('снимок сохранён')
+            // false = пользователь отменил диалог — молчим, как и в печати
+            else if (res) setStatus('не удалось сохранить снимок')
+          })
+          .catch(() => setStatus('не удалось сохранить снимок'))
+      },
+      onCopy: (shot) => {
+        void window.shell
+          .copyScreenshotImage(shot.dataUrl)
+          .then((ok) => setStatus(ok ? 'снимок в буфере обмена' : 'не удалось скопировать'))
+          .catch(() => setStatus('не удалось скопировать'))
+      },
+      onOpen: () => playShutterClick(),
+    },
+  )
 }
 
 /** Ширина миниатюры превью печати, CSS-px. Должна совпадать с .print-thumb в styles.css. */
@@ -2646,6 +2668,7 @@ function wirePrintDialog(): void {
 function wireToolbar(): void {
   wireAddressMenu()
   wirePrintDialog()
+  wireShotPreview()
   btnBack?.addEventListener('click', () => {
     const tab = activeTab()
     if (!tab || !canTabGoBack(tab)) return

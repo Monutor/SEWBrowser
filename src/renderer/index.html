@@ -291,6 +291,25 @@
     </div>
   </div>
 
+  <!-- Превью снимка экрана: картинка + «Сохранить как…» / «Копировать» -->
+  <div id="shot-overlay" hidden>
+    <div class="shot-card">
+      <div class="shot-head">
+        <span class="shot-title">Снимок экрана</span>
+        <button type="button" id="shot-close-x" class="shot-x" title="Закрыть (Esc)" aria-label="Закрыть">✕</button>
+      </div>
+      <div class="shot-frame">
+        <img id="shot-image" alt="Снимок экрана" />
+      </div>
+      <div class="shot-foot">
+        <span id="shot-caption" class="shot-caption"></span>
+        <span class="shot-foot-spacer"></span>
+        <button type="button" id="shot-copy" class="shot-btn">Копировать</button>
+        <button type="button" id="shot-save" class="shot-btn primary">Сохранить как…</button>
+      </div>
+    </div>
+  </div>
+
   <div id="settings-overlay" hidden>
     <div class="settings-card">
       <div class="settings-title">Настройки</div>
