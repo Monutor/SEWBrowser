@@ -2974,3 +2974,13 @@ body {
 #tab-views > webview[data-hidden] {
   display: none;
 }
+
+/* Разделённое окно: две вкладки делят ширину пополам, раскладку панелей задаёт
+   tabs.ts инлайном (left:0/50%, width:50%). Разделитель — правый бордюр левой
+   панели, так что обходимся без промежуточных DOM-узлов. */
+#tab-views[data-split] > webview {
+  box-sizing: border-box;
+}
+#tab-views[data-split] > webview:first-of-type {
+  border-right: 1px solid var(--border);
+}

@@ -60,6 +60,10 @@ let activeId = 0
 let nextId = 1
 /** Вкладка, для которой открыто контекстное меню (ПКМ не активирует вкладку). */
 let menuTabId = 0
+/** Разделённое окно: две вкладки пополам. null — обычное окно. */
+let split: { leftId: number; rightId: number } | null = null
+/** Какая из панелей в фокусе: к ней относятся адресная строка, зум, печать, поиск */
+let focusPane: 'left' | 'right' = 'left'
 /** Кнопки полосы по id вкладки: элементы переиспользуются, а не пересоздаются. */
 const stripButtons = new Map<number, HTMLButtonElement>()
 /** Порядок id, отрисованный в прошлый раз, — по нему решаем, нужна ли пересборка полосы. */
@@ -71,6 +75,8 @@ export function initTabs(opts: TabsOptions): void {
   activeId = 0
   nextId = 1
   menuTabId = 0
+  split = null
+  focusPane = 'left'
   stripButtons.clear()
   stripOrder = []
   opts.newTabButton.addEventListener('click', () => {
@@ -113,6 +119,66 @@ export function isActiveTab(tab: ShellTab): boolean {
   return tab.id === activeId
 }
 
+/**
+ * Разделённое окно: две вкладки делят ширину пополам. Левая панель — всегда
+ * первая по порядку, значит опросный хост (isPrimary) в разделении не прыгает.
+ */
+export function isSplit(): boolean {
+  return split !== null
+}
+
+/** Разделение возможно только когда открыто ровно две вкладки и окно не разделено */
+export function canSplit(): boolean {
+  return split === null && tabs.length === 2
+}
+
+/** Какая панель у вкладки; null — вкладка вне разделения */
+export function splitPaneOf(tab: ShellTab): 'left' | 'right' | null {
+  if (!split) return null
+  if (tab.id === split.leftId) return 'left'
+  if (tab.id === split.rightId) return 'right'
+  return null
+}
+
+export function splitView(): boolean {
+  const o = options
+  if (!o || !canSplit()) return false
+  split = { leftId: tabs[0].id, rightId: tabs[1].id }
+  focusPane = 'left'
+  activeId = split.leftId
+  applyVisibility()
+  renderTabBar()
+  o.hooks.onActivated(tabs[0])
+  return true
+}
+
+export function unsplit(): void {
+  const o = options
+  if (!o || !split) return
+  // Активной остаётся вкладка той панели, где был фокус
+  const focused = tabs.find((tab) => tab.id === (focusPane === 'left' ? split!.leftId : split!.rightId)) ?? null
+  split = null
+  focusPane = 'left'
+  if (focused) activeId = focused.id
+  applyVisibility()
+  renderTabBar()
+  if (focused) o.hooks.onActivated(focused)
+}
+
+export function setSplitFocus(pane: 'left' | 'right'): void {
+  const o = options
+  if (!o || !split) return
+  const id = pane === 'left' ? split.leftId : split.rightId
+  const tab = tabs.find((entry) => entry.id === id)
+  if (!tab) return
+  if (focusPane === pane && activeId === id) return
+  focusPane = pane
+  activeId = id
+  applyVisibility()
+  renderTabBar()
+  o.hooks.onActivated(tab)
+}
+
 export function openTab(rawUrl: string, opts?: { activate?: boolean }): ShellTab | null {
   const o = options
   if (!o) return null
@@ -126,6 +192,51 @@ export function openTab(rawUrl: string, opts?: { activate?: boolean }): ShellTab
   }
   const view = document.createElement('webview') as unknown as SewWebViewElement
   view.setAttribute('allowpopups', '')
+  // В разделении новая вкладка занимает место вкладки активной панели, а вторая
+  // панель не трогается. Порядок массива остаётся [левая, правая] — от него зависит
+  // выбор опросного хоста.
+  if (split) {
+    const pane = focusPane
+    const oldId = pane === 'left' ? split.leftId : split.rightId
+    const oldIndex = tabs.findIndex((entry) => entry.id === oldId)
+    if (oldIndex >= 0) {
+      const [old] = tabs.splice(oldIndex, 1)
+      o.hooks.onClosed(old)
+      try {
+        old.view.remove()
+      } catch {
+        /* webview уже мог быть уничтожен — не критично */
+      }
+    }
+    const fresh: ShellTab = {
+      id: nextId++,
+      view,
+      isPrimary: pane === 'left',
+      url,
+      title: tabTitle('', url),
+      lastAllowedUrl: url,
+      navCount: 0,
+      maxNav: 0,
+      pendingHistory: 0,
+      faviconData: '',
+    }
+    if (pane === 'left') {
+      split.leftId = fresh.id
+      tabs.unshift(fresh)
+    } else {
+      split.rightId = fresh.id
+      tabs.push(fresh)
+    }
+    o.container.appendChild(view)
+    o.hooks.wire(fresh)
+    view.setAttribute('src', url)
+    focusPane = pane
+    activeId = fresh.id
+    applyVisibility()
+    renderTabBar()
+    o.hooks.onActivated(fresh)
+    return fresh
+  }
   const tab: ShellTab = {
     id: nextId++,
     view,
@@ -168,6 +279,11 @@ export function closeTab(id: number): void {
   } catch {
     /* webview уже мог быть уничтожен — не критично */
   }
+  // Разделение держится на двух вкладках: закрыли одну — остаётся одна на всё окно
+  if (split && tabs.length !== 2) {
+    unsplit()
+    return
+  }
   if (tabs.length === 0) {
     activeId = 0
     applyVisibility()
@@ -194,7 +310,7 @@ export function closeTab(id: number): void {
  */
 export function moveTab(id: number, toIndex: number): void {
   const o = options
-  if (!o) return
+  if (!o || split) return
   const from = tabs.findIndex((tab) => tab.id === id)
   if (from < 0) return
   const to = Math.max(0, Math.min(tabs.length - 1, Math.floor(toIndex)))
@@ -212,6 +328,14 @@ export function moveTab(id: number, toIndex: number): void {
 
 export function activateTab(tab: ShellTab): void {
   if (!options || !tabs.includes(tab)) return
+  // В разделении обе вкладки и так на виду: активация — это перевод фокуса на панель
+  if (split) {
+    const pane = splitPaneOf(tab)
+    if (pane) {
+      setSplitFocus(pane)
+      return
+    }
+  }
   activeId = tab.id
   applyVisibility()
   renderTabBar()
@@ -300,7 +424,26 @@ export function refreshTabBar(): void {
 }
 
 function applyVisibility(): void {
+  const o = options
+  if (!o) return
+  if (split) {
+    o.container.setAttribute('data-split', '')
+    for (const tab of tabs) {
+      const pane = splitPaneOf(tab)
+      if (!pane) {
+        tab.view.setAttribute('data-hidden', '')
+        continue
+      }
+      tab.view.removeAttribute('data-hidden')
+      // Раскладку панелей задаём прямо на webview: контейнер остаётся без
+      // промежуточных узлов, CSS рисует разделитель по первому потомку.
+      tab.view.setAttribute('style', pane === 'left' ? 'left:0;width:50%' : 'left:50%;width:50%')
+    }
+    return
+  }
+  o.container.removeAttribute('data-split')
   for (const tab of tabs) {
+    tab.view.removeAttribute('style')
     if (tab.id === activeId) tab.view.removeAttribute('data-hidden')
     else tab.view.setAttribute('data-hidden', '')
   }
@@ -413,6 +556,12 @@ function wireTabDrag(button: HTMLButtonElement, tab: ShellTab): void {
   button.draggable = true
   button.addEventListener('dragstart', (event) => {
     const drag = event as DragEvent
+    // В разделении двум вкладкам переставляться нечего, а панели привязаны к
+    // вкладкам — перенос сорвал бы порядок [левая, правая] и выбор опросного хоста
+    if (split) {
+      drag.preventDefault?.()
+      return
+    }
     dragTabId = tab.id
     markTabDrag(button, { drag: true })
     // Без setData Firefox не начинает перетаскивание. Тип у drag.dataTransfer
@@ -479,9 +628,15 @@ function showTabMenu(tab: ShellTab): void {
   const items: Array<{ label: string; action: string }> = [
     { label: 'Закрыть вкладку', action: 'close' },
   ]
-  if (tabs.length > 1) items.push({ label: 'Закрыть другие вкладки', action: 'close-others' })
-  if (index >= 0 && index < tabs.length - 1) {
-    items.push({ label: 'Закрыть вкладки справа', action: 'close-right' })
+  if (split) {
+    // При двух вкладках «закрыть другие/справа» бессмысленны
+    items.push({ label: 'Свернуть окно', action: 'unsplit' })
+  } else {
+    if (canSplit()) items.push({ label: 'Разделить окно', action: 'split' })
+    if (tabs.length > 1) items.push({ label: 'Закрыть другие вкладки', action: 'close-others' })
+    if (index >= 0 && index < tabs.length - 1) {
+      items.push({ label: 'Закрыть вкладки справа', action: 'close-right' })
+    }
   }
   // ПКМ не активирует вкладку — запоминаем, к какой вкладке относится меню
   menuTabId = tab.id
@@ -489,6 +644,14 @@ function showTabMenu(tab: ShellTab): void {
 }
 
 function handleTabMenuAction(tab: ShellTab, action: string): void {
+  if (action === 'split') {
+    splitView()
+    return
+  }
+  if (action === 'unsplit') {
+    unsplit()
+    return
+  }
   if (action === 'close') {
     closeTab(tab.id)
     return

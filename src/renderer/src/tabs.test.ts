@@ -532,3 +532,167 @@ describe('полоса вкладок', () => {
     assert.equal(tabsModule.isActiveTab(b), true)
   })
 })
+
+describe('split view', () => {
+  it('разделение при двух вкладках: левая опрашивает, порядок массива = порядок панелей', () => {
+    const h = setup()
+    const first = tabsModule.openTab('https://a.ru/1')!
+    const second = tabsModule.openTab('https://b.ru/2')!
+    assert.equal(tabsModule.splitView(), true)
+    assert.equal(tabsModule.isSplit(), true)
+    // массив остаётся в порядке панелей: [левая, правая]
+    assert.deepEqual(tabsModule.listTabs().map((t) => t.id), [first.id, second.id])
+    // опросный хост — левая панель
+    assert.equal(first.isPrimary, true)
+    assert.equal(second.isPrimary, false)
+    assert.equal(tabsModule.splitPaneOf(first), 'left')
+    assert.equal(tabsModule.splitPaneOf(second), 'right')
+    // обе панели видимы, фокус на левой
+    assert.equal(first.view.getAttribute('data-hidden'), null)
+    assert.equal(second.view.getAttribute('data-hidden'), null)
+    assert.equal(tabsModule.activeTab()!.id, first.id)
+    assert.equal(h.container.getAttribute('data-split'), '')
+  })
+
+  it('разделение недоступно при одной вкладке, при трёх и повторно', () => {
+    setup()
+    // вкладок нет
+    assert.equal(tabsModule.splitView(), false)
+    assert.equal(tabsModule.isSplit(), false)
+    // одна вкладка
+    tabsModule.openTab('https://a.ru/1')
+    assert.equal(tabsModule.splitView(), false)
+    // две вкладки — можно
+    tabsModule.openTab('https://b.ru/2')
+    assert.equal(tabsModule.splitView(), true)
+    // повторно — no-op
+    assert.equal(tabsModule.splitView(), false)
+    assert.equal(tabsModule.isSplit(), true)
+    // третья вкладка закрывает разделение (в split их может быть только две)
+    tabsModule.unsplit()
+    tabsModule.openTab('https://c.ru/3')
+    assert.equal(tabsModule.splitView(), false)
+    assert.equal(tabsModule.isSplit(), false)
+  })
+
+  it('свертывание оставляет активной вкладку фокусной панели', () => {
+    setup()
+    const first = tabsModule.openTab('https://a.ru/1')!
+    const second = tabsModule.openTab('https://b.ru/2')!
+    tabsModule.splitView()
+    tabsModule.setSplitFocus('right')
+    assert.equal(tabsModule.activeTab()!.id, second.id)
+    tabsModule.unsplit()
+    assert.equal(tabsModule.isSplit(), false)
+    // вторая вкладка занимает всё окно
+    assert.equal(tabsModule.activeTab()!.id, second.id)
+    assert.equal(first.view.getAttribute('data-hidden'), '')
+  })
+
+  it('setSplitFocus меняет активную вкладку, вне разделения — no-op', () => {
+    setup()
+    const first = tabsModule.openTab('https://a.ru/1')!
+    const second = tabsModule.openTab('https://b.ru/2')!
+    tabsModule.setSplitFocus('right')
+    assert.equal(tabsModule.isSplit(), false)
+    assert.equal(tabsModule.activeTab()!.id, second.id)
+    tabsModule.splitView()
+    tabsModule.setSplitFocus('right')
+    assert.equal(tabsModule.activeTab()!.id, second.id)
+    assert.equal(tabsModule.isActiveTab(second), true)
+    assert.equal(tabsModule.isActiveTab(first), false)
+  })
+
+  it('новая вкладка в разделении заменяет вкладку активной панели, вторая не тронута', () => {
+    setup()
+    const left = tabsModule.openTab('https://a.ru/1')!
+    const right = tabsModule.openTab('https://b.ru/2')!
+    tabsModule.splitView()
+    tabsModule.setSplitFocus('right')
+    const fresh = tabsModule.openTab('https://c.ru/3')!
+    assert.equal(tabsModule.isSplit(), true)
+    assert.equal(tabsModule.listTabs().length, 2)
+    // порядок панелей сохранён: слева старая левая, справа новая
+    assert.deepEqual(tabsModule.listTabs().map((t) => t.id), [left.id, fresh.id])
+    assert.equal(right.view.getAttribute('data-hidden'), null)
+    // опросный хост по-прежнему левая панель
+    assert.equal(left.isPrimary, true)
+    assert.equal(fresh.isPrimary, false)
+    assert.equal(tabsModule.activeTab()!.id, fresh.id)
+  })
+
+  it('замена вкладки левой панели сохраняет порядок [левая, правая]', () => {
+    setup()
+    const left = tabsModule.openTab('https://a.ru/1')!
+    const right = tabsModule.openTab('https://b.ru/2')!
+    tabsModule.splitView()
+    const fresh = tabsModule.openTab('https://c.ru/3')!
+    assert.equal(tabsModule.isSplit(), true)
+    assert.deepEqual(tabsModule.listTabs().map((t) => t.id), [fresh.id, right.id])
+    assert.equal(fresh.isPrimary, true)
+    assert.equal(tabsModule.splitPaneOf(fresh), 'left')
+    assert.equal(tabsModule.splitPaneOf(right), 'right')
+  })
+
+  it('закрытие вкладки в разделении сворачивает его', () => {
+    setup()
+    const left = tabsModule.openTab('https://a.ru/1')!
+    const right = tabsModule.openTab('https://b.ru/2')!
+    tabsModule.splitView()
+    tabsModule.closeTab(right.id)
+    assert.equal(tabsModule.isSplit(), false)
+    assert.equal(tabsModule.listTabs().length, 1)
+    assert.equal(tabsModule.activeTab()!.id, left.id)
+  })
+
+  it('перетаскивание в разделении не меняет порядок панелей', () => {
+    setup()
+    const left = tabsModule.openTab('https://a.ru/1')!
+    const right = tabsModule.openTab('https://b.ru/2')!
+    tabsModule.splitView()
+    tabsModule.moveTab(left.id, 1)
+    assert.deepEqual(tabsModule.listTabs().map((t) => t.id), [left.id, right.id])
+    assert.equal(tabsModule.splitPaneOf(left), 'left')
+  })
+
+  it('меню: вне разделения при двух вкладках есть «Разделить окно»', () => {
+    const h = setup()
+    const first = tabsModule.openTab('https://a.ru/1')!
+    tabsModule.openTab('https://b.ru/2')
+    fire(tabButton(0), 'contextmenu')
+    const labels = h.popupItems.map((i) => i.label)
+    assert.ok(labels.includes('Разделить окно'))
+    assert.ok(labels.includes('Закрыть вкладку'))
+  })
+
+  it('меню: при одной вкладке «Разделить окно» не предлагается', () => {
+    const h = setup()
+    tabsModule.openTab('https://a.ru/1')
+    fire(tabButton(0), 'contextmenu')
+    const labels = h.popupItems.map((i) => i.label)
+    assert.equal(labels.includes('Разделить окно'), false)
+  })
+
+  it('меню: в разделении есть «Свернуть окно» и нет «закрыть другие/справа»', () => {
+    const h = setup()
+    tabsModule.openTab('https://a.ru/1')
+    tabsModule.openTab('https://b.ru/2')
+    tabsModule.splitView()
+    fire(tabButton(0), 'contextmenu')
+    const labels = h.popupItems.map((i) => i.label)
+    assert.ok(labels.includes('Свернуть окно'))
+    assert.equal(labels.includes('Разделить окно'), false)
+    assert.equal(labels.includes('Закрыть другие вкладки'), false)
+    assert.equal(labels.includes('Закрыть вкладки справа'), false)
+  })
+
+  it('меню: «Свернуть окно» сворачивает разделение', () => {
+    const h = setup()
+    tabsModule.openTab('https://a.ru/1')
+    tabsModule.openTab('https://b.ru/2')
+    tabsModule.splitView()
+    fire(tabButton(0), 'contextmenu')
+    for (const cb of h.menuActions) cb('unsplit')
+    assert.equal(tabsModule.isSplit(), false)
+  })
+})

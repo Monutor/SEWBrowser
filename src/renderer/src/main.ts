@@ -37,6 +37,10 @@ import {
   setTabFavicon,
   setTabTitle,
   setTabUrl,
+  setSplitFocus,
+  splitPaneOf,
+  isSplit,
+  unsplit,
   type ShellTab,
 } from './tabs'
 
@@ -2181,6 +2185,11 @@ async function handleShortcut(name: string): Promise<void> {
         printDialog.close()
         break
       }
+      // Последним приоритетом: разделение сворачиваем, когда все панели закрыты
+      if (isSplit()) {
+        unsplit()
+        break
+      }
       if (expandedGroupId !== null) {
         closeGroupPanel()
         break
@@ -2723,6 +2732,13 @@ async function loadTabFavicon(tab: ShellTab): Promise<void> {
 // События конкретной вкладки. UI трогаем только у активной, инъекция плагинов — у всех.
 function wireTabEvents(tab: ShellTab): void {
   const view = tab.view
+  // Клик по странице в разделённой панели переводит фокус на неё: от фокусной
+  // панели зависят адресная строка, зум, поиск, печать и скриншот.
+  view.addEventListener('mousedown', () => {
+    if (!isSplit()) return
+    const pane = splitPaneOf(tab)
+    if (pane) setSplitFocus(pane)
+  })
   view.addEventListener('dom-ready', () => {
     guestReady.add(view)
     // Привязка гостевого webContents для перехвата хоткеев внутри страницы

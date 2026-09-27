@@ -142,6 +142,8 @@ interface SewWebViewElement extends HTMLElement {
     }) => void,
   ): void
   addEventListener(event: 'page-title-updated', listener: (event: { title: string; explicitSet: boolean }) => void): this
+  /** Клик мышью по содержимому гостя — нужен для перевода фокуса между панелями */
+  addEventListener(event: 'mousedown', listener: (event: MouseEvent) => void): this
 }
 
 interface NavTab {
