@@ -13,7 +13,6 @@ import {
   type PrintDialogElements,
   type PrintDialogHooks,
 } from './print-dialog'
-import { renderPdfThumbnails } from './print-preview'
 import {
   hostOfTabUrl,
   extractNewTabUrls,
@@ -2532,7 +2531,12 @@ function wirePrintDialog(): void {
       if (!target) throw new Error('нет активной вкладки')
       return target.printToPDF(printToPdfOptions(settings))
     },
-    renderThumbs: (data, limit) => renderPdfThumbnails(data, PRINT_THUMB_WIDTH, limit),
+    // pdf.js весит около мегабайта, а печатает пользователь далеко не всегда —
+    // тянем модуль лениво, при первом открытии диалога.
+    renderThumbs: async (data, limit) => {
+      const { renderPdfThumbnails } = await import('./print-preview')
+      return renderPdfThumbnails(data, PRINT_THUMB_WIDTH, limit)
+    },
 
     doPrint: async (settings) => {
       const target = view()

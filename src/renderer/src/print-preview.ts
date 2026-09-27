@@ -5,8 +5,11 @@ import * as pdfjs from 'pdfjs-dist'
 
 // Воркер подключаем Vite-способом: статический new URL(..., import.meta.url)
 // иначе electron-vite не переживёт путь к воркеру после сборки.
+// Берём .min-сборку: полная весит 2.23 МБ против 1.26 МБ у минифицированной,
+// разницы в функционале нет. Модулем не импортируется (только URL), поэтому
+// отсутствие .d.mts рядом не мешает.
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.mjs',
+  'pdfjs-dist/build/pdf.worker.min.mjs',
   import.meta.url,
 ).toString()
 
