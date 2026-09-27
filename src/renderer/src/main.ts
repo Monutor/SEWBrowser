@@ -2360,11 +2360,15 @@ function printElements(): PrintDialogElements | null {
   return out as PrintDialogElements
 }
 
-/** Снять отложенный пересчёт превью: перед новым таймером и перед «Показать все» */
-function cancelScheduledPrintRefresh(): void {
-  if (printRefreshTimer === null) return
+/** Снять отложенный пересчёт превью: перед новым таймером и перед «Показать все».
+ *  Возвращает true, если таймер ДЕЙСТВИТЕЛЬНО был запланирован и его сняли, —
+ *  вызывающему нужно знать это, чтобы перевзводить пересчёт только тогда,
+ *  когда есть что пересчитывать (см. клик по «Показать все»). */
+function cancelScheduledPrintRefresh(): boolean {
+  if (printRefreshTimer === null) return false
   window.clearTimeout(printRefreshTimer)
   printRefreshTimer = null
+  return true
 }
 
 /** Пересчёт превью с debounce: поля меняются мышью, PDF печатать не каждый раз */
@@ -2562,11 +2566,14 @@ function wirePrintDialog(): void {
   // пересчёт снимаем: иначе он отработал бы сразу после runAction и опять
   // показал только первые 10 миниатюр (refresh обнуляет showAll). Но снимать его
   // «насовсем» тоже нельзя: правка поля, сделанная в предшествующие 250 мс, молча
-  // выпала бы из превью. Поэтому таймер сразу перевзводим — schedulePrintRefresh
-  // сам переждёт конца runAction (isBusy) и дольёт превью по актуальным полям.
+  // выпала бы из превью. Поэтому таймер перевзводим ТОЛЬКО если он реально был
+  // запланирован: иначе (обычный клик, без свежих правок) мы бы через 250 мс
+  // вызвали refresh(), который детерминированно сбросил бы showAll и вернул ленту
+  // к первым 10 миниатюрам — «Показать все» стал бы недостижимым на документах
+  // длиннее 10 страниц. schedulePrintRefresh сам переждёт конца runAction
+  // (isBusy) и дольёт превью по актуальным полям.
   elements.showAll.addEventListener('click', () => {
-    cancelScheduledPrintRefresh()
-    schedulePrintRefresh()
+    if (cancelScheduledPrintRefresh()) schedulePrintRefresh()
   })
   // Клик по фону оверлея закрывает диалог
   elements.overlay.addEventListener('click', (event) => {
