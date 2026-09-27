@@ -63,6 +63,7 @@ import {
 } from './guest'
 import { normalizeUrl, hostOf, isAllowed as isAllowedUrl, resolveTasksUrl, formatSize, errText, withTimeout, formatDateTime } from './util'
 import { captureActiveTabScreenshot, closeShotPreviewIfOpen, openShotPreview, playShutterClick, wireShotPreview } from './screenshot'
+import { initNavStore, isFolderCollapsed, UNASSIGNED_FOLDER, generateTabId, hasUserFolders, orderedGroups, tabsInFolder, generateFolderId, saveFolders, toggleFolderCollapse, fillFolderSelect, saveTabs, buildTabsJson, exportTabs, importTabs, type NavStoreDeps } from './nav-store'
 import { openTemplates, closeTemplates, closeTemplatesManage, isTemplatesOpen, isTemplatesManageOpen, templatesOverlayEl, templatesManageOverlayEl, wireTemplates, type TemplatesDeps } from './templates-overlay'
 import {
   openAccounts,
@@ -531,81 +532,6 @@ function closeTabs(): void {
   tabForm && (tabForm.hidden = true)
 }
 
-function generateTabId(): string {
-  try {
-    return crypto.randomUUID()
-  } catch {
-    return 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
-  }
-}
-
-/** Сентинель для вкладок без папки (не может совпасть с реальным id — начинается с _). */
-const UNASSIGNED_FOLDER = '__unassigned__'
-
-function hasUserFolders(): boolean {
-  return (config?.folders ?? []).length > 0
-}
-
-/** Папки в порядке хранения + фиктивная секция «Без папки» в начале. */
-function orderedGroups(): Array<{ id: string; name: string; passwordId?: string }> {
-  return [{ id: UNASSIGNED_FOLDER, name: 'Без папки' }, ...(config?.folders ?? [])]
-}
-
-/** Вкладки конкретной папки (UNASSIGNED_FOLDER — вкладки без folderId). */
-function tabsInFolder(folderId: string): NavTab[] {
-  const tabs = config?.tabs ?? []
-  if (folderId === UNASSIGNED_FOLDER) return tabs.filter((t) => !t.folderId)
-  return tabs.filter((t) => t.folderId === folderId)
-}
-
-function generateFolderId(): string {
-  try {
-    return crypto.randomUUID()
-  } catch {
-    return 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
-  }
-}
-
-async function saveFolders(folders: NavFolder[]): Promise<void> {
-  const updated = await window.shell.setConfig({ folders })
-  if (updated && 'folders' in updated) config = updated as ShellConfig
-  closeGroupPanel()
-  renderStrip()
-  refreshTabsList()
-}
-
-/** Свернуть/развернуть секцию папки в ленте и оверлее. */
-function toggleFolderCollapse(folderId: string): void {
-  if (collapsedFolders.has(folderId)) collapsedFolders.delete(folderId)
-  else collapsedFolders.add(folderId)
-  renderStrip()
-  refreshTabsList()
-}
-
-/** Заполнить <select> папками (всегда есть опция «Без папки»). */
-function fillFolderSelect(sel: HTMLSelectElement, folderId: string | undefined): void {
-  sel.innerHTML = ''
-  const unassigned = document.createElement('option')
-  unassigned.value = UNASSIGNED_FOLDER
-  unassigned.textContent = 'Без папки'
-  sel.append(unassigned)
-  for (const f of config?.folders ?? []) {
-    const opt = document.createElement('option')
-    opt.value = f.id
-    opt.textContent = f.name
-    sel.append(opt)
-  }
-  sel.value = folderId ?? UNASSIGNED_FOLDER
-}
-
-async function saveTabs(tabs: NavTab[]): Promise<void> {
-  const updated = await window.shell.setConfig({ tabs })
-  if (updated && 'tabs' in updated) config = updated as ShellConfig
-  closeGroupPanel()
-  renderStrip()
-  refreshTabsList()
-}
-
 function currentViewUrl(): string {
   try {
     return activeView()?.getURL() ?? ''
@@ -855,13 +781,13 @@ function refreshTabsList(): void {
     if (group.id === UNASSIGNED_FOLDER) continue
     const groupTabs = tabsInFolder(group.id)
     const section = document.createElement('div')
-    section.className = 'folder-section' + (collapsedFolders.has(group.id) ? ' collapsed' : '')
+    section.className = 'folder-section' + (isFolderCollapsed(group.id) ? ' collapsed' : '')
     section.dataset.folderId = group.id
     const header = document.createElement('div')
     header.className = 'folder-header'
     const chevron = document.createElement('span')
     chevron.className = 'folder-chevron'
-    chevron.textContent = collapsedFolders.has(group.id) ? '▶' : '▼'
+    chevron.textContent = isFolderCollapsed(group.id) ? '▶' : '▼'
     const titleEl = document.createElement('span')
     titleEl.className = 'folder-name'
     titleEl.textContent = group.name
@@ -1066,109 +992,6 @@ async function deleteFolder(id: string): Promise<void> {
   await Promise.all([saveFolders(folders), saveTabs(tabs)])
 }
 
-/** Формат файла: заголовок для валидации + папки + массив вкладок. */
-const TABS_FILE_FORMAT = 'sewbrowser-tabs'
-const TABS_FILE_VERSION = 2
-
-interface TabFilePayload {
-  format: string
-  version: number
-  /** Папки (v2); старые файлы v1 без них. */
-  folders?: NavFolder[]
-  tabs: NavTab[]
-}
-
-function buildTabsJson(): string {
-  const payload: TabFilePayload = {
-    format: TABS_FILE_FORMAT,
-    version: TABS_FILE_VERSION,
-    folders: (config?.folders ?? []).map((f) => ({ id: f.id, name: f.name })),
-    tabs: (config?.tabs ?? []).map((t) => ({ id: t.id, name: t.name, url: t.url, ...(t.folderId ? { folderId: t.folderId } : {}) })),
-  }
-  return JSON.stringify(payload, null, 2)
-}
-
-async function exportTabs(): Promise<void> {
-  const tabs = config?.tabs ?? []
-  if (!tabs.length) {
-    setStatus('Нет вкладок для экспорта')
-    return
-  }
-  const stamp = new Date().toISOString().slice(0, 10)
-  const ok = await window.shell.saveTabsFile(buildTabsJson(), `sewbrowser-tabs-${stamp}.json`)
-  setStatus(ok ? `Экспорт: ${tabs.length} вкладок (${(config?.folders ?? []).length} папок) сохранён` : 'Экпорт отменён')
-}
-
-function importTabs(file: File): void {
-  const reader = new FileReader()
-  reader.onload = async () => {
-    let data: Partial<TabFilePayload>
-    try {
-      data = JSON.parse(String(reader.result ?? '')) as Partial<TabFilePayload>
-    } catch {
-      setStatus('Файл не является валидным JSON')
-      return
-    }
-    if (data.format !== TABS_FILE_FORMAT || !Array.isArray(data.tabs)) {
-      setStatus('Неверный формат файла (ожидался экспорт вкладок SEWBrowser)')
-      return
-    }
-    const tabs: NavTab[] = []
-    for (const raw of data.tabs) {
-      if (!raw || typeof raw !== 'object') continue
-      const name = String((raw as NavTab).name ?? '').trim()
-      const urlRaw = String((raw as NavTab).url ?? '').trim()
-      if (!name || !urlRaw) continue
-      tabs.push({ id: generateTabId(), name, url: normalizeUrl(urlRaw), ...(typeof (raw as NavTab).folderId === 'string' ? { folderId: (raw as NavTab).folderId } : {}) })
-    }
-    // Папки из файла (v2): полная замена структуры. Коллизии id — пересоздаём,
-    // ссылки вкладок переписываем через карту ремаппинга (иначе повторный импорт
-    // разваливает раскладку: вкладки выпадают в «без папки»).
-    const importedFolders: NavFolder[] = []
-    const folderIds = new Set<string>()
-    const folderRemap = new Map<string, string>()
-    if (Array.isArray(data.folders)) {
-      for (const raw of data.folders) {
-        if (!raw || typeof raw !== 'object') continue
-        const fname = String((raw as NavFolder).name ?? '').trim()
-        let fid = String((raw as NavFolder).id ?? '')
-        if (!fname || !fid) continue
-        if ((config?.folders ?? []).some((f) => f.id === fid)) {
-          // Коллизия с текущей структурой — новый id + ремаппинг ссылок вкладок.
-          const nid = generateFolderId()
-          folderRemap.set(fid, nid)
-          fid = nid
-        } else if (folderIds.has(fid)) {
-          // Дубль внутри файла — новый id без ремаппинга (вкладки остаются у первой папки).
-          fid = generateFolderId()
-        }
-        folderIds.add(fid)
-        importedFolders.push({ id: fid, name: fname })
-      }
-    }
-    // Переписываем ссылки вкладок на пересозданные папки, затем отсекаем «висячие».
-    for (const t of tabs) {
-      if (t.folderId) t.folderId = folderRemap.get(t.folderId) ?? t.folderId
-    }
-    // Отсекаем «висячие» ссылки на папки, которых нет в импортированном наборе.
-    for (const t of tabs) {
-      if (t.folderId && !folderIds.has(t.folderId)) t.folderId = undefined
-    }
-    if (!tabs.length) {
-      setStatus('В файле нет валидных вкладок')
-      return
-    }
-    if (!window.confirm(`Заменить текущие ${config?.tabs.length ?? 0} вкладок на ${tabs.length} импортированные?`)) {
-      return
-    }
-    await saveTabs(tabs)
-    // Если в файле есть папки — заменяем структуру папок целиком.
-    if (importedFolders.length) await saveFolders(importedFolders)
-    setStatus(`Импорт: ${tabs.length} вкладок из ${file.name}`)
-  }
-  reader.onerror = () => setStatus('Не удалось прочитать файл')
-  reader.readAsText(file)
-}
 
 function wireTabs(): void {
   document.getElementById('tab-add')?.addEventListener('click', () => void openTabs())
@@ -1296,6 +1119,16 @@ async function init(): Promise<void> {
   wireDownloads()
   wireHelp()
   wireTemplates({ plugins: () => plugins })
+  initNavStore({
+    config: () => config,
+    setConfig: async (patch) => {
+      config = await window.shell.setConfig(patch)
+      return config
+    },
+    renderStrip,
+    refreshTabsList,
+    closeGroupPanel,
+  })
   wireTabs()
   folderPrompt = createFolderPasswordPrompt({
     findFolder: (folderId) => orderedGroups().find((g) => g.id === folderId),
