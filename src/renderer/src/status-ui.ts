@@ -10,6 +10,11 @@ const toastEl = (): HTMLElement | null => document.getElementById('toast')
 const errorText = (): HTMLElement | null => document.getElementById('error-text')
 const errorOverlay = (): HTMLElement | null => document.getElementById('error-overlay')
 
+/**
+ * Статус пишется в настройки; разовые подсказки (toast=true) дополнительно
+ * всплывают тостом справа внизу на 3.5 c. Технический счётчик (polling)
+ * идёт с toast=false, чтобы не спамить.
+ */
 export function setStatus(text: string, toast = true): void {
   const status = statusEl()
   if (status) status.textContent = text

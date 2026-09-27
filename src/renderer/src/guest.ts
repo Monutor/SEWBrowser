@@ -5,6 +5,16 @@ import { listTabs, type ShellTab } from './tabs'
 
 
 
+/**
+ * Минимальный window.chrome для перенесённых content-скриптов Chrome-расширений.
+ * storage.local — из снапшота window.__shellPluginStores, который оболочка пушит
+ * в страницу при инжекте и обновляет при изменениях: у <webview> НЕТ preload,
+ * поэтому window.shell в гостевой странице отсутствует и IPC оттуда недоступен
+ * (данные плагинов — шаблоны и т.п., несекретные; credentials/куки/конфиг таким
+ * путём не отдаются вообще). Запись — в снапшот + оппортунистически в IPC.
+ * Сообщения от оболочки — через window.__chromeShimReceive (fan-out по onMessage).
+ * Имя текущего плагина loader кладёт в window.__shellPluginName перед его кодом.
+ */
 const CHROME_SHIM = `
 if (!window.__shellChromeShim) {
   window.__shellChromeShim = true;
@@ -235,6 +245,7 @@ export async function injectPlugins(tab: ShellTab, plugins: PluginInfo[]): Promi
 }
 
 
+/** Забрать снапшот данных всех плагинов из main и положить в гостевую страницу */
 export async function pushPluginStores(): Promise<void> {
   let snapshot: Record<string, Record<string, unknown>> = {}
   try {
@@ -254,6 +265,10 @@ export async function pushPluginStores(): Promise<void> {
 
 export const lastGuestErr: Record<string, string> = {}
 
+/** Именованный вызов гостя: при reject пишет КАКОЙ вызов упал и с чем.
+ *  Без этого безликий "GUEST_VIEW_MANAGER_CALL: ..." не даёт понять виновника.
+ *  Повторы с тем же текстом глушим (дедуп по ключу `${'$'}{tab.id}:{label}`),
+ *  исключение пробрасываем. */
 export async function guestJS<T>(tab: ShellTab, label: string, code: string): Promise<T> {
   const key = `${tab.id}:${label}`
   try {
