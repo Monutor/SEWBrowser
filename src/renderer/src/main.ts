@@ -14,6 +14,13 @@ import {
   type PrintDialogElements,
   type PrintDialogHooks,
 } from './print-dialog'
+import { openFind, closeFind, isFindActive, isFindInput, renderFindCount, wireFindbar } from './findbar'
+import { wireUpdater, checkForUpdatesManually } from './updatebar'
+import {
+  createFolderPasswordPrompt,
+  passwordPromptEl,
+  type FolderPasswordPromptController,
+} from './folder-prompt'
 import {
   hostOfTabUrl,
   extractNewTabUrls,
@@ -77,6 +84,23 @@ let addressMenu: AddressMenuController | null = null
 let printDialog: PrintDialogController | null = null
 /** Превью снимка экрана; собирается в wireShotPreview */
 let shotPreview: ShotPreviewController | null = null
+/** Диалог пароля защищённой папки; собирается в init */
+let folderPrompt: FolderPasswordPromptController | null = null
+
+/** Пароль папки: null при отмене или если контроллер ещё не собран. */
+function promptFolderPassword(folderId: string): Promise<string | null> {
+  return folderPrompt ? folderPrompt.prompt(folderId) : Promise.resolve(null)
+}
+
+/** Разрешить операцию с защищённой папкой; false — пароль не введён. */
+function requireFolderPassword(folderId: string): Promise<boolean> {
+  return folderPrompt ? folderPrompt.require(folderId) : Promise.resolve(false)
+}
+
+/** Скрыть диалог ввода пароля, разрешив промис как «отмена». */
+function cancelFolderPasswordPrompt(): void {
+  folderPrompt?.cancel()
+}
 /** Debounce пересчёта превью печати (250 мс) */
 let printRefreshTimer: number | null = null
 /** Последний список принтеров от main — нужен строке «Принтер» диалога */
@@ -112,11 +136,6 @@ const taskAlert = taskAlertRoot && taskAlertTitle && taskAlertText && taskAlertO
   : null
 const toolbar = document.getElementById('toolbar') as HTMLElement | null
 
-// Поиск по странице
-const findbar = document.getElementById('findbar') as HTMLElement | null
-const findInput = document.getElementById('find-input') as HTMLInputElement | null
-const findCount = document.getElementById('find-count') as HTMLElement | null
-let findActive = false
 
 // Оверлей ошибки сети
 const errorOverlay = document.getElementById('error-overlay') as HTMLElement | null
@@ -174,12 +193,6 @@ const folderNameInput = document.getElementById('folder-name') as HTMLInputEleme
 const folderProtect = document.getElementById('folder-protect') as HTMLInputElement | null
 const folderPassword = document.getElementById('folder-password') as HTMLInputElement | null
 const folderPwdField = document.getElementById('folder-pwd-field') as HTMLElement | null
-const passwordPrompt = document.getElementById('password-prompt') as HTMLElement | null
-const promptFolderNameEl = document.getElementById('prompt-folder-name') as HTMLElement | null
-const promptPasswordEl = document.getElementById('prompt-password') as HTMLInputElement | null
-const promptErrorEl = document.getElementById('prompt-error') as HTMLElement | null
-const promptOkBtn = document.getElementById('prompt-ok') as HTMLElement | null
-const promptCancelBtn = document.getElementById('prompt-cancel') as HTMLElement | null
 const tabFolderSelect = document.getElementById('tab-folder') as HTMLSelectElement | null
 let editingTabId: string | null = null
 let editingFolderId: string | null = null
@@ -783,63 +796,6 @@ async function changeZoom(dir: 1 | -1 | 'reset'): Promise<void> {
   setStatus(`${Math.round(next * 100)}%`)
 }
 
-// ---------- Поиск по странице ----------
-
-function openFind(): void {
-  if (!findbar || !findInput) return
-  findbar.hidden = false
-  findActive = true
-  findInput.focus()
-  findInput.select()
-  if (findInput.value) doFind(true, false)
-}
-
-function closeFind(): void {
-  if (!findActive) return
-  findActive = false
-  if (findbar) findbar.hidden = true
-  if (findCount) findCount.textContent = ''
-  const view = activeView()
-  if (!view) return
-  try {
-    view.stopFindInPage('clearSelection')
-  } catch {
-    // игнорируем
-  }
-}
-
-function doFind(forward: boolean, findNext = true): void {
-  const text = findInput?.value ?? ''
-  if (!text) {
-    if (findCount) findCount.textContent = ''
-    return
-  }
-  const view = activeView()
-  if (!view) return
-  try {
-    view.findInPage(text, { forward, findNext })
-  } catch {
-    // страница не готова — игнорируем
-  }
-}
-
-function wireFindbar(): void {
-  findInput?.addEventListener('input', () => doFind(true, false))
-  findInput?.addEventListener('keydown', (event: KeyboardEvent) => {
-    if (event.key === 'Enter') {
-      event.preventDefault()
-      doFind(!event.shiftKey)
-    } else if (event.key === 'Escape') {
-      event.preventDefault()
-      event.stopPropagation()
-      closeFind()
-    }
-  })
-  document.getElementById('find-prev')?.addEventListener('click', () => doFind(false))
-  document.getElementById('find-next')?.addEventListener('click', () => doFind(true))
-  document.getElementById('find-close')?.addEventListener('click', closeFind)
-}
-
 // ---------- Оверлей ошибки сети ----------
 
 /** Настройки tasks-notify из plugin-data (тот же ключ 'settings', что читает гость каждый тик) */
@@ -1090,15 +1046,7 @@ function wireSettings(): void {
     // Ручная проверка обновлений на GitHub. Если версия есть — покажется
     // updatebar «Доступно обновление», если нет — тост «у вас последняя версия».
     closeSettings()
-    manualUpdateCheck = true
-    setStatus('проверяем обновления…')
-    window.shell.checkForUpdates().catch((err) => {
-      manualUpdateCheck = false
-      const msg = err instanceof Error && err.message ? err.message : String(err ?? '')
-      // В dev хендлера нет вообще («No handler registered») — честно говорим,
-      // что проверка только в сборке; таймаут и прочие — текстом ошибки.
-      setStatus(/no handler/i.test(msg) ? 'проверка доступна только в установленной версии' : msg || 'не удалось проверить')
-    })
+    checkForUpdatesManually()
   })
   document
     .getElementById('set-clear-cache')
@@ -1876,7 +1824,7 @@ async function handleShortcut(name: string): Promise<void> {
       else if (accountsOpen) closeAccounts()
       else if (downloadsOpen) closeDownloads()
       else if (tabsOpen) closeTabs()
-      else if (findActive) closeFind()
+      else if (isFindActive()) closeFind()
       else if (settingsOverlay && !settingsOverlay.hidden) closeSettings()
       else if (document.activeElement === addressInput && addressInput) addressInput.blur()
       else if (isFullscreen) {
@@ -2027,7 +1975,7 @@ function wireShortcuts(): void {
     const name = shortcutFromEvent(event)
     if (!name) return
     // Esc в поле поиска обрабатывается локально в wireFindbar
-    if (event.target === findInput && event.key === 'Escape') return
+    if (isFindInput(event.target) && event.key === 'Escape') return
     event.preventDefault()
     void handleShortcut(name)
   })
@@ -2614,8 +2562,8 @@ function wireTabEvents(tab: ShellTab): void {
   view.addEventListener('found-in-page', (event) => {
     if (!isActiveTab(tab)) return
     const result = event.result
-    if (!result.finalUpdate || !findCount) return
-    findCount.textContent = result.matches === 0 ? '0' : `${result.activeMatchOrdinal}/${result.matches}`
+    if (!result.finalUpdate) return
+    renderFindCount(result.matches, result.activeMatchOrdinal)
   })
 }
 
@@ -2630,89 +2578,6 @@ function startStatusPolling(): void {
       // страница ещё не готова — игнорируем
     }
   }, 2000)
-}
-
-// ---------- Автообновление (уведомление + кнопка) ----------
-
-const updatebar = document.getElementById('updatebar') as HTMLElement | null
-const updateText = document.getElementById('update-text') as HTMLElement | null
-const updateAction = document.getElementById('update-action') as HTMLButtonElement | null
-
-type UpdaterUiState = 'idle' | 'available' | 'downloading' | 'ready'
-let updaterState: UpdaterUiState = 'idle'
-/** Ручная проверка из настроек (флаг отличает её от тихого автостарта) */
-let manualUpdateCheck = false
-let updaterVersion = ''
-let updaterPercent = 0
-
-function renderUpdater(): void {
-  if (!updatebar || !updateText || !updateAction) return
-  if (updaterState === 'idle') {
-    updatebar.hidden = true
-    return
-  }
-  updatebar.hidden = false
-  updateAction.disabled = false
-  if (updaterState === 'available') {
-    updateText.textContent = `Доступно обновление ${updaterVersion}`
-    updateAction.textContent = 'Скачать и установить'
-    updateAction.onclick = (): void => {
-      updaterState = 'downloading'
-      updaterPercent = 0
-      renderUpdater()
-      window.shell.downloadUpdate().catch((err) => {
-        console.warn('[shell] download update failed:', err)
-        updaterState = 'available'
-        renderUpdater()
-        setStatus(String(err?.message ?? 'не удалось скачать обновление'))
-      })
-    }
-  } else if (updaterState === 'downloading') {
-    updateText.textContent = `Скачивание обновления… ${updaterPercent}%`
-    updateAction.textContent = 'Скачивается…'
-    updateAction.disabled = true
-    updateAction.onclick = null
-  } else {
-    updateText.textContent = `Обновление ${updaterVersion} готово`
-    updateAction.textContent = 'Перезапустить'
-    updateAction.onclick = (): void => window.shell.installUpdate()
-  }
-}
-
-function wireUpdater(): void {
-  document.getElementById('update-close')?.addEventListener('click', () => {
-    if (updatebar) updatebar.hidden = true
-  })
-  window.shell.onUpdater((event) => {
-    if (event.type === 'available') {
-      manualUpdateCheck = false
-      updaterState = 'available'
-      updaterVersion = event.version ?? ''
-    } else if (event.type === 'progress') {
-      updaterState = 'downloading'
-      updaterPercent = event.percent ?? 0
-    } else if (event.type === 'ready') {
-      updaterState = 'ready'
-      updaterVersion = event.version ?? updaterVersion
-    } else if (event.type === 'uptodate') {
-      // Тихо при автостарте; тост — только по ручной проверке из настроек
-      if (!manualUpdateCheck) return
-      manualUpdateCheck = false
-      setStatus('у вас последняя версия')
-    } else {
-      // error — показываем только если пользователь уже в процессе
-      if (manualUpdateCheck) {
-        manualUpdateCheck = false
-        setStatus(`не удалось проверить: ${event.message ?? 'ошибка'}`)
-        return
-      }
-      // во время скачивания показывает catch у downloadUpdate()
-      if (updaterState === 'idle' || updaterState === 'downloading') return
-      setStatus(`обновление: ${event.message ?? 'ошибка'}`)
-      return
-    }
-    renderUpdater()
-  })
 }
 
 // ---------- Шаблоны SEW (порт расширения SEW-Pattern) ----------
@@ -3055,86 +2920,6 @@ async function toggleExpandInStrip(folderId: string): Promise<void> {
   expandedGroupId = folderId
   renderStrip()
   renderGroupPanel()
-}
-
-/** Резолвер открытого диалога ввода пароля папки. */
-let promptResolve: ((value: string | null) => void) | null = null
-let currentPromptFolderId: string | null = null
-
-/** Скрыть диалог ввода пароля и разрешить промис как «отмена». */
-function cancelFolderPasswordPrompt(): void {
-  if (passwordPrompt && passwordPrompt.hidden) return
-  if (passwordPrompt) passwordPrompt.hidden = true
-  const resolve = promptResolve
-  promptResolve = null
-  resolve?.(null)
-}
-
-/** Показать диалог ввода пароля для защищённой папки.
- *  Возвращает введённый пароль (при верном) или null при отмене.
- *  Неверный пароль не закрывает диалог — показывает ошибку и ждёт повтора. */
-async function promptFolderPassword(folderId: string): Promise<string | null> {
-  // Без DOM диалог показать нельзя — трактуем как отмену (null), иначе пустая
-  // строка прошла бы проверку как успешная аутентификация.
-  if (!passwordPrompt || !promptPasswordEl || !promptFolderNameEl) return null
-  const group = orderedGroups().find((g) => g.id === folderId)
-  currentPromptFolderId = group?.id ?? folderId
-  promptFolderNameEl.textContent = group ? `Папка «${group.name}»` : 'Введите пароль'
-  promptPasswordEl.value = ''
-  if (promptErrorEl) promptErrorEl.hidden = true
-  passwordPrompt.hidden = false
-  promptPasswordEl.focus()
-  return await new Promise<string | null>((resolve) => {
-    promptResolve = resolve
-  })
-}
-
-/** Проверить введённый пароль: неверный — показать ошибку и оставить диалог открытым. */
-async function submitFolderPassword(): Promise<void> {
-  if (!promptPasswordEl) return
-  const value = promptPasswordEl.value
-  if (!value.trim()) {
-    showPromptError('Введите пароль')
-    return
-  }
-  if (!currentPromptFolderId) {
-    cancelFolderPasswordPrompt()
-    return
-  }
-  const ok = await window.shell.verifyFolderPassword(currentPromptFolderId, value)
-  if (!ok) {
-    showPromptError('Неверный пароль')
-    promptPasswordEl.value = ''
-    promptPasswordEl.focus()
-    return
-  }
-  if (passwordPrompt) passwordPrompt.hidden = true
-  const resolve = promptResolve
-  promptResolve = null
-  resolve?.(value)
-}
-
-function showPromptError(message: string): void {
-  if (!promptErrorEl) return
-  promptErrorEl.textContent = message
-  promptErrorEl.hidden = false
-}
-
-/** Подписать элементы диалога ввода пароля (один раз). */
-function wireFolderPasswordPrompt(): void {
-  promptOkBtn?.addEventListener('click', () => void submitFolderPassword())
-  promptCancelBtn?.addEventListener('click', cancelFolderPasswordPrompt)
-  promptPasswordEl?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') void submitFolderPassword()
-  })
-}
-
-/** Запросить текущий пароль защищённой па перед удалением или снятием/сменой защиты.
- *  Возвращает true, если защита отсутствует или пароль введён верно; false — при отмене или ошибке. */
-async function requireFolderPassword(folderId: string): Promise<boolean> {
-  const group = orderedGroups().find((g) => g.id === folderId)
-  if (!group?.passwordId) return true // Без защиты — проверка не нужна.
-  return (await promptFolderPassword(folderId)) !== null
 }
 
 /** Скрыть выпадающий список папки и снять обработчики. */
@@ -3707,7 +3492,7 @@ function wireOverlayDismiss(): void {
     [tabsOverlay, closeTabs],
     [templatesOverlay, closeTemplates],
     [templatesManageOverlay, closeTemplatesManage],
-    [passwordPrompt, cancelFolderPasswordPrompt],
+    [passwordPromptEl(), cancelFolderPasswordPrompt],
   ]
   for (const [overlay, close] of pairs) {
     overlay?.addEventListener('click', (event: MouseEvent) => {
@@ -3743,7 +3528,10 @@ async function init(): Promise<void> {
   wireHelp()
   wireTemplates()
   wireTabs()
-  wireFolderPasswordPrompt()
+    folderPrompt = createFolderPasswordPrompt({
+      findFolder: (folderId) => orderedGroups().find((g) => g.id === folderId),
+    })
+    folderPrompt.wire()
   wireUpdater()
   wireOverlayDismiss()
   initTabs({
