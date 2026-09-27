@@ -45,6 +45,31 @@ import {
   type ShellTab,
 } from './tabs'
 
+import { setStatus, hideToast, showError, hideError, wireErrorOverlay } from './status-ui'
+import {
+  injectPlugins,
+  pushPluginStores,
+  guestJS,
+  isExternalProtocol,
+  lastGuestErr,
+  LINK_HOOK,
+  LINK_TAKE,
+} from './guest'
+import { normalizeUrl, hostOf, isAllowed as isAllowedUrl, resolveTasksUrl, formatSize, errText, withTimeout, formatDateTime } from './util'
+
+/**
+ * Обёртки над чистыми функциями из util.ts: подставляют конфиг, чтобы в коде
+ * не мериться allowlist-ом и базовым URL вручную в каждом месте.
+ */
+function isAllowed(url: string): boolean {
+  return isAllowedUrl(url, config?.allowlist, config?.allowlistEnabled ?? false)
+}
+
+function tasksUrl(url: string): string {
+  const base = activeView()?.getURL() || config?.startUrl || ''
+  return resolveTasksUrl(url, base, config?.startUrl || '')
+}
+
 const addressInput = document.getElementById('address') as HTMLInputElement | null
 /** Меню «⋮» в конце адресной строки; собирается в wireAddressMenu */
 let addressMenu: AddressMenuController | null = null
@@ -172,72 +197,11 @@ let plugins: PluginInfo[] = []
 let allPlugins: { name: string; enabled: boolean }[] = []
 let isFullscreen = false
 
-function normalizeUrl(raw: string): string {
-  const value = raw.trim()
-  if (!value) return ''
-  if (/^https?:\/\//i.test(value)) return value
-  return `https://${value}`
-}
-
-function hostOf(url: string): string {
-  return hostOfTabUrl(url)
-}
-
-/** Логика совпадает с allowlist в конфиге (проверка синхронная, в will-navigate) */
-function isAllowed(url: string): boolean {
-  if (!config || !config.allowlistEnabled) return true
-  const host = hostOf(url)
-  if (!host) return false
-  if (!Array.isArray(config.allowlist)) return false
-  return config.allowlist.some((pattern) => {
-    const p = pattern.toLowerCase()
-    if (p.startsWith('*.')) {
-      const domain = p.slice(2)
-      return host === domain || host.endsWith(`.${domain}`)
-    }
-    return host === p
-  })
-}
-
-/**
- * Очередь tasks-notify несёт относительный путь ('/v2/relocation/tasks'):
- * hostOf('') пуст → isAllowed режет. Резолвим против текущего URL геста,
- * fallback — startUrl из конфига + путь.
- */
-function resolveTasksUrl(url: string): string {
-  const raw = (url || '').trim() || '/v2/relocation/tasks'
-  if (/^https?:\/\//i.test(raw)) return raw
-  try {
-    const base = activeView()?.getURL() || config?.startUrl || ''
-    return new URL(raw, base).href
-  } catch {
-    const start = config?.startUrl || ''
-    try {
-      return new URL(raw, start).href
-    } catch {
-      return start + (raw.startsWith('/') ? raw : `/${raw}`)
-    }
-  }
-}
-
-let toastTimer: ReturnType<typeof setTimeout> | null = null
-
 /**
  * Статус пишется в настройки; разовые подсказки (toast=true) дополнительно
  * всплывают тостом справа внизу на 3.5 c. Технический счётчик (polling)
  * идёт с toast=false, чтобы не спамить.
  */
-function setStatus(text: string, toast = true): void {
-  if (statusEl) statusEl.textContent = text
-  if (!toast || !toastEl || !text) return
-  toastEl.textContent = text
-  toastEl.hidden = false
-  if (toastTimer) clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => {
-    if (toastEl) toastEl.hidden = true
-  }, 3500)
-}
-
 /**
  * Минимальный window.chrome для перенесённых content-скриптов Chrome-расширений.
  * storage.local — из снапшота window.__shellPluginStores, который оболочка пушит
@@ -248,252 +212,7 @@ function setStatus(text: string, toast = true): void {
  * Сообщения от оболочки — через window.__chromeShimReceive (fan-out по onMessage).
  * Имя текущего плагина loader кладёт в window.__shellPluginName перед его кодом.
  */
-const CHROME_SHIM = `
-if (!window.__shellChromeShim) {
-  window.__shellChromeShim = true;
-  window.__shellMsgListeners = [];
-  window.__chromeShimReceive = function (message) {
-    (window.__shellMsgListeners || []).forEach(function (fn) {
-      try { fn(message || {}, {}, function () {}); } catch (e) {}
-    });
-  };
-  (function () {
-    function normKeys(keys) {
-      if (keys === undefined || keys === null) return null;
-      if (typeof keys === 'string') return [keys];
-      if (Array.isArray(keys)) return keys;
-      if (typeof keys === 'object') return Object.keys(keys);
-      return null;
-    }
-    function pick(all, keys) {
-      var out = {};
-      var src = all || {};
-      if (keys === null) {
-        Object.keys(src).forEach(function (k) { out[k] = src[k]; });
-        return out;
-      }
-      keys.forEach(function (k) {
-        if (Object.prototype.hasOwnProperty.call(src, k)) out[k] = src[k];
-      });
-      return out;
-    }
-    function withCallback(promise, cb) {
-      if (typeof cb === 'function') {
-        promise.then(
-          function (v) { try { cb(v); } catch (e) {} },
-          function () { try { cb(); } catch (e) {} },
-        );
-        return;
-      }
-      return promise;
-    }
-    function pluginName() { return window.__shellPluginName || 'default'; }
-    function snapshotOf(plugin) {
-      var s = window.__shellPluginStores;
-      if (!s || typeof s !== 'object') return {};
-      var d = s[plugin];
-      return d && typeof d === 'object' ? d : {};
-    }
-    function hasBridge() {
-      return !!(window.shell && typeof window.shell.pluginDataGet === 'function');
-    }
-    function storeGet(plugin, keys) {
-      var k = normKeys(keys);
-      if (hasBridge()) {
-        return window.shell.pluginDataGet(plugin, k || undefined).then(function (all) { return pick(all, k); });
-      }
-      return Promise.resolve(pick(snapshotOf(plugin), k));
-    }
-    function storeSet(plugin, obj) {
-      var data = obj && typeof obj === 'object' ? obj : {};
-      try {
-        var stores = window.__shellPluginStores;
-        if (!stores || typeof stores !== 'object') { stores = {}; window.__shellPluginStores = stores; }
-        stores[plugin] = Object.assign({}, stores[plugin], data);
-      } catch (e) {}
-      if (window.shell && typeof window.shell.pluginDataSet === 'function') {
-        return window.shell.pluginDataSet(plugin, data);
-      }
-      return Promise.resolve(true);
-    }
-    function storeRemove(plugin, keys) {
-      var list = normKeys(keys) || [];
-      try {
-        var stores = window.__shellPluginStores;
-        if (!stores || typeof stores !== 'object') { stores = {}; window.__shellPluginStores = stores; }
-        var cur = snapshotOf(plugin);
-        list.forEach(function (k) { delete cur[k]; });
-        stores[plugin] = cur;
-      } catch (e) {}
-      if (window.shell && typeof window.shell.pluginDataRemove === 'function') {
-        return window.shell.pluginDataRemove(plugin, list);
-      }
-      return Promise.resolve(true);
-    }
-    // getPlugin — thunk: глобальный стор резолвит имя лениво (как раньше),
-    // фабрика __shellChromeFor — привязывает имя плагина замыканием.
-    function makeLocal(getPlugin) {
-      function name() { return typeof getPlugin === 'function' ? getPlugin() : getPlugin; }
-      return {
-        get: function (keys, cb) { return withCallback(storeGet(name(), keys), cb); },
-        set: function (obj, cb) { return withCallback(storeSet(name(), obj), cb); },
-        remove: function (keys, cb) { return withCallback(storeRemove(name(), keys), cb); },
-      };
-    }
-    window.chrome = window.chrome || {};
-    window.chrome.storage = window.chrome.storage || {};
-    window.chrome.storage.local = makeLocal(pluginName);
-    window.chrome.storage.onChanged = window.chrome.storage.onChanged || {
-      addListener: function () {},
-      removeListener: function () {},
-    };
-    window.chrome.runtime = window.chrome.runtime || {};
-    if (typeof window.chrome.runtime.getURL !== 'function') {
-      window.chrome.runtime.getURL = function (path) { return path || ''; };
-    }
-    // Фабрика chrome-объекта, привязанного к хранилищу конкретного плагина.
-    // Нужна, т.к. window.__shellPluginName сбрасывается сразу после инжекта,
-    // а отложенные вызовы (MutationObserver, обработчики событий) читали бы чужой стор.
-    window.__shellChromeFor = function (name) {
-      var plugin = typeof name === 'string' && name ? name : 'default';
-      return {
-        storage: {
-          local: makeLocal(function () { return plugin; }),
-          onChanged: window.chrome.storage.onChanged,
-        },
-        runtime: window.chrome.runtime,
-      };
-    };
-    if (!window.chrome.runtime.onMessage || typeof window.chrome.runtime.onMessage.addListener !== 'function') {
-      window.chrome.runtime.onMessage = {
-        addListener: function (fn) { window.__shellMsgListeners.push(fn); },
-        removeListener: function (fn) {
-          window.__shellMsgListeners = window.__shellMsgListeners.filter(function (f) { return f !== fn; });
-        },
-      };
-    }
-  })();
-}
-`
-
-// Перехват Ctrl+клика и средней кнопки в гостевой странице. Идемпотентно:
-// повторная инъекция в ту же вкладку ничего не делает.
-const LINK_HOOK = `(function(){
-  try {
-    if (window.__shellLinkHook) return;
-    window.__shellLinkHook = true;
-    window.__shellNewTabReq = window.__shellNewTabReq || [];
-    var push = function (ev) {
-      try {
-        if (ev.type === 'auxclick' && ev.button !== 1) return;
-        if (ev.type === 'click' && !(ev.ctrlKey || ev.metaKey)) return;
-        var a = ev.target && ev.target.closest ? ev.target.closest('a[href]') : null;
-        if (!a) return;
-        var href = a.getAttribute('href') || '';
-        if (!href || href.charAt(0) === '#') return;
-        ev.preventDefault();
-        if (ev.stopPropagation) ev.stopPropagation();
-        window.__shellNewTabReq.push({ url: new URL(href, document.baseURI).href });
-      } catch (e) {}
-    };
-    document.addEventListener('click', push, true);
-    document.addEventListener('auxclick', push, true);
-  } catch (e) {}
-})()`
-
-// Забор очереди ссылок из активной вкладки. Возвращает всегда строку —
-// результат executeJavaScript обязан быть structured-cloneable.
-const LINK_TAKE = '(function(){try{var q=window.__shellNewTabReq;if(!Array.isArray(q))return "[]";try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})()'
-
-async function injectPlugins(tab: ShellTab): Promise<void> {
-  // Снапшот данных плагинов в страницу (читает шим вместо IPC — см. комментарий
-  // к CHROME_SHIM). Пушим до кода плагинов, чтобы первые чтения видели данные.
-  await pushPluginStores()
-  // Хост опроса: только первая вкладка забирает очередь заданий (tasks-notify),
-  // иначе при N вкладках придёт N одинаковых уведомлений. Ставим ДО кода
-  // плагинов — tasks-notify читает флаг на старте (__tnInit).
-  try {
-    await guestJS<void>(tab, 'poll-host', `window.__shellPollHost = ${tab.isPrimary ? 'true' : 'false'};`)
-  } catch (err) {
-    console.warn('[plugins] poll host flag failed:', err)
-  }
-  for (const plugin of plugins) {
-    try {
-      if (plugin.styles) {
-        try {
-          await tab.view.insertCSS(plugin.styles)
-        } catch (err) {
-          console.warn(`[plugins:${plugin.name}] insertCSS failed:`, err)
-        }
-      }
-      // chrome-шим страницы (один на документ) + имя плагина для его хранилища
-      await guestJS<void>(tab, 'shim', CHROME_SHIM)
-      if (!plugin.code) continue
-      const key = JSON.stringify(plugin.name)
-      // Код плагина выполняется в гостевом try/catch: синхронный throw складываем
-      // в window.__shellPluginError[name] и читаем обратно в консоль оболочки.
-      // Иначе Electron пишет лишь безликое "GUEST_VIEW_MANAGER_CALL: Script
-      // failed to execute" без имени плагина и текста ошибки.
-      await guestJS<void>(
-        tab,
-        `inject:${plugin.name}`,
-        `window.__shellPluginName = ${key};` +
-          `window.__shellPlugins = window.__shellPlugins || {};` +
-          `window.__shellPluginError = window.__shellPluginError || {};` +
-          `if (!window.__shellPlugins[${key}]) {` +
-          // Код выполняется в IIFE с собственным `chrome`, привязанным к стору
-          // этого плагина: отложенные вызовы (наблюдатели, обработчики) видят
-          // свои данные, а не 'default' (имя в __shellPluginName уже сброшено).
-          `window.__shellPlugins[${key}] = 1;\n(() => {\nconst chrome = window.__shellChromeFor(${key});\ntry {\n${plugin.code}\n} catch (e) {\nwindow.__shellPluginError[${key}] = String((e && e.stack) || e);\nconsole.error('[shell-plugin:' + ${key} + ']', e);\n}\n})();}`,
-      )
-      try {
-        const pluginErr = (await guestJS<unknown>(
-          tab,
-          `plugin-error:${plugin.name}`,
-          `(window.__shellPluginError || {})[${key}] ?? null`,
-        )) as unknown
-        if (typeof pluginErr === 'string' && pluginErr) {
-          console.warn(`[plugins:${plugin.name}] guest error:`, pluginErr)
-        }
-      } catch {
-        // страница ушла между инжектом и чтением — нечего читать
-      }
-      if (plugin.init) {
-        try {
-          await guestJS<unknown>(tab, `init:${plugin.name}`, plugin.init)
-        } catch (err) {
-          console.warn(`[plugins:${plugin.name}] init failed:`, err)
-        }
-      }
-    } catch (err) {
-      console.warn(`[plugins:${plugin.name}] injection failed:`, err)
-    }
-  }
-  // Сбрасываем имя плагина, чтобы чужой код не писал в чужое хранилище
-  try {
-    await guestJS<void>(tab, 'name-reset', 'window.__shellPluginName = null;')
-  } catch {
-    // страница могла уже уйти — игнорируем
-  }
-}
-
 /** Забрать снапшот данных всех плагинов из main и положить в гостевую страницу */
-async function pushPluginStores(): Promise<void> {
-  let snapshot: Record<string, Record<string, unknown>> = {}
-  try {
-    snapshot = await window.shell.getAllPluginData()
-  } catch (err) {
-    console.warn('[shell] getAllPluginData failed:', err)
-  }
-  for (const tab of listTabs()) {
-    try {
-      await guestJS<void>(tab, 'push-stores', 'window.__shellPluginStores = ' + JSON.stringify(snapshot) + ';')
-    } catch {
-      // вкладка могла закрыться между listTabs() и вызовом — пропускаем
-    }
-  }
-}
-
 /**
  * BFF-мост для sew-helper: гость складывает запросы в window.__sewHelperBffReq,
  * оболочка забирает их (splice — атомарно), ходит в main через netFetch
@@ -505,21 +224,6 @@ async function pushPluginStores(): Promise<void> {
  *  Без этого безликий "GUEST_VIEW_MANAGER_CALL: ..." не даёт понять виновника.
  *  Повторы с тем же текстом глушим (дедуп по ключу `${tab.id}:${label}`),
  *  исключение пробрасываем. */
-const lastGuestErr: Record<string, string> = {}
-async function guestJS<T>(tab: ShellTab, label: string, code: string): Promise<T> {
-  const key = `${tab.id}:${label}`
-  try {
-    return (await tab.view.executeJavaScript(code)) as T
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    if (lastGuestErr[key] !== msg) {
-      lastGuestErr[key] = msg
-      console.warn(`[guestjs:${key}] failed:`, msg)
-    }
-    throw err
-  }
-}
-
 let sewHelperBridgeStarted = false
 let bffTakeDiagged = false
 /** Адаптивный опрос: 500мс при работе, до 2000мс в простое + пауза когда окно скрыто */
@@ -959,8 +663,8 @@ async function pumpTasksNotify(): Promise<boolean> {
     const taskText = formatTaskAlertText(first)
     const toastText = valid.length > 1 ? `${taskText} (+${valid.length - 1})` : taskText
     const taskUrls = getTaskAlertUrls(first)
-    const openUrl = resolveTasksUrl(taskUrls.open)
-    const allUrl = taskUrls.all ? resolveTasksUrl(taskUrls.all) : undefined
+    const openUrl = tasksUrl(taskUrls.open)
+    const allUrl = taskUrls.all ? tasksUrl(taskUrls.all) : undefined
     // Клик по баннеру открывает задание вкладкой, как и клик по OS-уведомлению
     // (ниже onTasksOpen): навигация в текущей вкладке уничтожила бы её работу.
     taskAlert?.show(toastText, () => {
@@ -1137,26 +841,6 @@ function wireFindbar(): void {
 }
 
 // ---------- Оверлей ошибки сети ----------
-
-function showError(text: string): void {
-  if (errorText) errorText.textContent = text
-  if (errorOverlay) errorOverlay.hidden = false
-}
-
-function hideError(): void {
-  if (errorOverlay) errorOverlay.hidden = true
-}
-
-function wireErrorOverlay(): void {
-  document.getElementById('error-retry')?.addEventListener('click', () => {
-    const view = activeView()
-    if (!view) return
-    hideError()
-    view.reload()
-  })
-}
-
-// ---------- Настройки ----------
 
 /** Настройки tasks-notify из plugin-data (тот же ключ 'settings', что читает гость каждый тик) */
 async function loadTnSettings(): Promise<void> {
@@ -1439,11 +1123,6 @@ function wireSettings(): void {
 
 // ---------- Хранилище: использование, куки, выборочная очистка ----------
 
-function formatSize(bytes: number): string {
-  if (!bytes || bytes <= 0) return '0 Б'
-  return formatBytes(bytes)
-}
-
 function renderCookies(cookies: CookieInfo[]): void {
   if (!setCookies) return
   setCookies.innerHTML = ''
@@ -1475,20 +1154,7 @@ function renderCookies(cookies: CookieInfo[]): void {
   }
 }
 
-function errText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
-}
-
 /** IPC с таймаутом: зависший вызов превращается в читаемую ошибку, а не вечное «считаем…» */
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<never>((_resolve, reject) =>
-      setTimeout(() => reject(new Error(`таймаут чтения ${label}`)), ms),
-    ),
-  ])
-}
-
 async function refreshStoragePanel(): Promise<void> {
   if (setStorageUsage) setStorageUsage.textContent = 'считаем…'
   try {
@@ -1944,18 +1610,6 @@ function wireDownloads(): void {
 
 // ---------- Окно «Загрузки»: история файлов ----------
 
-function formatDateTime(iso: string): string {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return ''
-  return d.toLocaleString('ru-RU', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
 function whoLabel(rec: DownloadedFile): string {
   if (!rec.fio) return 'неизвестно'
   return rec.tabNum ? `${rec.fio} (${rec.tabNum})` : rec.fio
@@ -2089,15 +1743,6 @@ async function clearDownloadsHistory(): Promise<void> {
 // ---------- Внешние протоколы (mailto:, tel:) ----------
 
 /** Не http(s) — отдаём внешнему приложению, а не оверлею ошибки */
-function isExternalProtocol(url: string): boolean {
-  try {
-    const protocol = new URL(url).protocol
-    return protocol !== 'http:' && protocol !== 'https:'
-  } catch {
-    return false
-  }
-}
-
 // ---------- Шорткаты ----------
 
 async function handleShortcut(name: string): Promise<void> {
@@ -2651,12 +2296,8 @@ function wirePrintDialog(): void {
       // Диалог закрыт (любой путь: Отмена, крестик, Escape, клик по фону,
       // closeNow после печати) — цель больше не нужна
       if (!visible) printTargetView = null
-      if (!visible || !toastEl) return
-      toastEl.hidden = true
-      if (toastTimer) {
-        clearTimeout(toastTimer)
-        toastTimer = null
-      }
+      if (!visible) return
+      hideToast()
     }
     apply()
     // Наблюдатель, а не вызовы в точках закрытия: контроллер закрывает оверлей
@@ -2919,7 +2560,7 @@ function wireTabEvents(tab: ShellTab): void {
     if (isActiveTab(tab)) updateAddressBar()
   })
   view.addEventListener('did-finish-load', () => {
-    void injectPlugins(tab)
+    void injectPlugins(tab, plugins)
     // Готовность хука — только ПОСЛЕ успешной инъекции: до подтверждения
     // pumpLinkIntake в гостя не ходит. Упала инъекция — не подтверждаем,
     // опрос просто не пойдёт (ретраи и таймауты не нужны).
@@ -4172,7 +3813,7 @@ async function init(): Promise<void> {
   // Клик по OS-уведомлению tasks-notify: main прислал URL — открываем вкладкой
   // (относительный путь резолвим против текущего URL, иначе allowlist режет)
   window.shell.onTasksOpen?.((url) => {
-    focusOrOpenTab(resolveTasksUrl(url))
+    focusOrOpenTab(tasksUrl(url))
   })
   // window.open / target=_blank из гостя: открываем отдельной вкладкой справа
   window.shell.onOpenNewTab((url) => {
