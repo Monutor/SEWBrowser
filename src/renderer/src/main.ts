@@ -63,6 +63,8 @@ import {
 } from './guest'
 import { normalizeUrl, hostOf, isAllowed as isAllowedUrl, resolveTasksUrl, formatSize, errText, withTimeout, formatDateTime } from './util'
 import { captureActiveTabScreenshot, closeShotPreviewIfOpen, openShotPreview, playShutterClick, wireShotPreview } from './screenshot'
+import { initShortcuts, wireShortcuts } from './shortcuts'
+import { shortcutFromEvent } from './shortcuts-core.ts'
 import { initTabsOverlay, isTabsOpen, tabsOverlayEl, openTabs, closeTabs, refreshTabsList, openEditForm, saveCurrentTab, deleteTab, moveTab, moveTabToFolder, openFolderForm, saveCurrentFolder, deleteFolder, wireTabs } from './tabs-overlay'
 import { initLinkStrip, isGroupPanelOpen, currentViewUrl, renderStrip, closeGroupPanel, updateActiveTab, createTabRow, tabRowButton } from './link-strip'
 import { initNavStore, isFolderCollapsed, UNASSIGNED_FOLDER, generateTabId, hasUserFolders, orderedGroups, tabsInFolder, generateFolderId, saveFolders, toggleFolderCollapse, fillFolderSelect, saveTabs, buildTabsJson, exportTabs, importTabs, type NavStoreDeps } from './nav-store'
@@ -177,7 +179,6 @@ let config: ShellConfig | null = null
 let plugins: PluginInfo[] = []
 /** Все плагины (включая выключенные) — для настроек */
 let allPlugins: { name: string; enabled: boolean }[] = []
-let isFullscreen = false
 
 /**
  * Статус пишется в настройки; разовые подсказки (toast=true) дополнительно
@@ -196,193 +197,7 @@ let isFullscreen = false
  */
 /** Забрать снапшот данных всех плагинов из main и положить в гостевую страницу */
 
-/** Дефолт времени показа уведомлений tasks-notify, сек (0 = не скрывать) */
-
 // ---------- Оверлей ошибки сети ----------
-
-
-
-
-// ---------- Шорткаты ----------
-
-async function handleShortcut(name: string): Promise<void> {
-  switch (name as ShortcutName) {
-    case 'new-tab': {
-      openTab(config?.startUrl ?? '')
-      break
-    }
-    case 'close-tab': {
-      const tab = activeTab()
-      if (tab) closeTab(tab.id)
-      break
-    }
-    case 'next-tab': {
-      cycleTab(1)
-      break
-    }
-    case 'prev-tab': {
-      cycleTab(-1)
-      break
-    }
-    case 'tab-1':
-    case 'tab-2':
-    case 'tab-3':
-    case 'tab-4':
-    case 'tab-5':
-    case 'tab-6':
-    case 'tab-7':
-    case 'tab-8':
-    case 'tab-9': {
-      selectTabIndex(Number(name.slice(4)))
-      break
-    }
-    case 'reload': {
-      const view = activeView()
-      if (view) view.reload()
-      break
-    }
-    case 'hard-reload': {
-      const view = activeView()
-      if (view) {
-        view.reloadIgnoringCache()
-        setStatus('перезагрузка мимо кэша')
-      }
-      break
-    }
-    case 'focus-address':
-      addressInput?.focus()
-      addressInput?.select()
-      break
-    case 'accounts':
-      void openAccounts(true)
-      break
-    case 'templates':
-      void openTemplates()
-      break
-    case 'back': {
-      const tab = activeTab()
-      if (!tab || !canTabGoBack(tab)) break
-      noteTabHistory(tab, -1)
-      tab.view.goBack()
-      break
-    }
-    case 'forward': {
-      const tab = activeTab()
-      if (!tab || !canTabGoForward(tab)) break
-      noteTabHistory(tab, 1)
-      tab.view.goForward()
-      break
-    }
-    case 'fullscreen':
-      try {
-        isFullscreen = await window.shell.setFullscreen()
-      } catch (err) {
-        console.warn('[shell] fullscreen toggle failed:', err)
-      }
-      break
-    case 'help':
-      toggleHelp()
-      break
-    case 'print':
-      void openPrintDialog(activeTab())
-      break
-    case 'screenshot':
-      void captureActiveTabScreenshot()
-      break
-    case 'find':
-      openFind()
-      break
-    case 'zoom-in':
-      void changeZoom(1)
-      break
-    case 'zoom-out':
-      void changeZoom(-1)
-      break
-    case 'zoom-reset':
-      void changeZoom('reset')
-      break
-    case 'settings':
-      openSettings()
-      break
-    case 'escape':
-      cancelFolderPasswordPrompt()
-      if (helpOverlay && !helpOverlay.hidden) {
-        closeHelp()
-        break
-      }
-      if (addressMenu?.isOpen()) {
-        addressMenu.close()
-        break
-      }
-      if (closePrintDialogIfOpen()) {
-        break
-      }
-      if (closeShotPreviewIfOpen()) {
-        break
-      }
-      // Последним приоритетом: разделение сворачиваем, когда все панели закрыты
-      if (isSplit()) {
-        unsplit()
-        break
-      }
-      if (isGroupPanelOpen()) {
-        closeGroupPanel()
-        break
-      }
-      if (isTemplatesManageOpen()) closeTemplatesManage()
-      else if (isTemplatesOpen()) closeTemplates()
-      else if (isAccountsOpen()) closeAccounts()
-      else if (isDownloadsOpen()) closeDownloads()
-      else if (isTabsOpen()) closeTabs()
-      else if (isFindActive()) closeFind()
-      else if (isSettingsOpen()) closeSettings()
-      else if (document.activeElement === addressInput && addressInput) addressInput.blur()
-      else if (isFullscreen) {
-        isFullscreen = false
-        try {
-          await window.shell.setFullscreen(false)
-        } catch {
-          // игнорируем
-        }
-      }
-      break
-    default:
-      break
-  }
-}
-
-/** Буквы — по event.code (не зависит от раскладки клавиатуры) */
-function shortcutFromEvent(event: KeyboardEvent): ShortcutName | null {
-  const mod = event.ctrlKey || event.metaKey
-  const { key, code } = event
-  // Хоткеи вкладок — перед F5/templates, чтобы Ctrl+Shift+T остался шаблонами.
-  if (mod && !event.shiftKey && !event.altKey && /^Digit[1-9]$/.test(event.code)) {
-    return `tab-${event.code.slice(5)}` as 'tab-1'
-  }
-  if (mod && !event.shiftKey && !event.altKey && (event.code === 'KeyT' || event.key === 't')) return 'new-tab'
-  if (mod && !event.shiftKey && !event.altKey && (event.code === 'KeyW' || event.key === 'w')) return 'close-tab'
-  if (mod && (event.code === 'Tab' || event.key === 'Tab')) return event.shiftKey ? 'prev-tab' : 'next-tab'
-  if (key === 'F5') return mod ? 'hard-reload' : 'reload'
-  if (mod && code === 'KeyR') return 'reload'
-  if (mod && event.shiftKey && code === 'KeyL') return 'accounts'
-  if (mod && event.shiftKey && code === 'KeyT') return 'templates'
-  if (mod && code === 'KeyL') return 'focus-address'
-  if (mod && code === 'KeyF') return 'find'
-  if (mod && code === 'KeyP') return 'print'
-  if (mod && event.shiftKey && code === 'KeyS') return 'screenshot'
-  // Numpad: DOM-key зависит от NumLock/раскладки, поэтому ловим и по code
-  // (паритет с guestShortcutName в main, где numpad маппится явно).
-  if (mod && (key === '=' || key === '+' || code === 'NumpadAdd')) return 'zoom-in'
-  if (mod && (key === '-' || key === '_' || code === 'NumpadSubtract')) return 'zoom-out'
-  if (mod && (key === '0' || code === 'Numpad0')) return 'zoom-reset'
-  if (mod && code === 'Comma') return 'settings'
-  if (event.altKey && key === 'ArrowLeft') return 'back'
-  if (event.altKey && key === 'ArrowRight') return 'forward'
-  if (key === 'F11') return 'fullscreen'
-  if (key === 'F1' && !mod) return 'help'
-  if (key === 'Escape') return 'escape'
-  return null
-}
 
 const helpOverlay = document.getElementById('help-overlay') as HTMLElement | null
 
@@ -410,22 +225,6 @@ function wireHelp(): void {
   })
 }
 
-function wireShortcuts(): void {
-  // Шорткаты, когда фокус в shell-UI (тулбар, адресная строка).
-  // Когда фокус внутри страницы — те же имена прилетают из main-процесса
-  // через before-input-event (см. window.shell.onShortcut ниже).
-  window.addEventListener('keydown', (event: KeyboardEvent) => {
-    const name = shortcutFromEvent(event)
-    if (!name) return
-    // Esc в поле поиска обрабатывается локально в wireFindbar
-    if (isFindInput(event.target) && event.key === 'Escape') return
-    event.preventDefault()
-    void handleShortcut(name)
-  })
-  window.shell.onShortcut((name) => void handleShortcut(name))
-  // Снимок из контекстного меню main: результат прилетает событием.
-  window.shell.onScreenshotPreview((result) => openShotPreview(result))
-}
 
 function wireAddressMenu(): void {
   const popup = document.getElementById('address-menu') as HTMLElement | null
@@ -566,6 +365,14 @@ async function init(): Promise<void> {
       wireShotPreview,
     },
   )
+  initShortcuts({
+    config: () => config,
+    cancelFolderPasswordPrompt,
+    getAddressMenu: () => addressMenu,
+    isHelpOpen: () => Boolean(helpOverlay && !helpOverlay.hidden),
+    closeHelp,
+    toggleHelp,
+  })
   wireShortcuts()
   wireFindbar()
   wireErrorOverlay()
