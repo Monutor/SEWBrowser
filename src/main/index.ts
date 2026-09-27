@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ClipboardItem, Notification, globalShortcut, ipcMain, net, session, webContents, Menu, dialog, shell, clipboard } from 'electron'
 import type { Input, MenuItemConstructorOptions, WebContents } from 'electron'
 import { dirname, join, basename } from 'node:path'
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
@@ -91,6 +91,22 @@ function alertTtlSec(): number {
   if (typeof raw === 'string' && !raw.trim()) return TN_ALERT_TTL_DEFAULT_SEC
   const n = Math.floor(Number(raw))
   return Number.isFinite(n) && n >= 0 ? n : TN_ALERT_TTL_DEFAULT_SEC
+}
+
+/**
+ * Папка сохранения файлов по умолчанию: настройка пользователя, если она
+ * существует и это каталог, иначе системные «Загрузки». Молчаливый откат —
+ * чтобы недоступная папка не ломала сохранение.
+ */
+function defaultSaveDir(): string {
+  const fallback = app.getPath('downloads')
+  const configured = getConfig().downloadsDir
+  if (!configured) return fallback
+  try {
+    return existsSync(configured) && statSync(configured).isDirectory() ? configured : fallback
+  } catch {
+    return fallback
+  }
 }
 
 /** Просит оболочку открыть URL в новой вкладке. */
@@ -307,6 +323,21 @@ function createWindow(): void {
     if (typeof text !== 'string' || !text) return false
     clipboard.writeText(text)
     return true
+  })
+  // Выбор папки сохранения файлов (окно «Загрузки»). Пустая строка в
+  // конфиге означает «системные Загрузки», поэтому сброс = пустая строка.
+  ipcMain.handle('downloads:pick-dir', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return null
+    const start = defaultSaveDir()
+    const picked = dialog.showOpenDialogSync(mainWindow, {
+      title: 'Папка сохранения файлов',
+      defaultPath: start,
+      properties: ['openDirectory', 'createDirectory'],
+    })
+    const dir = Array.isArray(picked) ? picked[0] : undefined
+    if (!dir) return null
+    saveConfig({ downloadsDir: dir })
+    return dir
   })
   // Список системных принтеров для диалога печати. Список одинаков для любого
   // webContents, поэтому гость не нужен — берём у webContents главного окна.
@@ -643,7 +674,7 @@ function createWindow(): void {
       if (!mainWindow || mainWindow.isDestroyed()) return { ok: false }
       const filePath = dialog.showSaveDialogSync(mainWindow, {
         title: 'Сохранить снимок',
-        defaultPath: join(app.getPath('downloads'), screenshotFileName()),
+        defaultPath: join(defaultSaveDir(), screenshotFileName()),
         filters: [{ name: 'PNG', extensions: ['png'] }],
       })
       if (!filePath) return { ok: false }
@@ -707,7 +738,7 @@ function createWindow(): void {
       if (!mainWindow || mainWindow.isDestroyed()) return false
       const filePath = dialog.showSaveDialogSync(mainWindow, {
         title: 'Сохранить документ',
-        defaultPath: join(app.getPath('downloads'), fileName),
+        defaultPath: join(defaultSaveDir(), fileName),
       })
       if (!filePath) return false
       try {
@@ -738,7 +769,7 @@ function createWindow(): void {
       const fileName = sanitizeFileName(name, 'sewbrowser-tabs.json', 'json')
       const filePath = dialog.showSaveDialogSync(mainWindow, {
         title: 'Сохранить вкладки',
-        defaultPath: join(app.getPath('downloads'), fileName),
+        defaultPath: join(defaultSaveDir(), fileName),
       })
       if (!filePath) return false
       try {
@@ -796,7 +827,7 @@ function createWindow(): void {
       const safeName = sanitizeFileName(doc.title, 'документ.pdf', 'pdf')
       const filePath = dialog.showSaveDialogSync(viewerWin, {
         title: 'Сохранить документ',
-        defaultPath: join(app.getPath('downloads'), safeName),
+        defaultPath: join(defaultSaveDir(), safeName),
       })
       if (!filePath) return false
       try {
@@ -1380,7 +1411,7 @@ function createWindow(): void {
       sendDownloadEvent(id, name, { type: 'started' })
       const filePath = dialog.showSaveDialogSync(mainWindow, {
         title: 'Сохранить файл',
-        defaultPath: join(app.getPath('downloads'), name),
+        defaultPath: join(defaultSaveDir(), name),
       })
       if (!filePath) {
         sendDownloadEvent(id, name, { type: 'done', ok: false, cancelled: true })
@@ -1480,7 +1511,7 @@ function createWindow(): void {
     const safeName = sanitizeFileName(name, 'файл')
     const filePath = dialog.showSaveDialogSync(mainWindow, {
       title: 'Сохранить файл',
-      defaultPath: join(app.getPath('downloads'), safeName),
+      defaultPath: join(defaultSaveDir(), safeName),
     })
     if (!filePath) {
       item.cancel()

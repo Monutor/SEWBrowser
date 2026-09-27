@@ -1858,11 +1858,53 @@ function pruneDownloads(): void {
   }
 }
 
+/**
+ * Папка сохранения файлов по умолчанию. Показываем путь или «Загрузки»,
+ * если папка не задана (= системная) либо её больше нет на диске — тогда
+ * подпись вводит в заблуждение.
+ */
+async function renderDownloadsDir(): Promise<void> {
+  const el = document.getElementById('downloads-dir')
+  if (!el) return
+  let dir = ''
+  try {
+    dir = (await window.shell.getConfig()).downloadsDir ?? ''
+  } catch (err) {
+    console.warn('[shell] failed to read downloads dir:', err)
+  }
+  el.textContent = dir || 'Загрузки (системная)'
+  el.title = dir
+}
+
+async function pickDownloadsDir(): Promise<void> {
+  try {
+    const dir = await window.shell.pickDownloadsDir()
+    if (dir) {
+      await renderDownloadsDir()
+      setStatus('папка сохранения изменена')
+    }
+  } catch (err) {
+    console.warn('[shell] failed to pick downloads dir:', err)
+  }
+}
+
+async function resetDownloadsDir(): Promise<void> {
+  try {
+    await window.shell.setConfig({ downloadsDir: '' })
+    await renderDownloadsDir()
+    setStatus('папка сохранения — системные «Загрузки»')
+  } catch (err) {
+    console.warn('[shell] failed to reset downloads dir:', err)
+  }
+}
+
 function wireDownloads(): void {
   document.getElementById('btn-downloads')?.addEventListener('click', () => void openDownloads())
   document.getElementById('downloads-close')?.addEventListener('click', closeDownloads)
   document.getElementById('downloads-clear')?.addEventListener('click', () => void clearDownloadsHistory())
   downloadsFilter?.addEventListener('change', () => renderDownloadsHistory(downloadsRecords))
+  document.getElementById('downloads-dir-pick')?.addEventListener('click', () => void pickDownloadsDir())
+  document.getElementById('downloads-dir-reset')?.addEventListener('click', () => void resetDownloadsDir())
   window.shell.onDownload((event) => {
     if (event.type === 'started') {
       downloads.set(event.id, {
@@ -2002,6 +2044,7 @@ async function openDownloads(): Promise<void> {
   downloadsOverlay.hidden = false
   downloadsOpen = true
   await refreshDownloadsHistory()
+  void renderDownloadsDir()
 }
 
 function closeDownloads(): void {

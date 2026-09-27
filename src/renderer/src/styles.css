@@ -2237,6 +2237,17 @@ body {
   font-size: 12px;
 }
 
+/* Строка «папка сохранения»: подпись + кнопки в одну линию, путь с переносом */
+.downloads-dir-row {
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.downloads-dir-row #downloads-dir {
+  word-break: break-all;
+}
+
 .download-row {
   display: flex;
   align-items: center;

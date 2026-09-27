@@ -170,6 +170,7 @@ interface ShellConfig {
   plugins: Record<string, boolean>
   zoom: Record<string, number>
   print?: PrintSettings
+  downloadsDir?: string
   clearOnExit: 'none' | 'cache' | 'all'
   tabs: NavTab[]
   folders: NavFolder[]
@@ -421,6 +422,8 @@ interface ShellApi {
   onMenuAction(cb: (action: string) => void): void
   /** Копирование текста в системный буфер обмена (меню адреса) */
   copyText(text: string): Promise<boolean>
+  /** Выбор папки сохранения файлов; null — отмена */
+  pickDownloadsDir(): Promise<string | null>
   /** Принтеры системы (список одинаков для всех webContents) */
   listPrinters(): Promise<ShellPrinter[]>
   /** ПКМ по странице → «Печать…»: main шлёт 'shell:open-print' */

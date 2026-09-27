@@ -67,6 +67,8 @@ export interface SewConfig {
    zoom: Record<string, number>;
    /** Настройки диалога печати; undefined — ещё не печатали (renderer ставит дефолты) */
    print?: PrintSettings;
+  /** Папка сохранения файлов по умолчанию; пустая строка — системная «Загрузки» */
+  downloadsDir?: string;
    /** Автоочистка при выходе: 'none' | 'cache' (только HTTP-кэш) | 'all' (кэш + все хранилища) */
    clearOnExit: 'none' | 'cache' | 'all';
    tabs: NavTab[];
@@ -242,6 +244,7 @@ function sanitizeConfig(user: Partial<SewConfig>): SewConfig {
     plugins: { ...DEFAULTS.plugins, ...pickBoolMap(user.plugins) },
     zoom: { ...DEFAULTS.zoom, ...pickZoom(user.zoom) },
     print: pickPrint(user.print),
+    downloadsDir: pickString(user.downloadsDir, ''),
     clearOnExit: user.clearOnExit === 'cache' || user.clearOnExit === 'all' ? user.clearOnExit : 'none',
     folders,
     tabs,
@@ -265,6 +268,11 @@ export function saveConfig(partial: Partial<SewConfig>): SewConfig {
   // Явный print: undefined в патче не должен затирать настройки печати в файле
   if ('print' in validPartial && (!validPartial.print || typeof validPartial.print !== 'object' || Array.isArray(validPartial.print))) {
     delete validPartial.print
+  }
+  // Пустая строка — валидное значение («системные Загрузки»), поэтому чистим
+  // только не-строки, а не пустые.
+  if ('downloadsDir' in validPartial && typeof validPartial.downloadsDir !== 'string') {
+    delete validPartial.downloadsDir
   }
   const merged: Partial<SewConfig> = {
     ...current,
