@@ -63,6 +63,7 @@ import {
 } from './guest'
 import { normalizeUrl, hostOf, isAllowed as isAllowedUrl, resolveTasksUrl, formatSize, errText, withTimeout, formatDateTime } from './util'
 import { captureActiveTabScreenshot, closeShotPreviewIfOpen, openShotPreview, playShutterClick, wireShotPreview } from './screenshot'
+import { initSettings, wireSettings, openSettings, closeSettings, isSettingsOpen, settingsOverlayEl, type SettingsDeps } from './settings-overlay'
 import {
   TN_ALERT_TTL_DEFAULT_SEC,
   initBridges,
@@ -153,26 +154,6 @@ const errorOverlay = document.getElementById('error-overlay') as HTMLElement | n
 const errorText = document.getElementById('error-text') as HTMLElement | null
 
 // Настройки
-const settingsOverlay = document.getElementById('settings-overlay') as HTMLElement | null
-const setStartUrl = document.getElementById('set-starturl') as HTMLInputElement | null
-const setAllowlistEnabled = document.getElementById('set-allowlist-enabled') as HTMLInputElement | null
-const setAllowlist = document.getElementById('set-allowlist') as HTMLTextAreaElement | null
-const setPlugins = document.getElementById('set-plugins') as HTMLElement | null
-const setTnObjectId = document.getElementById('set-tn-objectid') as HTMLInputElement | null
-const setTnInterval = document.getElementById('set-tn-interval') as HTMLInputElement | null
-const setTnAlertTtl = document.getElementById('set-tn-alert-ttl') as HTMLInputElement | null
-const setTnSound = document.getElementById('set-tn-sound') as HTMLInputElement | null
-const setTnSoundName = document.getElementById('set-tn-sound-name') as HTMLElement | null
-const setTnSoundHoName = document.getElementById('set-tn-sound-ho-name') as HTMLElement | null
-const setStorageUsage = document.getElementById('set-storage-usage') as HTMLElement | null
-const setCookies = document.getElementById('set-cookies') as HTMLElement | null
-const setClearOnExit = document.getElementById('set-clear-on-exit') as HTMLSelectElement | null
-const setScannerApp = document.getElementById('set-scanner-app') as HTMLInputElement | null
-const setScannerArgs = document.getElementById('set-scanner-args') as HTMLInputElement | null
-const setScannerAppBrowse = document.getElementById('set-scanner-app-browse') as HTMLButtonElement | null
-const setScanFolderAdd = document.getElementById('set-scan-folder-add') as HTMLButtonElement | null
-const setScanFoldersList = document.getElementById('set-scan-folders') as HTMLElement | null
-
 // Загрузки
 const downloadsEl = document.getElementById('downloads') as HTMLElement | null
 const downloadsOverlay = document.getElementById('downloads-overlay') as HTMLElement | null
@@ -242,394 +223,8 @@ let isFullscreen = false
 
 // ---------- Оверлей ошибки сети ----------
 
-/** Настройки tasks-notify из plugin-data (тот же ключ 'settings', что читает гость каждый тик) */
-async function loadTnSettings(): Promise<void> {
-  try {
-    const data = await window.shell.pluginDataGet('tasks-notify', ['settings'])
-    const s = (data?.settings ?? {}) as { objectId?: unknown; intervalSec?: unknown; alertTtlSec?: unknown; sound?: unknown; soundFile?: unknown; soundName?: unknown; soundFileHo?: unknown; soundNameHo?: unknown }
-    if (setTnObjectId) setTnObjectId.value = typeof s.objectId === 'string' && s.objectId ? s.objectId : 'S187'
-    if (setTnInterval) {
-      setTnInterval.value = String(
-        typeof s.intervalSec === 'number' && s.intervalSec >= 15 ? Math.floor(s.intervalSec) : 60,
-      )
-    }
-    if (setTnAlertTtl) setTnAlertTtl.value = String(normalizeTnAlertTtl(s.alertTtlSec))
-    if (setTnSound) setTnSound.checked = s.sound !== false
-    setTnSoundFiles(
-      typeof s.soundFile === 'string' ? s.soundFile : '',
-      typeof s.soundFileHo === 'string' ? s.soundFileHo : '',
-    )
-    if (setTnSoundName) {
-      setTnSoundName.textContent =
-        tnSoundFile('rel') && typeof s.soundName === 'string' && s.soundName ? s.soundName : 'Стандартный звук'
-    }
-    if (setTnSoundHoName) {
-      setTnSoundHoName.textContent =
-        tnSoundFile('ho') && typeof s.soundNameHo === 'string' && s.soundNameHo ? s.soundNameHo : 'Стандартный звук'
-    }
-  } catch (err) {
-    console.warn('[shell] failed to load tasks-notify settings:', err)
-  }
-}
 
-function openSettings(): void {
-  if (!config || !settingsOverlay) return
-  if (setStartUrl) setStartUrl.value = config.startUrl
-  if (setAllowlistEnabled) setAllowlistEnabled.checked = config.allowlistEnabled
-  if (setAllowlist) setAllowlist.value = config.allowlist.join('\n')
-  if (setPlugins) {
-    setPlugins.innerHTML = ''
-    // Показываем ВСЕ плагины (включая выключенные), иначе выключенный
-    // пропадал из списка и его нельзя было включить обратно.
-    const list = allPlugins.length > 0 ? allPlugins : plugins.map((p) => ({ name: p.name, enabled: true }))
-    for (const plugin of list) {
-      const label = document.createElement('label')
-      const checkbox = document.createElement('input')
-      checkbox.type = 'checkbox'
-      checkbox.dataset.plugin = plugin.name
-      checkbox.checked = config.plugins[plugin.name] ?? plugin.enabled ?? true
-      label.append(checkbox, document.createTextNode(plugin.name))
-      setPlugins.append(label)
-    }
-    if (list.length === 0) {
-      const empty = document.createElement('span')
-      empty.textContent = 'Нет загруженных плагинов'
-      setPlugins.append(empty)
-    }
-  }
-  if (setClearOnExit) setClearOnExit.value = config.clearOnExit
-  void loadTnSettings()
-  if (setScannerApp) setScannerApp.value = config.scannerAppPath ?? ''
-  if (setScannerArgs) setScannerArgs.value = (config as ShellConfig).scannerAppArgs ?? ''
-  void renderScanFolders()
-  settingsOverlay.hidden = false
-  void refreshStoragePanel()
-}
 
-function closeSettings(): void {
-  if (settingsOverlay) settingsOverlay.hidden = true
-}
-
-async function saveSettings(): Promise<void> {
-  if (!config) return
-  const pluginChecks = setPlugins?.querySelectorAll<HTMLInputElement>('input[data-plugin]') ?? []
-  const pluginStates: Record<string, boolean> = {}
-  pluginChecks.forEach((checkbox) => {
-    const name = checkbox.dataset.plugin
-    if (name) pluginStates[name] = checkbox.checked
-  })
-  const patch: Partial<ShellConfig> = {
-    startUrl: normalizeUrl(setStartUrl?.value ?? '') || config.startUrl,
-    allowlistEnabled: setAllowlistEnabled?.checked ?? config.allowlistEnabled,
-    allowlist: (setAllowlist?.value ?? '')
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean),
-    plugins: pluginStates,
-    clearOnExit: (setClearOnExit?.value as ShellConfig['clearOnExit']) ?? config.clearOnExit,
-    scannerAppPath: setScannerApp?.value.trim() ?? config.scannerAppPath,
-    scannerAppArgs: setScannerArgs?.value.trim() ?? (config as ShellConfig).scannerAppArgs ?? '',
-  }
-  try {
-    const oldStartUrl = config.startUrl
-    config = await window.shell.setConfig(patch)
-    // Настройки tasks-notify — в plugin-data плагина; гость подхватит со следующего тика.
-    // Пишем отдельно: их падение не отменяет уже сохранённый основной конфиг.
-    try {
-      const tnInterval = Math.floor(Number(setTnInterval?.value))
-      const tnAlertTtl = normalizeTnAlertTtl(setTnAlertTtl?.value)
-      await window.shell.pluginDataSet('tasks-notify', {
-        settings: {
-          objectId: setTnObjectId?.value.trim() || 'S187',
-          intervalSec: Number.isFinite(tnInterval) && tnInterval >= 15 ? tnInterval : 60,
-          alertTtlSec: tnAlertTtl,
-          sound: setTnSound?.checked !== false,
-          soundFile: tnSoundFile('rel'),
-          soundName: setTnSoundName?.textContent ?? '',
-          soundFileHo: tnSoundFile('ho'),
-          soundNameHo: setTnSoundHoName?.textContent ?? '',
-        },
-      })
-    } catch (tnErr) {
-      console.warn('[shell] failed to save tasks-notify settings:', tnErr)
-      setStatus('настройки сохранены, но настройки уведомлений — нет')
-      return
-    }
-    closeSettings()
-    setStatus('настройки сохранены')
-    if (config.startUrl !== oldStartUrl) {
-      if (addressInput) addressInput.value = config.startUrl
-      void navigate(config.startUrl)
-    }
-  } catch (err) {
-    console.warn('[shell] failed to save settings:', err)
-    setStatus('не удалось сохранить настройки')
-  }
-}
-
-async function clearSessionAndLogout(): Promise<void> {
-  if (!window.confirm('Очистить все данные сессии (куки, кэш, хранилища) и выйти из SEW?')) return
-  try {
-    await window.shell.clearSession()
-    closeSettings()
-    // Сессия общая для всего окна — перезагружаем ВСЕ вкладки, иначе неактивные
-    // продолжают рендерить залогиненную SEW до ручного F5.
-    for (const tab of listTabs()) {
-      try {
-        tab.view.reload()
-      } catch (err) {
-        console.warn('[shell] tab reload failed:', err)
-      }
-    }
-    setStatus('сессия очищена')
-  } catch (err) {
-    console.warn('[shell] failed to clear session:', err)
-    setStatus('не удалось очистить сессию')
-  }
-}
-
-async function renderScanFolders(): Promise<void> {
-  if (!setScanFoldersList) return
-  setScanFoldersList.innerHTML = ''
-  const folders = config?.scanFolders ?? []
-  if (folders.length === 0) {
-    const empty = document.createElement('div')
-    empty.className = 'scan-folder-empty'
-    empty.textContent = 'Папки не добавлены — нажмите «Добавить папку»'
-    setScanFoldersList.append(empty)
-    return
-  }
-  for (const folder of folders) {
-    const row = document.createElement('div')
-    row.className = 'scan-folder-row'
-    const pathEl = document.createElement('div')
-    pathEl.className = 'scan-folder-path'
-    pathEl.textContent = folder.path
-    pathEl.title = folder.path
-    const removeBtn = document.createElement('button')
-    removeBtn.type = 'button'
-    removeBtn.className = 'scan-folder-remove'
-    removeBtn.textContent = '✕'
-    removeBtn.title = 'Удалить папку'
-    removeBtn.setAttribute('aria-label', `Удалить папку ${folder.path}`)
-    removeBtn.addEventListener('click', async () => {
-      if (!window.confirm(`Удалить папку со сканами ${folder.path}?`)) return
-      const next = (config?.scanFolders ?? []).filter((f) => f.id !== folder.id)
-      config = await window.shell.setConfig({ scanFolders: next })
-      void renderScanFolders()
-    })
-    row.append(pathEl, removeBtn)
-    setScanFoldersList.append(row)
-  }
-}
-
-function wireSettings(): void {
-  document.getElementById('btn-settings')?.addEventListener('click', openSettings)
-  document.getElementById('set-save')?.addEventListener('click', () => void saveSettings())
-  document.getElementById('set-cancel')?.addEventListener('click', closeSettings)
-  document.getElementById('set-scanner-app-browse')?.addEventListener('click', async () => {
-    try {
-      const path = await window.shell.browseScannerApp()
-      if (path && setScannerApp) setScannerApp.value = path
-    } catch (err) {
-      console.warn('[shell] scans:browse-app failed:', err)
-    }
-  })
-  document.getElementById('set-scan-folder-add')?.addEventListener('click', async () => {
-    try {
-      const path = await window.shell.browseScanFolder()
-      if (!path) return
-      const current = config?.scanFolders ?? []
-      if (current.some((f) => f.path.toLowerCase() === path.toLowerCase())) {
-        setStatus('папка уже добавлена')
-        return
-      }
-      config = await window.shell.setConfig({ scanFolders: [...current, { path }] })
-      void renderScanFolders()
-    } catch (err) {
-      console.warn('[shell] scans:browse-folder failed:', err)
-    }
-  })
-  const wireTnSoundSlot = (
-    slot: 'rel' | 'ho',
-    pickId: string,
-    previewId: string,
-    resetId: string,
-    nameEl: HTMLElement | null,
-    setFile: (v: string) => void,
-  ): void => {
-    document.getElementById(pickId)?.addEventListener('click', async () => {
-      try {
-        const picked = await window.shell.pickSound(slot)
-        if (!picked) return
-        setFile(picked.file)
-        resetTnCustomAudio(slot)
-        if (nameEl) nameEl.textContent = picked.name
-      } catch (err) {
-        console.warn('[shell] sound:pick failed:', err)
-      }
-    })
-    document.getElementById(previewId)?.addEventListener('click', () => {
-      void playTnSound(slot)
-    })
-    document.getElementById(resetId)?.addEventListener('click', async () => {
-      try {
-        await window.shell.clearSound(slot)
-      } catch (err) {
-        console.warn('[shell] sound:clear failed:', err)
-      }
-      setFile('')
-      resetTnCustomAudio(slot)
-      if (nameEl) nameEl.textContent = 'Стандартный звук'
-    })
-  }
-  wireTnSoundSlot('rel', 'set-tn-sound-pick', 'set-tn-sound-preview', 'set-tn-sound-reset', setTnSoundName,
-    (v) => setTnSoundFile('rel', v))
-  wireTnSoundSlot('ho', 'set-tn-sound-ho-pick', 'set-tn-sound-ho-preview', 'set-tn-sound-ho-reset', setTnSoundHoName,
-    (v) => setTnSoundFile('ho', v))
-  document.getElementById('set-clear-session')?.addEventListener('click', () => void clearSessionAndLogout())
-  document.getElementById('set-reload-app')?.addEventListener('click', () => {
-    // Ручная проверка обновлений на GitHub. Если версия есть — покажется
-    // updatebar «Доступно обновление», если нет — тост «у вас последняя версия».
-    closeSettings()
-    checkForUpdatesManually()
-  })
-  document
-    .getElementById('set-clear-cache')
-    ?.addEventListener('click', () => void clearStorageTarget('cache'))
-  document
-    .getElementById('set-clear-cookies')
-    ?.addEventListener('click', () => void clearStorageTarget('cookies'))
-  document.getElementById('acc-add')?.addEventListener('click', () => openAccountForm())
-  document.getElementById('acc-save')?.addEventListener('click', () => void saveAccountForm())
-  document.getElementById('acc-cancel')?.addEventListener('click', closeAccountForm)
-  document.getElementById('acc-eye')?.addEventListener('click', (event) => {
-    if (!accPassword) return
-    const show = accPassword.type === 'password'
-    accPassword.type = show ? 'text' : 'password'
-    ;(event.target as HTMLElement).innerHTML = show ? '&#128064;' : '&#128065;'
-  })
-  document.getElementById('accounts-cancel')?.addEventListener('click', closeAccounts)
-  setStartUrl?.addEventListener('keydown', (event: KeyboardEvent) => {
-    if (event.key === 'Enter') void saveSettings()
-  })
-}
-
-// ---------- Хранилище: использование, куки, выборочная очистка ----------
-
-function renderCookies(cookies: CookieInfo[]): void {
-  if (!setCookies) return
-  setCookies.innerHTML = ''
-  if (cookies.length === 0) {
-    const empty = document.createElement('span')
-    empty.textContent = 'Нет куки'
-    setCookies.append(empty)
-    return
-  }
-  for (const cookie of cookies) {
-    const row = document.createElement('div')
-    row.className = 'cookie-row'
-    const expiry = cookie.session
-      ? 'сессионная'
-      : cookie.expirationDate
-        ? new Date(cookie.expirationDate * 1000).toLocaleDateString('ru-RU')
-        : '—'
-    const info = document.createElement('span')
-    info.textContent =
-      `${cookie.name} @ ${cookie.domain} · ${expiry} · ${formatSize(cookie.size)}` +
-      `${cookie.httpOnly ? ' · httpOnly' : ''}`
-    info.title = `Путь: ${cookie.path}${cookie.secure ? ' · secure' : ''}`
-    const del = document.createElement('button')
-    del.textContent = '✕'
-    del.title = `Удалить куку ${cookie.name}`
-    del.addEventListener('click', () => void removeCookie(cookie))
-    row.append(info, del)
-    setCookies.append(row)
-  }
-}
-
-/** IPC с таймаутом: зависший вызов превращается в читаемую ошибку, а не вечное «считаем…» */
-async function refreshStoragePanel(): Promise<void> {
-  if (setStorageUsage) setStorageUsage.textContent = 'считаем…'
-  try {
-    // Запросы независимы: показываем то, что прочиталось, и точный текст ошибки того, что нет
-    const [usageRes, cookiesRes] = await Promise.allSettled([
-      withTimeout(window.shell.getStorageUsage(), 10000, 'кэша'),
-      withTimeout(window.shell.listCookies(), 10000, 'куки'),
-    ])
-    const parts: string[] = []
-    if (usageRes.status === 'fulfilled' && typeof usageRes.value?.cacheBytes === 'number') {
-      parts.push(`HTTP-кэш: ${formatSize(usageRes.value.cacheBytes)}`)
-    } else {
-      const reason = usageRes.status === 'rejected' ? usageRes.reason : new Error('нет данных')
-      console.warn('[shell] storage usage failed:', reason)
-      parts.push(`кэш: ошибка (${errText(reason)})`)
-    }
-    if (cookiesRes.status === 'fulfilled' && Array.isArray(cookiesRes.value)) {
-      parts.push(`куки: ${cookiesRes.value.length} шт`)
-      renderCookies(cookiesRes.value)
-    } else {
-      const reason =
-        cookiesRes.status === 'rejected' ? cookiesRes.reason : new Error('нет данных')
-      console.warn('[shell] cookies list failed:', reason)
-      parts.push(`куки: ошибка (${errText(reason)})`)
-      renderCookies([])
-    }
-    const tab = activeTab()
-    if (tab) {
-      try {
-        const estimate = (await guestJS<{ usage: number } | null>(
-          tab,
-          'storage-estimate',
-          'navigator.storage && navigator.storage.estimate ' +
-            '? navigator.storage.estimate().then((e) => ({ usage: e.usage ?? 0 })).catch(() => null) ' +
-            ': Promise.resolve(null)',
-        ))
-        if (estimate) parts.push(`данные сайта: ${formatSize(estimate.usage)}`)
-      } catch {
-        // страница не готова — показываем без данных сайта
-      }
-    }
-    if (setStorageUsage) setStorageUsage.textContent = parts.join(' · ')
-  } catch (err) {
-    console.warn('[shell] storage panel refresh failed:', err)
-    if (setStorageUsage) setStorageUsage.textContent = `не удалось прочитать: ${errText(err)}`
-  }
-}
-
-async function removeCookie(cookie: CookieInfo): Promise<void> {
-  try {
-    await window.shell.removeCookie(cookie)
-    await refreshStoragePanel()
-  } catch (err) {
-    console.warn('[shell] remove cookie failed:', err)
-  }
-}
-
-async function clearStorageTarget(target: 'cache' | 'cookies'): Promise<void> {
-  if (target === 'cookies' && !window.confirm('Очистить все куки? Придётся заново войти в SEW.')) {
-    return
-  }
-  try {
-    await window.shell.clearStorage(target)
-    if (target === 'cookies') {
-      // Куки общие для всего окна — перезагружаем ВСЕ вкладки, иначе неактивные
-      // продолжают рендерить залогиненную SEW до ручного F5.
-      for (const tab of listTabs()) {
-        try {
-          tab.view.reload()
-        } catch (err) {
-          console.warn('[shell] tab reload failed:', err)
-        }
-      }
-    }
-    await refreshStoragePanel()
-    setStatus(target === 'cache' ? 'кэш очищен' : 'куки очищены')
-  } catch (err) {
-    console.warn('[shell] clear storage failed:', err)
-    setStatus('не удалось очистить')
-  }
-}
 
 // ---------- Аккаунты SEW ----------
 
@@ -766,6 +361,19 @@ function closeAccounts(): void {
   accountsOpen = false
   closeAccountForm()
   if (accountsOverlay) accountsOverlay.hidden = true
+}
+
+function wireAccounts(): void {
+  document.getElementById('acc-add')?.addEventListener('click', () => openAccountForm())
+  document.getElementById('acc-save')?.addEventListener('click', () => void saveAccountForm())
+  document.getElementById('acc-cancel')?.addEventListener('click', closeAccountForm)
+  document.getElementById('acc-eye')?.addEventListener('click', (event) => {
+    if (!accPassword) return
+    const show = accPassword.type === 'password'
+    accPassword.type = show ? 'text' : 'password'
+    ;(event.target as HTMLElement).innerHTML = show ? '&#128064;' : '&#128065;'
+  })
+  document.getElementById('accounts-cancel')?.addEventListener('click', closeAccounts)
 }
 
 /** Есть ли на странице видимое поле пароля (форма входа)? */
@@ -1269,7 +877,7 @@ async function handleShortcut(name: string): Promise<void> {
       else if (downloadsOpen) closeDownloads()
       else if (tabsOpen) closeTabs()
       else if (isFindActive()) closeFind()
-      else if (settingsOverlay && !settingsOverlay.hidden) closeSettings()
+      else if (isSettingsOpen()) closeSettings()
       else if (document.activeElement === addressInput && addressInput) addressInput.blur()
       else if (isFullscreen) {
         isFullscreen = false
@@ -2325,7 +1933,7 @@ function wireTemplates(): void {
 // Клик строго по фону оверлея (мимо карточки) закрывает модалку
 function wireOverlayDismiss(): void {
   const pairs: Array<[HTMLElement | null, () => void]> = [
-    [settingsOverlay, closeSettings],
+    [settingsOverlayEl(), closeSettings],
     [accountsOverlay, closeAccounts],
     [downloadsOverlay, closeDownloads],
     [tabsOverlay, closeTabs],
@@ -2407,7 +2015,21 @@ async function init(): Promise<void> {
   wireShortcuts()
   wireFindbar()
   wireErrorOverlay()
+  initSettings({
+    config: () => config,
+    setConfig: async (patch) => {
+      config = await window.shell.setConfig(patch)
+      return config
+    },
+    plugins: () => plugins,
+    allPlugins: () => allPlugins,
+    gotoStartUrl: (url) => {
+      if (addressInput) addressInput.value = url
+      void navigate(url)
+    },
+  })
   wireSettings()
+  wireAccounts()
   wireDownloads()
   wireHelp()
   wireTemplates()
