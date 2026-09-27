@@ -32,10 +32,22 @@ src/preload/index.ts    — contextBridge: window.shell (getConfig/getPlugins/ge
 src/renderer/index.html — вся разметка оболочки: тулбар, tabstrip, лента ссылок,
                           и ВСЕ оверлеи (settings/downloads/accounts/templates/print/
                           shot/help/password-prompt) — каждый `<div hidden>` + карточка
-src/renderer/src/main.ts       — монолит: весь DOM-glue оболочки (~4200 строк)
-src/renderer/src/<name>.ts     — вынесенные модули с логикой: address-menu, print-dialog,
-                                  print-preview, shot-preview, task-alert, tabs
-src/renderer/src/tabs-core.ts  — чистые функции вкладок (тестируются без DOM)
+src/renderer/src/main.ts       — ТОЛЬКО сборка: DOM-ссылки, состояние config/plugins,
+                              обёртки (isAllowed/tasksUrl/prompt*), wireAddressMenu,
+                              wireOverlayDismiss, applyAppVersion и init() (~380 строк)
+src/renderer/src/<name>.ts     — модули оболочки, каждый владеет своим DOM и состоянием.
+                              Правило: модули НЕ импортируют друг друга, только через
+                              deps-объект, переданный из main.ts (иначе циклический импорт).
+                              Слои:
+                                низ:      util, status-ui, guest, tabs-core, tabs,
+                                          tabs-file, findbar, updatebar, folder-prompt
+                                DOM-фичи: screenshot, print-bridge, toolbar, address-bar,
+                                          tab-events, bridges, shortcuts(-core),
+                                          nav-store, link-strip, tabs-overlay
+                                оверлеи:  settings-overlay, downloads-overlay,
+                                          accounts-overlay, templates-overlay, help-overlay
+                                фабрики:  address-menu, print-dialog, print-preview,
+                                          shot-preview, task-alert
 src/renderer/src/shell-api.d.ts — ambient-типы (НЕ модуль: без export!)
 features/<name>/       — плагины: manifest.json {name,version,description,renderer:[…]} + JS,
                           инжектится в страницу гостя (identity, scans-block, sew-helper,
@@ -49,7 +61,7 @@ docs/                  — планы/спеки superpowers, в .gitignore (н�
 - `npm run dev:watch` — разработка. **Всегда он, не `dev`**: main/preload без watch
   остаются старыми → `No handler registered for ...`. Renderer через HMR свежий.
 - `npm run typecheck` — оба tsconfig (node + web).
-- `npm run test` — `node --test "src/**/*.test.ts"`, 140 тестов.
+- `npm run test` — `node --test "src/**/*.test.ts"`, 186 тестов.
 - `npm run build` — сборка в `out/`.
 - `npm run package` — build + electron-builder → `release/`. **Только по явной просьбе.**
 - Ручной рестарт нужен только после `npm install` или правок `electron.vite.config.ts`.
@@ -59,8 +71,10 @@ docs/                  — планы/спеки superpowers, в .gitignore (н�
 ### Тесты
 
 - `node:test` + `node:assert/strict`, без vitest/jest, без сборки.
-- Импорты в тестах и между модулями — **с явным `.ts`**: `from './tabs-core.ts'`
-  (иначе не работает type stripping, а `allowImportingTsExtensions` это требует).
+- Импорт в **тесте и внутри тестируемого модуля** — с явным `.ts`:
+  `from './tabs-core.ts'` (иначе не работает type stripping, а
+  `allowImportingTsExtensions` это требует). Остальные импорты рендерера идут
+  **без** расширения (`'./tabs'`, `'./util'`) — их резолвит Vite.
 - Один файл: `node --test src/renderer/src/tabs-core.test.ts`.
 - Тесты только на чистой логике → выносить в `*-core.ts` / отдельный модуль, иначе
   не тестируется (DOM в node недоступен).
@@ -78,10 +92,12 @@ Allowlist по умолчанию: `*.mvideoeldorado.ru` + `kc.tech.mvideo.ru` (
 ### Хоткеи и оверлеи
 1. **Хоткей регистрируется в ТРЁХ местах**, иначе работает наполовину:
    `guestShortcutName` (src/main/index.ts — для страницы гостя), `shortcutFromEvent`
-   (src/renderer/src/main.ts — для оболочки) и union `ShortcutName`
-   (src/renderer/src/shell-api.d.ts). Плюс `case` в `handleShortcut`.
+   (src/renderer/src/shortcuts-core.ts — чистая функция, покрыта тестом) и union
+   `ShortcutName` (src/renderer/src/shell-api.d.ts). Плюс `case` в `handleShortcut`
+   (приватная функция в src/renderer/src/shortcuts.ts).
 2. **Новый оверлей обязан закрываться по `Esc`** — это цепочка `case 'escape'` в
-   `handleShortcut`: добавить своё звено в начало. Иначе оверлей не закроется.
+   `handleShortcut` (src/renderer/src/shortcuts.ts): добавить своё звено в начало.
+   Иначе оверлей не закроется.
 3. Порядок в распознавателях важен: `Ctrl+1…9` перехватывает оболочку, поэтому
    в текстовом поле гостя цифры ломаются — это ожидаемо, а не баг.
 
