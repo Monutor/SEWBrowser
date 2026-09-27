@@ -1,127 +1,169 @@
 # SEWBrowser — AI Context
 
-> Этот файл — общий промпт для любого ИИ-агента, работающего с проектом.
-> Прочитай его целиком перед началом работы.
+> Общий промпт для любого ИИ-агента, работающего с проектом. Прочитать целиком
+> перед началом работы. README в репозитории **нет** — этот файл главный источник.
 
 ## Что это за проект
 
-**SEWBrowser** — выделенная десктопная браузерная оболочка под ОДНО стороннее веб-приложение:
+Выделенная десктопная браузерная оболочка под ОДНО стороннее веб-приложение:
 `https://sew.mvideoeldorado.ru/v2/` (внутренняя система SEW, SPA).
-Открывает только его страницу + позволяет инжектить собственные фичи (как расширения браузера):
-UI-оверлеи, перехват данных страницы, хоткеи/уведомления.
+Открывает только его страницу + инжектит собственные фичи (как расширения
+браузера): оверлеи, перехват данных страницы, хоткеи, уведомления.
 
-- Только Windows (установщик NSIS через electron-builder).
-- Язык общения с пользователем: **русский**.
-- Репозиторий: `https://github.com/Monutor/SEWBrowser.git` (ветка `main`).
+- Только Windows, установщик NSIS (electron-builder).
+- Общение с пользователем и в коде UI — **русский**.
+- Репозиторий: `https://github.com/Monutor/SEWBrowser.git`, ветка `main`.
 
 ## Стек
 
-Electron 44 + TypeScript + electron-vite 5 (Vite 7) + electron-updater 6.
-Пакет апдейтера называется **`electron-updater`** (НЕ `@electron/updater` — такого пакета нет, 404).
+Electron 44.4 + TypeScript 7 + electron-vite 5 (Vite 7) + electron-builder 26 +
+electron-updater 6 + pdfjs-dist 6.
+Пакет апдейтера — **`electron-updater`** (НЕ `@electron/updater` — такого нет, 404).
 
 ## Структура
 
 ```
-src/main/            — main-процесс: окно, конфиг, загрузчик плагинов, хоткеи, autoUpdater
-src/main/config.ts   — SewConfig: startUrl, debug, allowlistEnabled, allowlist[], plugins{}
-src/main/plugins/loader.ts — читает features/<name>/manifest.json + renderer-код
-src/preload/index.ts — contextBridge: window.shell { getConfig, getPlugins, windowMin/Max/Close }
-src/renderer/        — хром оболочки: titlebar, toolbar (назад/вперёд/обновить, адресная строка), <webview>
-features/<name>/    — плагины: manifest.json { name, renderer?, hotkeys? } + JS инжектится в страницу
-electron-builder.yml — NSIS-сборка, publish provider=github owner=Monutor repo=SEWBrowser
-scripts/gen-icon.js  — генерация resources/icon.png без зависимостей
+src/main/index.ts       — main: окно, webview, хоткеи, IPC, autoUpdater, BFF-мост, allowlist
+src/main/config.ts      — SewConfig: startUrl, debug, allowlist, downloadsDir, звуки
+src/main/plugins/       — loader.ts (читает features/*), store.ts (plugin-data на диске)
+src/main/{scans,screenshot,downloads,credentials,sounds}/ — фичи main-процесса
+src/preload/index.ts    — contextBridge: window.shell (getConfig/getPlugins/getAllPlugins,
+                          pickDownloadsDir, сканы, звук, окно, …)
+src/renderer/index.html — вся разметка оболочки: тулбар, tabstrip, лента ссылок,
+                          и ВСЕ оверлеи (settings/downloads/accounts/templates/print/
+                          shot/help/password-prompt) — каждый `<div hidden>` + карточка
+src/renderer/src/main.ts       — монолит: весь DOM-glue оболочки (~4200 строк)
+src/renderer/src/<name>.ts     — вынесенные модули с логикой: address-menu, print-dialog,
+                                  print-preview, shot-preview, task-alert, tabs
+src/renderer/src/tabs-core.ts  — чистые функции вкладок (тестируются без DOM)
+src/renderer/src/shell-api.d.ts — ambient-типы (НЕ модуль: без export!)
+features/<name>/       — плагины: manifest.json {name,version,description,renderer:[…]} + JS,
+                          инжектится в страницу гостя (identity, scans-block, sew-helper,
+                          sew-pattern, tasks-notify)
+electron-builder.yml   — NSIS, publish github owner=Monutor repo=SEWBrowser
+docs/                  — планы/спеки superpowers, в .gitignore (не коммитить)
 ```
 
 ## Команды
 
-- `npm run dev:watch` — разработка (пересборка main/preload + рестарт при изменениях; renderer — Vite HMR без рестарта)
-- `npm run dev` — то же, но БЕЗ watch (main/preload требуют ручного рестарта)
-- `npm run typecheck` — оба tsconfig (node + web)
-- `npm run build` — сборка в `out/`
-- `npm run package` — build + electron-builder → `release/` (NSIS)
+- `npm run dev:watch` — разработка. **Всегда он, не `dev`**: main/preload без watch
+  остаются старыми → `No handler registered for ...`. Renderer через HMR свежий.
+- `npm run typecheck` — оба tsconfig (node + web).
+- `npm run test` — `node --test "src/**/*.test.ts"`, 140 тестов.
+- `npm run build` — сборка в `out/`.
+- `npm run package` — build + electron-builder → `release/`. **Только по явной просьбе.**
 - Ручной рестарт нужен только после `npm install` или правок `electron.vite.config.ts`.
+- Линтера и форматтера в проекте **нет** — не искать, не предлагать.
+- CI нет.
+
+### Тесты
+
+- `node:test` + `node:assert/strict`, без vitest/jest, без сборки.
+- Импорты в тестах и между модулями — **с явным `.ts`**: `from './tabs-core.ts'`
+  (иначе не работает type stripping, а `allowImportingTsExtensions` это требует).
+- Один файл: `node --test src/renderer/src/tabs-core.test.ts`.
+- Тесты только на чистой логике → выносить в `*-core.ts` / отдельный модуль, иначе
+  не тестируется (DOM в node недоступен).
+- `scripts/*.mjs` — ручные стенды для фич (звук, task-alert, tasks-notify), в npm
+  не входят, запускаются вручную `node scripts/<файл>`.
 
 ## Конфиг пользователя
 
 `%APPDATA%/SEWBrowser/config.json` мержится поверх дефолтов из `src/main/config.ts`.
-Allowlist по умолчанию: `*.mvideoeldorado.ru` + `kc.tech.mvideo.ru` (Keycloak SSO — БЕЗ него редирект-логин зацикливается).
+Allowlist по умолчанию: `*.mvideoeldorado.ru` + `kc.tech.mvideo.ru` (Keycloak SSO —
+БЕЗ него редирект-логин зацикливается).
 
 ## Ловушки (не наступать повторно)
 
-1. **`<webview>` ≠ webContents.** События ТОЛЬКО через `addEventListener` (метода `.on` нет).
-   `getURL()` (не `getCurrentURL()`), событие `did-finish-load` (не `did-finish`),
-   навигация кодом — `loadURL()`, стартовая — через атрибут `src`.
-   `will-navigate.preventDefault()` — документированный NO-OP; allowlist enforced через bounce-back
-   (в `did-navigate` на запрещённый URL → `loadURL(lastAllowedUrl)`).
-   События `new-window` у тега нет, попапы заблокированы по умолчанию.
-2. **electron-vite v5:** пустой `defineConfig({})` ничего не собирает — нужны явные секции
-   `main: {}, preload: {}, renderer: {}` (entry auto-detect работает).
-3. **Electron 44:** `new Notification({ title, body })` — один объект опций, не `(title, options)`.
-4. **TypeScript 7:** `moduleResolution` — `"bundler"`, не `"node"` (node10 удалён);
-   для CSS-импортов нужен `declare module '*.css'`.
-5. **loader.ts:** dev-путь к features — `join(__dirname, '..', '..', 'features')`
-   (`out/main` → корень проекта), packaged — `resourcesPath/features`; всегда guard через `existsSync`.
-6. Ошибка консоли `-3 (ERR_ABORTED, GUEST_VIEW_MANAGER_CALL)` при SSO-редиректе — безвредна (прерванная загрузка).
-7. `webview` официально в архитектурном churn'е у Electron — кандидат на миграцию: `WebContentsView`.
-8. **electron-builder publish.github:** ключ — `repo`, НЕ `repository` (иначе schema validation падает).
-9. **gen-icon.js:** PNG-сигнатура строго `89 50 4E 47 0D 0A 1A 0A` — с битой libvips
-   (icon-tool) падает с `VipsForeignLoad: buffer is not in a known format`, браузеры такое прощают.
-   Ошибка `7z reported error but extracted files` при сборке NSIS — некритична, если файлы извлеклись.
-10. **electron-vite dev URL:** переменная — `ELECTRON_RENDERER_URL`, НЕ `VITE_DEV_SERVER_URL`
-    (такой нет — dev молча грузит stale-билд из `out/` без HMR и зря дёргает апдейтер).
-    В `index.ts` — константа `devServerUrl`, используется и для loadURL, и для гарда апдейтера.
-11. **HTTP-кэш ≠ clearStorageData:** `session.clearStorageData()` кэш НЕ чистит —
-    для него отдельный `session.clearCache()` (а размер — `getCacheSize()`).
-    Значения куки нельзя отдавать в renderer (`cookies:list` возвращает метаданные без `value`).
-12. **Vite dev только на IPv4:** в `electron.vite.config.ts` у renderer задан
-    `server: { host: '127.0.0.1', port: 5173 }` — дефолтный `localhost` резолвится
-    в `::1`, а IPv6-loopback на части машин отрезан (EACCES от VPN/файрвола) →
-    белый экран + `ERR_CONNECTION_REFUSED` в dev.
-13. **Stale main в dev:** plain `npm run dev` main-процесс НЕ пересобирает —
-    renderer через HMR свежий, а main старый → `No handler registered for ...`.
-    Всегда `npm run dev:watch`; при такой ошибке — убить процессы и рестарт.
-14. **will-download слеп к `window.open(blob:/data:)`:** сгенерированные страницей
-    файлы через window.open НЕ вызывают will-download и молча режутся
-    setWindowOpenHandler'ом — для `blob:`/`data:` контент вытягиваем через
-    `guest.executeJavaScript(fetch → base64)` и пишем файл вручную из main
-    (`src/main/downloads/history.ts` + `downloadGuestUrl` в `index.ts`).
-15. **Пробелы в имени NSIS-артефакта ломают autoUpdater:** дефолтное имя
-    `SEWBrowser Setup X.Y.Z.exe` в `latest.yml` пишется через дефисы, а GitHub
-    при заливке переименовывает файл через точки → апдейтер получает 404.
-    В `electron-builder.yml` задан явный
-    `nsis.artifactName: "${productName}-Setup-${version}.${ext}"` — не убирать.
-16. **Гостевой fetch под CORS, main — нет:** BFF mvideo отдаёт
-    `ACAO: https://www.mvideo.ru`, из страницы SEW запрос режется CORS —
-    такие вызовы идут через мост `net:fetch` (main, `net.fetch`, куки общие
-    через default session; URL строго по `BFF_URL_RE`) + polling
-    `window.__sewHelperBffReq/Res` в `main.ts`. GitHub raw отдаёт `ACAO: *` —
-    его можно тянуть прямо из геста. Кэш картинок `mvideo:v2:*` — только
-    в памяти геста (bridge.js), НЕ в plugin-data (иначе 8 МБ раздувают JSON
-    на диске и снапшот целиком). Chrome-шим геста НЕ даёт `sendMessage` /
-    `storage.session` / `cookies` — для слияния background+content в один
-    контекст их доопределяет bridge плагина, не общий шим.
-17. **executeJavaScript клонирует completion value:** результат скрипта обязан
-    быть structured-cloneable. Голая `(function(){...})` БЕЗ вызывающих `()`
-    возвращает сам объект функции → `GUEST_VIEW_MANAGER_CALL: An object could
-    not be cloned` на КАЖДОМ тике. IIFE всегда заканчивать `})()`; для
-    диагностики достаточно вернуть константу-строку (`'"[]"'`).
+### Хоткеи и оверлеи
+1. **Хоткей регистрируется в ТРЁХ местах**, иначе работает наполовину:
+   `guestShortcutName` (src/main/index.ts — для страницы гостя), `shortcutFromEvent`
+   (src/renderer/src/main.ts — для оболочки) и union `ShortcutName`
+   (src/renderer/src/shell-api.d.ts). Плюс `case` в `handleShortcut`.
+2. **Новый оверлей обязан закрываться по `Esc`** — это цепочка `case 'escape'` в
+   `handleShortcut`: добавить своё звено в начало. Иначе оверлей не закроется.
+3. Порядок в распознавателях важен: `Ctrl+1…9` перехватывает оболочку, поэтому
+   в текстовом поле гостя цифры ломаются — это ожидаемо, а не баг.
 
-18. **`latest.yml` НЕ заливается в GitHub сам.** `npm run package` складывает
-    `release/latest.yml` локально, но НЕ прикрепляет его к релизу (без
-    `--publish always` заливки нет). Без `latest.yml` в артефактах апдейтер
-    падает с `Cannot find latest.yml in the latest release artifacts` (404) →
-    «проверка недоступна». После создания GitHub Release ОБЯЗАТЕЛЬНО прикрепить
-    `release/latest.yml` к тегу: либо `npm run package -- --publish always`,
-    либо вручную (`gh release upload vX.Y.Z release/latest.yml`).
+### `<webview>` и гость
+4. **`<webview>` ≠ webContents.** События ТОЛЬКО через `addEventListener` (метода
+   `.on` нет). `getURL()` (не `getCurrentURL()`), событие `did-finish-load`,
+   навигация кодом — `loadURL()`, стартовая — атрибут `src`. Событий `new-window`
+   у тега нет, попапы заблокированы по умолчанию.
+5. **`will-navigate.preventDefault()` — документированный NO-OP.** Allowlist
+   enforced через bounce-back: в `did-navigate` на запрещённый URL →
+   `loadURL(lastAllowedUrl)`.
+6. `webview` официально в архитектурном churn'е Electron — кандидат на миграцию
+   в `WebContentsView`. Не переписывать на `<webview>`-специфичных API без нужды.
+7. **`executeJavaScript` клонирует completion value**: результат обязан быть
+   structured-cloneable. Голая `(function(){…})` БЕЗ `()` вернёт сам объект
+   функции → `GUEST_VIEW_MANAGER_CALL: An object could not be cloned`. IIFE
+   всегда заканчивать `})()`.
+8. **will-download слеп к `window.open(blob:/data:)`** — сгенерированные страницей
+   файлы не вызывают will-download и молча режутся setWindowOpenHandler'ом. Такие
+   вытягиваем через `guest.executeJavaScript(fetch → base64)` и пишем из main
+   (`src/main/downloads/history.ts` + `downloadGuestUrl`).
+9. **`session.clearStorageData()` НЕ чистит HTTP-кэш** — для кэша `clearCache()`
+   (размер — `getCacheSize()`). Значения куки нельзя отдавать в renderer:
+   `cookies:list` возвращает только метаданные.
+10. **BFF mvideo отдаёт `ACAO: https://www.mvideo.ru`** → из страницы SEW запрос
+    режется CORS, идти через мост `net:fetch` (main, куки общие через default
+    session, URL строго по `BFF_URL_RE`) + polling `window.__sewHelperBffReq/Res`.
+    Кэш картинок `mvideo:v2:*` — только в памяти геста (bridge.js), НЕ в
+    plugin-data (иначе 8 МБ раздувают JSON на диске). Chrome-шим геста НЕ даёт
+    `sendMessage` / `storage.session` / `cookies` — их доопределяет bridge плагина.
+11. `features/` в dev — `join(__dirname, '..', '..', 'features')`, в packaged —
+    `resourcesPath/features`; всегда guard через `existsSync`.
+12. Ошибка консоли `-3 (ERR_ABORTED, GUEST_VIEW_MANAGER_CALL)` на SSO-редиректе
+    безвредна (прерванная загрузка).
+
+### Сборка и dev-сервер
+13. **electron-vite v5:** пустой `defineConfig({})` ничего не собирает — нужны
+    явные секции `main: {}`, `preload: {}`, `renderer: {}`.
+14. **Dev URL — переменная `ELECTRON_RENDERER_URL`, НЕ `VITE_DEV_SERVER_URL`**
+    (такой нет — dev молча грузит stale-билд из `out/` без HMR и зря дёргает
+    апдейтер). В `index.ts` это константа `devServerUrl`, она же гард апдейтера.
+15. **Vite dev только на IPv4:** в `electron.vite.config.ts` у renderer задано
+    `server: { host: '127.0.0.1', port: 5173 }`. `localhost` резолвится в `::1`,
+    а IPv6-loopback на части машин отрезан (EACCES от VPN/файрвола) → белый экран
+    + `ERR_CONNECTION_REFUSED`. В браузере открывать dev-страницу по
+    `http://127.0.0.1:5173`.
+16. **electron-updater:** в `electron-builder.yml` ключ `repo`, НЕ `repository`
+    (иначе schema validation падает).
+17. **Пробелы в имени NSIS-артефакта ломают autoUpdater:** дефолтное
+    `SEWBrowser Setup X.Y.Z.exe` пишется в `latest.yml` через дефисы, а GitHub
+    переименовывает файл через точки → 404. Явный
+    `nsis.artifactName: "${productName}-Setup-${version}.${ext}"` — не убирать.
+18. **`latest.yml` НЕ заливается сам.** `npm run package` кладёт его локально, но
+    без `--publish always` заливки нет. Без `latest.yml` в артефактах апдейтер
+    падает с `Cannot find latest.yml in the latest release artifacts`.
+
+### TypeScript
+19. `moduleResolution: "bundler"` (node10 удалён в TS7) +
+    `allowImportingTsExtensions: true` — отсюда импорты с `.ts` и запрет на
+    emit без tsconfig-обёртки.
+20. `declare module '*.css'` живёт в `src/renderer/src/shell-api.d.ts`; файл
+    ambient (скрипт, **без `export`**). Добавив `export` — сломаешь все
+    глобальные объявления разом.
+
+### Окружение
+21. **AdGuard (и любой локальный фильтр) ломает запуск.** Он отдаёт
+    `local.adguard.org` вместо любых заблокированных доменов, соединение упирается
+    в таймаут → белый экран по 20+ с и `net::ERR_CONNECTION_TIMED_OUT` в консоли.
+    Лечится исключением `node.exe`/`electron.exe` (и браузера) в AdGuard. Симптом
+    выглядит как наш баг, но кода AdGuard в проекте нет — проверять сначала
+    `ping`/выключенный фильтр.
 
 ## Правила работы
 
-- Отвечать пользователю на русском. Не рефакторить соседний код без просьбы.
-- Коммитить осмысленными кусками в `main` локально. Пушить (`git push`)
-  ТОЛЬКО по явной просьбе пользователя («запуш», «сделай релиз» и т.п.).
-  Исключение — шаги релиза ниже: раз пользователь попросил релиз, пуш разрешён.
-- Перед «готово» — `typecheck`, при правках сборки — `build`.
-- Демо-плагины (`overlay-demo`, `data-demo`, `hotkey-demo`) — заглушки; заменять настоящими по ТЗ пользователя.
+- Отвечать пользователю по-русски. Не рефакторить соседний код без просьбы.
+- Коммитить осмысленными кусками в `main` локально. Пушить (`git push`) ТОЛЬКО по
+  явной просьбе. Исключение: если просят сделать релиз — пуш разрешён.
+- Перед «готово» — `typecheck` + `test`, при правках сборки — `build`.
+- Не коммитить посторонние untracked-файлы (например `design-mockup.html`) и
+  `docs/` (в .gitignore). Перед `git add -A` проверять `git status`.
+- `git` ругается на `LF will be replaced by CRLF` — это норма на Windows, не
+  чинить.
 
 ## Релизы (СТРОГО)
 
@@ -129,18 +171,25 @@ Allowlist по умолчанию: `*.mvideoeldorado.ru` + `kc.tech.mvideo.ru` (
 
 ### Схема версий
 
-- **Бета:** `0.1`, `0.2`, `0.3` … → в `package.json` полный semver: `0.1.0`, `0.2.0` …
-- **Полный релиз:** `1.0`, `1.1`, `1.2` … → в `package.json`: `1.0.0`, `1.1.0` …
-- Короткая форма (`0.2`) — только для людей; в коде/тегах всегда `X.Y.Z`.
-- Бета инкрементирует minor нуля (`0.1.0` → `0.2.0`); стабильный — по semver-смыслу.
-- Тип релиза (бета/полный) определяет пользователь; если не сказал — СПРОСИТЬ.
+Текущая версия — `0.12.5`. Релизы идут как `0.X.Y`: фичи поднимают minor
+(`0.11.0` → `0.12.0`), починки — patch (`0.12.0` → `0.12.5`). Короткая форма
+(`0.13`) — только для людей; в коде и в тегах всегда `X.Y.Z`.
+**Перед релизом уточнить у пользователя, какой бамп нужен** (patch / minor) —
+не выводить из даты или вида изменений.
 
 ### Шаги релиза
 
-1. Уточнить тип (бета/полный), если не указан.
-2. Выставить версию в `package.json`, прогнать `typecheck` + `package`, убедиться что `release/` собрался.
+1. Уточнить бамп версии (patch / minor) и новую версию.
+2. Проставить версию в `package.json`, прогнать `typecheck` + `test` + `package`,
+   убедиться что `release/` собрался.
 3. Коммит бампа версии → тег `vX.Y.Z` → `git push origin main --tags`.
-4. Собрать changelog: все значимые изменения со времён предыдущего тега (`git log <prev-tag>..HEAD`).
-5. Создать GitHub Release: `gh release create vX.Y.Z release/* --title "<0.2 Beta | 1.0>" --notes "<changelog>"`.
-6. **ОБЯЗАТЕЛЬНО:** в описании релиза — раздел «Что сделано» со списком изменений. Релиз без changelog ЗАПРЕЩЁН.
-7. Кратко доложить пользователю: версия, что внутри, ссылка на Release.
+4. Собрать changelog по `git log <prev-tag>..HEAD` (учитывать merge-коммиты и
+   feat/fix по сообщениям).
+5. Создать релиз: `gh release create vX.Y.Z release/* --title "<версия>" --notes "<changelog>"`.
+6. **ОБЯЗАТЕЛЬНО** в описании релиза — раздел «Что сделано» со списком изменений.
+   Релиз без changelog ЗАПРЕЩЁН.
+7. Кратко доложить: версия, что внутри, ссылка на Release.
+
+Отдельно: старый установщик в `release/` может быть свежей версии недели назад —
+прежде чем предлагать его поставить, проверить дату сборки (`Get-Item`) и
+предупредить пользователя, что текущие правки в него не входят.
