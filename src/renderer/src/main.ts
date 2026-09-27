@@ -2314,8 +2314,8 @@ function wireAddressMenu(): void {
   }
 }
 
-/** Ширина миниатюры превью печати, px */
-const PRINT_THUMB_WIDTH = 132
+/** Ширина миниатюры превью печати, CSS-px. Должна совпадать с .print-thumb в styles.css. */
+const PRINT_THUMB_WIDTH = 210
 /** z-index оверлея печати на время показа: поднимаем выше карточки задачи
  *  (#task-alert, 100), иначе она ложится прямо на панель печати */
 const PRINT_OVERLAY_Z = 200

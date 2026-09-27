@@ -1284,8 +1284,10 @@ body {
   gap: 12px;
 }
 
-.print-thumb {
-  width: 132px;
+  .print-thumb {
+    /* Должно совпадать с PRINT_THUMB_WIDTH в main.ts: width задаёт рендер,
+       а это правило — показ в CSS-пикселях. */
+    width: 210px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 4px;

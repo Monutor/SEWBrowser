@@ -17,7 +17,11 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
 async function renderPage(doc: pdfjs.PDFDocumentProxy, pageNo: number, width: number): Promise<string> {
   const page = await doc.getPage(pageNo)
   const base = page.getViewport({ scale: 1 })
-  const scale = width / base.width
+  // Рендерим с учётом плотности экрана: width приходит в CSS-пикселях (под них
+  // же настроено .print-thumb), а растр должен быть кратнее, иначе на 125/150%
+  // Windows миниатюры мылятся. Потолок 2 — выше уже незаметно и только жрёт память.
+  const dpr = Math.min(2, Math.max(1, Math.round(globalThis.devicePixelRatio || 1)))
+  const scale = (width * dpr) / base.width
   const viewport = page.getViewport({ scale })
   const canvas = document.createElement('canvas')
   canvas.width = Math.max(1, Math.floor(viewport.width))
@@ -60,6 +64,8 @@ function nextFrame(): Promise<void> {
 /**
  * PDF → миниатюры страниц (data URL). pageCount всегда реальный, thumbs
  * ограничен limit: остальное дорисовывается по кнопке «Показать все».
+ * width — в CSS-пикселях, столько же задано в .print-thumb; растр внутри
+ * шире во столько раз, сколько devicePixelRatio (потолок 2).
  * Ошибки не бросает наружу — вызывающий покажет заглушку.
  */
 export async function renderPdfThumbnails(
