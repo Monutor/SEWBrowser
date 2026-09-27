@@ -6,6 +6,12 @@
 const HTTP_SCHEME_RE = /^https?:\/\//i
 const ANY_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i
 
+/** Предел для data:-иконки, вклеенной сайтом (64 КБ) */
+const FAVICON_DATA_MAX = 64 * 1024
+
+/** Только base64-формы data:-иконок — остальное нельзя безопасно класть в атрибут style */
+const FAVICON_DATA_RE = /^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/i
+
 /** Приводит сырой ввод к абсолютному http(s) URL. '' — открывать нечего. */
 export function normalizeTabUrl(raw: string): string {
   const value = (raw ?? '').trim()
@@ -84,4 +90,25 @@ export function extractNewTabUrls(raw: unknown): string[] {
     out.push(url)
   }
   return out
+}
+
+/**
+ * Адрес иконки вкладки из `<link rel="icon">` страницы: резолвим относительный href
+ * против адреса страницы и оставляем только http(s) (data:, blob:, javascript: в favicon
+ * не умеем — их отдаёт только сам гость).
+ */
+export function normalizeFaviconUrl(href: unknown, pageUrl: string): string {
+  if (typeof href !== 'string' || !href.trim()) return ''
+  // Картинка, вклеенная самим сайтом, идёт в <img> без похода в main. Только base64:
+  // сырые data:-URL (например svg+xml с кавычками внутри) уехали бы в атрибут style.
+  if (href.startsWith('data:')) {
+    return FAVICON_DATA_RE.test(href) && href.length <= FAVICON_DATA_MAX ? href : ''
+  }
+  try {
+    const resolved = new URL(href, pageUrl)
+    if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') return ''
+    return resolved.href
+  } catch {
+    return ''
+  }
 }

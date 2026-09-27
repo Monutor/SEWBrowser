@@ -17,6 +17,7 @@ import { renderPdfThumbnails } from './print-preview'
 import {
   hostOfTabUrl,
   extractNewTabUrls,
+  normalizeFaviconUrl,
 } from './tabs-core.ts'
 import {
   activeTab,
@@ -34,6 +35,7 @@ import {
   openTab,
   primaryTab,
   selectTabIndex,
+  setTabFavicon,
   setTabTitle,
   setTabUrl,
   type ShellTab,
@@ -2650,6 +2652,57 @@ function wireToolbar(): void {
   })
 }
 
+/**
+ * Оригинальная иконка сайта: читаем `<link rel="icon">` из гостя, картинку
+ * забирает main (оболочка CORS не обойдёт) и отдаёт готовый data-URL.
+ * Кэш по хосту: иконка у сайта одна, перерисовывать её на каждый did-navigate незачем.
+ */
+const FAVICON_CACHE_LIMIT = 200
+const faviconCache = new Map<string, string>()
+
+async function loadTabFavicon(tab: ShellTab): Promise<void> {
+  let href = ''
+  let pageUrl = ''
+  try {
+    pageUrl = tab.view.getURL()
+    // IIFE и строка на выходе: executeJavaScript клонирует значение результата
+    href = (await guestJS<string>(
+      tab,
+      'favicon-href',
+      '(function(){try{var l=document.querySelector(\'link[rel~="icon"]\');' +
+        'return l && l.href ? String(l.href) : ""}catch(e){return ""}})()',
+    )) ?? ''
+  } catch {
+    return
+  }
+  const src = normalizeFaviconUrl(href, pageUrl)
+  if (!src) {
+    setTabFavicon(tab, '')
+    return
+  }
+  // Вклеенная сайтом картинка идёт в <img> без похода в main
+  if (src.startsWith('data:')) {
+    setTabFavicon(tab, src)
+    return
+  }
+  const host = hostOfTabUrl(src) || src
+  const cached = faviconCache.get(host)
+  if (cached !== undefined) {
+    setTabFavicon(tab, cached)
+    return
+  }
+  try {
+    const data = await window.shell.fetchFavicon(src)
+    if (data) {
+      if (faviconCache.size >= FAVICON_CACHE_LIMIT) faviconCache.clear()
+      faviconCache.set(host, data)
+    }
+    setTabFavicon(tab, data ?? '')
+  } catch {
+    // иконка не критична — останется буквенный кружок
+  }
+}
+
 // События конкретной вкладки. UI трогаем только у активной, инъекция плагинов — у всех.
 function wireTabEvents(tab: ShellTab): void {
   const view = tab.view
@@ -2718,6 +2771,7 @@ function wireTabEvents(tab: ShellTab): void {
     } catch {
       // заголовок недоступен — останется хост
     }
+    void loadTabFavicon(tab)
     if (isActiveTab(tab)) updateTitlebarTitle()
     // Появилась форма входа? Предлагаем выбрать аккаунт (с паузой —
     // SPA достраивает форму уже после события загрузки)

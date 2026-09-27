@@ -22,6 +22,11 @@ export interface ShellTab {
   maxNav: number
   /** Переход, который мы сами запустили: -1 назад, 1 вперёд, 0 — нет. */
   pendingHistory: -1 | 0 | 1
+  /**
+   * Оригинальная иконка сайта как data-URL (из `<link rel="icon">`).
+   * Пустая строка — картинки нет, рисуем буквенный кружок.
+   */
+  faviconData: string
 }
 
 export interface TabsHooks {
@@ -124,6 +129,7 @@ export function openTab(rawUrl: string, opts?: { activate?: boolean }): ShellTab
     navCount: 0,
     maxNav: 0,
     pendingHistory: 0,
+    faviconData: '',
   }
   tabs.push(tab)
   o.container.appendChild(view)
@@ -217,6 +223,17 @@ export function setTabUrl(tab: ShellTab, url: string): void {
 export function setTabTitle(tab: ShellTab, pageTitle: string): void {
   if (!tabs.includes(tab)) return
   tab.title = tabTitle(pageTitle, tab.url)
+  renderTabBar()
+}
+
+/**
+ * Оригинальная иконка сайта (data-URL из `<link rel="icon">`). Пустая строка —
+ * иконки нет: возвращаемся к буквенному кружку.
+ */
+export function setTabFavicon(tab: ShellTab, dataUrl: string): void {
+  if (!tabs.includes(tab)) return
+  if (tab.faviconData === dataUrl) return
+  tab.faviconData = dataUrl
   renderTabBar()
 }
 
@@ -330,8 +347,14 @@ function updateTabButton(button: HTMLButtonElement, tab: ShellTab): void {
   const fav = button.children[0]
   if (fav) {
     const icon = tabFavicon(tab.url)
-    fav.textContent = icon.letter
-    fav.setAttribute('style', `background:${icon.color}`)
+    // Оригинальная иконка сайта, если её удалось получить; иначе буква на цветном кружке
+    if (tab.faviconData) {
+      fav.textContent = ''
+      fav.setAttribute('style', `background-image:url("${tab.faviconData}")`)
+    } else {
+      fav.textContent = icon.letter
+      fav.setAttribute('style', `background:${icon.color}`)
+    }
   }
   const label = button.children[1]
   if (label) label.textContent = tab.title

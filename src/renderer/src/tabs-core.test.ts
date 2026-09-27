@@ -139,3 +139,49 @@ describe('tabFavicon', () => {
     assert.equal(tabFavicon('мусор').letter, '?')
   })
 })
+
+describe('normalizeFaviconUrl', () => {
+  const page = 'https://sew.mvideoeldorado.ru/v2/relocation/tasks'
+  it('абсолютный http(s) href остаётся как есть', async () => {
+    const { normalizeFaviconUrl } = await import('./tabs-core.ts')
+    assert.equal(
+      normalizeFaviconUrl('https://cdn.site.ru/favicon.png', page),
+      'https://cdn.site.ru/favicon.png',
+    )
+  })
+  it('относительный href резолвится против адреса страницы', async () => {
+    const { normalizeFaviconUrl } = await import('./tabs-core.ts')
+    assert.equal(normalizeFaviconUrl('/favicon.ico', page), 'https://sew.mvideoeldorado.ru/favicon.ico')
+    assert.equal(normalizeFaviconUrl('assets/i.png', page), 'https://sew.mvideoeldorado.ru/v2/relocation/assets/i.png')
+  })
+  it('data:-иконка сайта проходит без изменений', async () => {
+    const { normalizeFaviconUrl } = await import('./tabs-core.ts')
+    const data = 'data:image/png;base64,iVBORw0KGgo='
+    assert.equal(normalizeFaviconUrl(data, page), data)
+  })
+  it('слишком длинная data:-иконка отбрасывается', async () => {
+    const { normalizeFaviconUrl } = await import('./tabs-core.ts')
+    const huge = `data:image/png;base64,${'A'.repeat(70 * 1024)}`
+    assert.equal(normalizeFaviconUrl(huge, page), '')
+  })
+  it('не-base64 data:-иконка отбрасывается (кавычки сломали бы style)', async () => {
+    const { normalizeFaviconUrl } = await import('./tabs-core.ts')
+    assert.equal(normalizeFaviconUrl('data:image/svg+xml,<svg fill="red"></svg>', page), '')
+    assert.equal(normalizeFaviconUrl('data:text/html,<b>x</b>', page), '')
+  })
+  it('не-http схемы и мусор отбрасываются', async () => {
+    const { normalizeFaviconUrl } = await import('./tabs-core.ts')
+    assert.equal(normalizeFaviconUrl('javascript:alert(1)', page), '')
+    assert.equal(normalizeFaviconUrl('blob:https://site.ru/abc', page), '')
+    assert.equal(normalizeFaviconUrl('', page), '')
+    assert.equal(normalizeFaviconUrl('   ', page), '')
+    assert.equal(normalizeFaviconUrl(null, page), '')
+    assert.equal(normalizeFaviconUrl(undefined, page), '')
+  })
+  it('некорректный адрес страницы не роняет функцию, а даёт пусто', async () => {
+    const { normalizeFaviconUrl } = await import('./tabs-core.ts')
+    // new URL требует валидный base, поэтому даже абсолютный href без него не резолвится
+    assert.equal(normalizeFaviconUrl('/favicon.ico', 'не-url'), '')
+    assert.equal(normalizeFaviconUrl('https://site.ru/i.png', 'не-url'), '')
+  })
+})

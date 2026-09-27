@@ -286,6 +286,8 @@ const api = {
   /** Узкий fetch-мост для плагинов: только allowlist-URL (BFF mvideo — CORS режет из страницы) */
   netFetch: (url: string): Promise<{ ok: boolean; status: number; data: unknown }> =>
     ipcRenderer.invoke('net:fetch', url),
+  /** Иконка вкладки: main качает картинку (оболочка CORS не обойдёт) и отдаёт data-URL */
+  fetchFavicon: (url: string): Promise<string | null> => ipcRenderer.invoke('favicon:fetch', url),
    /** Уведомления tasks-notify: пачка новых заданий → OS Notification в main */
   notifyTasks: (items: { id: number; title: string; body: string; url: string }[]): Promise<boolean> =>
     ipcRenderer.invoke('notify:tasks', items),

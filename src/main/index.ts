@@ -117,6 +117,10 @@ function sanitizeFileName(raw: unknown, fallback: string, ext?: string): string 
 /** Единственные URL, доступные через fetch-мост 'net:fetch' (BFF mvideo для sew-helper) */
 const BFF_URL_RE = /^https:\/\/www\.mvideo\.ru\/(bff\/product-details\?productId=[\w-]+|products\/[\w-]+)\/?$/
 
+/** Иконка вкладки: допустимые mime и предел размера (крупные картинки не грузим) */
+const FAVICON_MIME_RE = /^image\/(png|jpeg|jpg|gif|webp|svg\+xml|x-icon|vnd\.microsoft\.icon|ico)$/
+const FAVICON_MAX_BYTES = 256 * 1024
+
 /** Серверная копия allowlist-проверки (renderer делает то же самое локально) */
 function isAllowedUrl(url: string): boolean {
   const config = getConfig()
@@ -437,6 +441,22 @@ function createWindow(): void {
       return { ok: res.ok, status: res.status, data }
     } catch {
       return { ok: false, status: 0, data: null }
+    }
+  })
+  // Иконка вкладки: renderer не может забрать картинку с чужого хоста (CORS),
+  // поэтому качаем в main через net.fetch и отдаём готовый data-URL.
+  ipcMain.handle('favicon:fetch', async (_event, url: unknown) => {
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return null
+    try {
+      const res = await net.fetch(url)
+      const mime = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase()
+      if (!res.ok || !FAVICON_MIME_RE.test(mime)) return null
+      const buf = Buffer.from(await res.arrayBuffer())
+      if (buf.length === 0 || buf.length > FAVICON_MAX_BYTES) return null
+      return `data:${mime};base64,${buf.toString('base64')}`
+    } catch (err) {
+      console.warn('[shell] favicon fetch failed:', err)
+      return null
     }
   })
   // HTTP-кэш НЕ входит в clearStorageData — для него отдельный clearCache().
