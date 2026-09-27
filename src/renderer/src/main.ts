@@ -2,6 +2,19 @@ import './styles.css'
 import { createTaskAlert, formatTaskAlertText, getTaskAlertUrls } from './task-alert'
 import { createAddressMenu, type AddressMenuController } from './address-menu'
 import {
+  bytesToBase64,
+  createPrintDialog,
+  normalizePrintSettings,
+  PRINT_PAPER_NAMES,
+  printOptions,
+  printToPdfOptions,
+  suggestedPdfName,
+  type PrintDialogController,
+  type PrintDialogElements,
+  type PrintDialogHooks,
+} from './print-dialog'
+import { renderPdfThumbnails } from './print-preview'
+import {
   hostOfTabUrl,
   extractNewTabUrls,
 } from './tabs-core.ts'
@@ -29,6 +42,16 @@ import {
 const addressInput = document.getElementById('address') as HTMLInputElement | null
 /** Меню «⋮» в конце адресной строки; собирается в wireAddressMenu */
 let addressMenu: AddressMenuController | null = null
+/** Диалог печати; собирается в wirePrintDialog */
+let printDialog: PrintDialogController | null = null
+/** Debounce пересчёта превью печати (250 мс) */
+let printRefreshTimer: number | null = null
+/** Последний список принтеров от main — нужен строке «Принтер» диалога */
+let printPrinters: ShellPrinter[] = []
+/** Синхронизация нашей части диалога (строка принтера + список бумаги).
+ *  Замыкание из wirePrintDialog: контроллер эти куски не ведёт, а держит
+ *  только скрытость строки, поэтому звать его приходится из openPrintDialog */
+let printPanelSync: (() => void) | null = null
 const titlebarTitle = document.getElementById('titlebar-title') as HTMLElement | null
 const btnBack = document.getElementById('btn-back') as HTMLButtonElement | null
 const btnForward = document.getElementById('btn-forward') as HTMLButtonElement | null
@@ -2110,13 +2133,7 @@ async function handleShortcut(name: string): Promise<void> {
       }
       break
     case 'print':
-      try {
-        const view = activeView()
-        if (view) await view.print()
-      } catch (err) {
-        console.warn('[shell] print failed:', err)
-        setStatus('печать не удалась')
-      }
+      void openPrintDialog(activeTab())
       break
     case 'screenshot':
       void captureActiveTabScreenshot()
@@ -2140,6 +2157,10 @@ async function handleShortcut(name: string): Promise<void> {
       cancelFolderPasswordPrompt()
       if (addressMenu?.isOpen()) {
         addressMenu.close()
+        break
+      }
+      if (printDialog?.isOpen()) {
+        printDialog.close()
         break
       }
       if (expandedGroupId !== null) {
@@ -2276,9 +2297,7 @@ function wireAddressMenu(): void {
           .catch(() => setStatus('не удалось скопировать адрес'))
       },
       onPrint: () => {
-        const view = activeView()
-        if (!view) return
-        void view.print().catch(() => setStatus('печать недоступна'))
+        void openPrintDialog(activeTab())
       },
     },
   )
@@ -2290,8 +2309,237 @@ function wireAddressMenu(): void {
   }
 }
 
+/** Ширина миниатюры превью печати, px */
+const PRINT_THUMB_WIDTH = 132
+/** z-index оверлея печати на время показа: поднимаем выше карточки задачи
+ *  (#task-alert, 100), иначе она ложится прямо на панель печати */
+const PRINT_OVERLAY_Z = 200
+
+function printElements(): PrintDialogElements | null {
+  const get = (id: string): HTMLElement | null => document.getElementById(id)
+  const ids: Record<keyof PrintDialogElements, string> = {
+    overlay: 'print-overlay',
+    title: 'print-title',
+    destination: 'print-destination',
+    printerRow: 'print-printer-row',
+    rangeMode: 'print-range-mode',
+    rangeCustom: 'print-range-custom',
+    rangeFrom: 'print-range-from',
+    rangeTo: 'print-range-to',
+    copies: 'print-copies',
+    landscape: 'print-landscape',
+    pageSize: 'print-page-size',
+    marginTop: 'print-margin-top',
+    marginBottom: 'print-margin-bottom',
+    marginLeft: 'print-margin-left',
+    marginRight: 'print-margin-right',
+    noMargins: 'print-no-margins',
+    scale: 'print-scale',
+    printBackground: 'print-background',
+    displayHeaderFooter: 'print-header-footer',
+    thumbs: 'print-thumbs',
+    thumbsNote: 'print-thumbs-note',
+    showAll: 'print-show-all',
+    pageCounter: 'print-page-counter',
+    status: 'print-status',
+    cancel: 'print-cancel',
+    savePdf: 'print-save',
+    print: 'print-go',
+    settings: 'print-settings',
+  }
+  const out = {} as Record<keyof PrintDialogElements, HTMLElement>
+  for (const key of Object.keys(ids) as Array<keyof PrintDialogElements>) {
+    const el = get(ids[key])
+    if (!el) return null
+    out[key] = el
+  }
+  return out as PrintDialogElements
+}
+
+/** Пересчёт превью с debounce: поля меняются мышью, PDF печатать не каждый раз */
+function schedulePrintRefresh(): void {
+  if (printRefreshTimer !== null) window.clearTimeout(printRefreshTimer)
+  printRefreshTimer = window.setTimeout(() => {
+    printRefreshTimer = null
+    void printDialog?.refresh()
+  }, 250)
+}
+
+/**
+ * Единственная точка входа в диалог печати: Ctrl+P, пункт меню адреса
+ * и «Печать…» из контекстного меню гостя.
+ */
+async function openPrintDialog(tab: ShellTab | null): Promise<void> {
+  if (!tab) {
+    setStatus('нет активной вкладки')
+    return
+  }
+  if (!printDialog) {
+    setStatus('диалог печати недоступен')
+    return
+  }
+  if (printDialog.isOpen()) return
+  await printDialog.open(normalizePrintSettings(config?.print))
+  // Контроллер пересобрал «Назначение» и заполнил поля — досинхронизируем нашу
+  // часть (строка принтера, список бумаги) под фактический выбор
+  printPanelSync?.()
+}
+
+/** Заголовок документа для шапки диалога и имени PDF */
+function titleForPrint(): string {
+  try {
+    return activeView()?.getTitle() ?? ''
+  } catch {
+    return ''
+  }
+}
+
+function wirePrintDialog(): void {
+  const elements = printElements()
+  if (!elements) return
+  const view = () => activeView()
+
+  // Строка «Принтер» в разметке пустая: контроллер умеет только скрывать её,
+  // содержимое собираем здесь через DOM API (без innerHTML — текст небезопасен)
+  const printerCaption = document.createElement('span')
+  printerCaption.className = 'print-label'
+  printerCaption.textContent = 'Принтер'
+  const printerInfo = document.createElement('span')
+  printerInfo.className = 'print-label'
+  printerInfo.style.color = 'var(--text-2)'
+  elements.printerRow.replaceChildren(printerCaption, printerInfo)
+
+  const destinationSelect = elements.destination as HTMLSelectElement
+  const paperSelect = elements.pageSize as HTMLSelectElement
+
+  /** Принтер, выбранный в «Назначении»; null — PDF или принтер исчез из списка */
+  const selectedPrinter = (): ShellPrinter | null =>
+    printPrinters.find((p) => p.name === destinationSelect.value) ?? null
+
+  /**
+   * Список бумаги. В режиме принтера A6 убираем: webview.print его не понимает,
+   * и printOptions тогда молча ставит usePrinterDefaultPageSize — пользователь
+   * получил бы бумагу принтера по умолчанию вместо выбранной. Для PDF A6 доступен.
+   */
+  const paperNames = (forPrinter: boolean): PrintPageSizeName[] => {
+    // A4 первым (самый частый), остальные в порядке PRINT_PAPER_NAMES
+    const base: PrintPaperName[] = ['A4', ...PRINT_PAPER_NAMES.filter((name) => name !== 'A4')]
+    return forPrinter ? base : [...base, 'A6']
+  }
+
+  const repaintPaper = (forPrinter: boolean): void => {
+    const names = paperNames(forPrinter)
+    const previous = paperSelect.value
+    paperSelect.replaceChildren(
+      ...names.map((name) => {
+        const option = document.createElement('option')
+        option.value = name
+        option.textContent = name
+        return option
+      }),
+    )
+    // Значение могло остаться от режима PDF (A6) или от прежнего списка: пустой
+    // select выглядит как поломка, поэтому откатываемся на первый размер
+    paperSelect.value = (names as readonly string[]).includes(previous) ? previous : names[0]
+  }
+
+  const repaintPrinterRow = (): void => {
+    const printer = selectedPrinter()
+    printerInfo.textContent = printer
+      ? `${printer.displayName || printer.name}${printer.description ? ` — ${printer.description}` : ''}`
+      : 'Файл PDF, принтер не используется'
+  }
+
+  const syncPrintPanel = (): void => {
+    const forPrinter = selectedPrinter() !== null
+    repaintPaper(forPrinter)
+    repaintPrinterRow()
+  }
+  printPanelSync = syncPrintPanel
+
+  // Слои: тост (#toast, 50) во время печати только шумит под затемнением, а
+  // карточка задачи (#task-alert, 100) легла бы прямо на панель. Поэтому на
+  // время показа поднимаем оверлей над обоими, а тост гасим вместе с таймером.
+  const watchPrintLayers = (): void => {
+    const apply = (): void => {
+      const visible = !elements.overlay.hidden
+      elements.overlay.style.zIndex = visible ? String(PRINT_OVERLAY_Z) : ''
+      if (!visible || !toastEl) return
+      toastEl.hidden = true
+      if (toastTimer) {
+        clearTimeout(toastTimer)
+        toastTimer = null
+      }
+    }
+    apply()
+    // Наблюдатель, а не вызовы в точках закрытия: контроллер закрывает оверлей
+    // сам (после печати/сохранения) и отдельного хука не даёт
+    new MutationObserver(apply).observe(elements.overlay, {
+      attributes: true,
+      attributeFilter: ['hidden'],
+    })
+  }
+
+  const hooks: PrintDialogHooks = {
+    listPrinters: async () => {
+      const list = await window.shell.listPrinters()
+      // description в ShellPrinter обязателен, а из main может прийти пустым
+      printPrinters = (Array.isArray(list) ? list : []).map((p) => ({
+        name: p.name,
+        displayName: p.displayName || p.name,
+        description: p.description || p.displayName || p.name,
+      }))
+      return printPrinters
+    },
+    buildPdf: async (settings) => {
+      const target = view()
+      if (!target) throw new Error('нет активной вкладки')
+      return target.printToPDF(printToPdfOptions(settings))
+    },
+    renderThumbs: (data, limit) => renderPdfThumbnails(data, PRINT_THUMB_WIDTH, limit),
+
+    doPrint: async (settings) => {
+      const target = view()
+      if (!target) throw new Error('нет активной вкладки')
+      const pageCount = printDialog?.pageCount() ?? 0
+      const current = printDialog?.currentPage() ?? 1
+      await target.print(printOptions(settings, settings.deviceName, pageCount, current))
+    },
+    doSavePdf: async (_settings, bytes) => {
+      const name = suggestedPdfName(titleForPrint())
+      return window.shell.savePdf(bytesToBase64(bytes), name)
+    },
+    documentTitle: () => titleForPrint(),
+    persist: async (settings) => {
+      config = await window.shell.setConfig({ print: settings })
+    },
+  }
+  printDialog = createPrintDialog(elements, hooks)
+  // Любое изменение настроек пересчитывает превью
+  elements.settings.addEventListener('change', schedulePrintRefresh)
+  elements.settings.addEventListener('input', schedulePrintRefresh)
+  // Смена назначения меняет и список бумаги, и строку принтера. Слушатель висит
+  // на самом select: он сработает раньше контейнера #print-settings, значит
+  // refresh() уже прочитает исправленные значения
+  elements.destination.addEventListener('change', syncPrintPanel)
+  // «Поля: нет» проставляет значения через fill(): ни input, ни change оно не
+  // порождает, а клик по <button> их тоже не даёт — превью без refresh останется
+  // старым, поэтому зовём пересчёт явно
+  elements.noMargins.addEventListener('click', () => {
+    void printDialog?.refresh()
+  })
+  // Клик по фону оверлея закрывает диалог
+  elements.overlay.addEventListener('click', (event) => {
+    if (event.target === elements.overlay) printDialog?.close()
+  })
+  document.getElementById('print-cancel-x')?.addEventListener('click', () => printDialog?.close())
+  watchPrintLayers()
+  syncPrintPanel()
+}
+
 function wireToolbar(): void {
   wireAddressMenu()
+  wirePrintDialog()
   btnBack?.addEventListener('click', () => {
     const tab = activeTab()
     if (!tab || !canTabGoBack(tab)) return
@@ -3656,6 +3904,10 @@ async function init(): Promise<void> {
   // window.open / target=_blank из гостя: открываем отдельной вкладкой справа
   window.shell.onOpenNewTab((url) => {
     openTab(url)
+  })
+  // ПКМ по странице гостя → «Печать…»: main шлёт 'shell:open-print'
+  window.shell.onOpenPrint(() => {
+    void openPrintDialog(activeTab())
   })
 
   if (addressInput) addressInput.value = config.startUrl
