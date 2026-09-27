@@ -1216,6 +1216,13 @@ body {
   grid-column: 1 / -1;
 }
 
+/* «Поля: нет» встаёт на всю ширину блока полей и прижата вправо — иначе
+   авторазмещение сетки сдвинуло бы четыре поля вниз на лишний ряд */
+.print-margins .print-link {
+  grid-column: 1 / -1;
+  justify-self: end;
+}
+
 .print-margins label {
   display: flex;
   align-items: center;

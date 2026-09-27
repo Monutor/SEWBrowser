@@ -212,10 +212,7 @@
             <span class="print-label">Назначение</span>
             <select id="print-destination"></select>
           </label>
-          <label class="print-field" id="print-printer-row">
-            <span class="print-label">Принтер</span>
-            <select id="print-printer"></select>
-          </label>
+          <label class="print-field" id="print-printer-row"></label>
           <label class="print-field">
             <span class="print-label">Диапазон</span>
             <select id="print-range-mode">
@@ -228,7 +225,6 @@
             <input id="print-range-from" type="number" min="1" step="1" aria-label="С первой страницы" />
             <span class="print-dash">–</span>
             <input id="print-range-to" type="number" min="1" step="1" aria-label="По последнюю страницу" />
-            <button type="button" id="print-no-margins" class="print-link">Поля: нет</button>
           </div>
           <label class="print-field">
             <span class="print-label">Копии</span>
@@ -255,6 +251,7 @@
           </label>
           <div class="print-margins">
             <span class="print-label">Поля, мм</span>
+            <button type="button" id="print-no-margins" class="print-link">Поля: нет</button>
             <label>верх <input id="print-margin-top" type="number" min="0" max="50" step="1" /></label>
             <label>низ <input id="print-margin-bottom" type="number" min="0" max="50" step="1" /></label>
             <label>лево <input id="print-margin-left" type="number" min="0" max="50" step="1" /></label>
