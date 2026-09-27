@@ -63,6 +63,7 @@ import {
 } from './guest'
 import { normalizeUrl, hostOf, isAllowed as isAllowedUrl, resolveTasksUrl, formatSize, errText, withTimeout, formatDateTime } from './util'
 import { captureActiveTabScreenshot, closeShotPreviewIfOpen, openShotPreview, playShutterClick, wireShotPreview } from './screenshot'
+import { wireToolbar } from './toolbar'
 import { initAddressBar, updateAddressBar, updateTitlebarTitle, updateNavButtons, navigate, applyZoomForCurrentPage, changeZoom } from './address-bar'
 
 /**
@@ -2124,72 +2125,6 @@ function wirePrintDialog(): void {
   syncPrintPanel()
 }
 
-function wireToolbar(): void {
-  wireAddressMenu()
-  wirePrintDialog()
-  wireShotPreview()
-  btnBack?.addEventListener('click', () => {
-    const tab = activeTab()
-    if (!tab || !canTabGoBack(tab)) return
-    noteTabHistory(tab, -1)
-    tab.view.goBack()
-  })
-  btnForward?.addEventListener('click', () => {
-    const tab = activeTab()
-    if (!tab || !canTabGoForward(tab)) return
-    noteTabHistory(tab, 1)
-    tab.view.goForward()
-  })
-  document.getElementById('btn-home')?.addEventListener('click', () => {
-    if (config) void navigate(config.startUrl)
-  })
-  document.getElementById('btn-mvideo')?.addEventListener('click', () => {
-    focusOrOpenTab('https://www.mvideo.ru/')
-  })
-  document.getElementById('btn-reload')?.addEventListener('click', () => {
-    const view = activeView()
-    if (view) view.reload()
-  })
-  document.getElementById('btn-barcode')?.addEventListener('click', () => {
-    focusOrOpenTab('https://monutor.github.io/warehouse-barcode-generator/')
-  })
-  document.getElementById('btn-products')?.addEventListener('click', () => {
-    focusOrOpenTab('https://monutor.github.io/DataBaseProducts/')
-  })
-  document.getElementById('btn-accounts')?.addEventListener('click', () => void openAccounts(true))
-  document.getElementById('btn-screenshot')?.addEventListener('click', () => void captureActiveTabScreenshot())
-  // NB: btn-templates подписывается в wireTemplates() — дубль здесь давал
-  // двойной openTemplates() и задвоенный список шаблонов.
-
-  if (addressInput) {
-    addressInput.addEventListener('keydown', (event: KeyboardEvent) => {
-      if (event.key === 'Enter') void navigate(addressInput.value)
-    })
-  }
-
-  document.getElementById('btn-min')?.addEventListener('click', () => window.shell.windowMin())
-  document.getElementById('btn-max')?.addEventListener('click', () => window.shell.windowMax())
-  document.getElementById('btn-close')?.addEventListener('click', () => window.shell.windowClose())
-
-  document.getElementById('btn-scans')?.addEventListener('click', async () => {
-    const tab = activeTab()
-    if (!tab) return
-    try {
-      await guestJS<void>(tab, 'scans-open', '(function(){try{window.dispatchEvent(new CustomEvent("scans-block:open"))}catch(e){}})()')
-    } catch (err) {
-      console.warn('[shell] failed to open scans block:', err)
-    }
-  })
-
-  // DevTools webview — только в debug-режиме
-  window.addEventListener('keydown', (event: KeyboardEvent) => {
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'i' && config?.debug) {
-      event.preventDefault()
-      const view = activeView()
-      if (view) view.openDevTools()
-    }
-  })
-}
 
 /**
  * Оригинальная иконка сайта: читаем `<link rel="icon">` из гостя, картинку
@@ -3324,7 +3259,18 @@ async function init(): Promise<void> {
     },
   )
 
-  wireToolbar()
+  wireToolbar(
+    { address: addressInput, back: btnBack, forward: btnForward },
+    {
+      config: () => config,
+      navigate,
+      openAccounts,
+      captureActiveTabScreenshot,
+      wireAddressMenu,
+      wirePrintDialog,
+      wireShotPreview,
+    },
+  )
   wireShortcuts()
   wireFindbar()
   wireErrorOverlay()
