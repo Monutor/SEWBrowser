@@ -1,0 +1,117 @@
+/* styles.css — плагин «Копировать артикул» (sku-copy).
+   Подключается в гостевую страницу через webview.insertCSS.
+
+   Значок нарисован CSS-ом, а не символом Unicode: в системных шрифтах Windows
+   знака «две скрепки» может не оказаться, а иконка должна выглядеть одинаково
+   везде. У самой кнопки нет ни одного текстового узла — иначе собственный
+   текст элемента «SKU: 4258850» испортился бы. */
+
+/* --- кнопка ------------------------------------------------------------- */
+
+.sew-sku-copy {
+  display: inline-block;
+  position: relative;
+  width: 15px;
+  height: 15px;
+  margin-left: 6px;
+  padding: 0;
+  vertical-align: middle;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  /* Почти невидима, пока на неё не навели: в длинных списках товаров
+     постоянная иконка в каждой строке рябит. */
+  opacity: 0.22;
+  transition: opacity 0.12s ease;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.sew-sku-copy:hover,
+.sew-sku-copy:focus-visible {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.07);
+  outline: none;
+}
+
+/* Проявляется и при наведении на саму строку с артикулом. Класс на элемент
+   страницы не вешаем — это лишний риск сломать стили SEW, а :has() умеет
+   найти кнопку по родителю сам. */
+*:has(> .sew-sku-copy):hover > .sew-sku-copy {
+  opacity: 1;
+}
+
+/* --- значок «копировать»: два наложенных листа ---------------------------- */
+
+.sew-sku-copy::before,
+.sew-sku-copy::after {
+  content: "";
+  position: absolute;
+  border: 1.5px solid currentColor;
+  border-radius: 1.5px;
+}
+
+.sew-sku-copy::before {
+  left: 1px;
+  top: 1px;
+  width: 8px;
+  height: 8px;
+}
+
+.sew-sku-copy::after {
+  left: 5px;
+  top: 5px;
+  width: 8px;
+  height: 8px;
+}
+
+/* --- галочка: артикул скопирован ---------------------------------------- */
+
+.sew-sku-copy.is-done {
+  opacity: 1;
+  color: #2e7d32;
+}
+
+.sew-sku-copy.is-done::before {
+  left: 5px;
+  top: 1px;
+  width: 3px;
+  height: 8px;
+  border: none;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  border-radius: 0;
+  transform: rotate(40deg);
+}
+
+.sew-sku-copy.is-done::after {
+  display: none;
+}
+
+/* --- крестик: скопировать не удалось ------------------------------------- */
+
+.sew-sku-copy.is-fail {
+  opacity: 1;
+  color: #c62828;
+}
+
+.sew-sku-copy.is-fail::before,
+.sew-sku-copy.is-fail::after {
+  left: 6.75px;
+  top: 1.5px;
+  width: 1.5px;
+  height: 12px;
+  border: none;
+  border-radius: 1px;
+  background: currentColor;
+}
+
+.sew-sku-copy.is-fail::before {
+  transform: rotate(45deg);
+}
+
+.sew-sku-copy.is-fail::after {
+  transform: rotate(-45deg);
+}
