@@ -110,8 +110,9 @@ export function generateFolderId(): string {
 }
 
 export async function saveFolders(folders: NavFolder[]): Promise<void> {
-  const updated = await window.shell.setConfig({ folders })
-  if (updated && 'folders' in updated) void updated
+  // Через deps.setConfig, а не window.shell.setConfig напрямую: обёртка в main
+  // перезаписывает его кэш конфига, и renderStrip ниже читает уже свежие данные.
+  await deps.setConfig({ folders })
   deps.closeGroupPanel()
   deps.renderStrip()
   deps.refreshTabsList()
@@ -142,8 +143,9 @@ export function fillFolderSelect(sel: HTMLSelectElement, folderId: string | unde
 }
 
 export async function saveTabs(tabs: NavTab[]): Promise<void> {
-  const updated = await window.shell.setConfig({ tabs })
-  if (updated && 'tabs' in updated) void updated
+  // См. saveFolders: без обёртки deps.setConfig кэш конфига в main остался бы
+  // старым, и лента перерисовалась бы по прежним вкладкам.
+  await deps.setConfig({ tabs })
   deps.closeGroupPanel()
   deps.renderStrip()
   deps.refreshTabsList()
