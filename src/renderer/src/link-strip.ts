@@ -1,4 +1,4 @@
-import { activeView, focusOrOpenTab } from './tabs'
+import { activeView, focusOrOpenTab, focusTabByUrl, openTab } from './tabs'
 import { UNASSIGNED_FOLDER, fillFolderSelect, hasUserFolders, orderedGroups, tabsInFolder } from './nav-store'
 
 /**
@@ -15,12 +15,31 @@ export interface LinkStripDeps {
   openEditForm(tab: NavTab): void
   deleteTab(tabId: string): void
   moveTabToFolder(tabId: string, folderId: string | null): void
+  /** Навигация активной вкладки (обёртка над address-bar navigate) с проверкой allowlist. */
+  navigateCurrent(url: string): void
 }
+
+/** Действия контекстного меню вкладки ленты. Префикс nav- отделяет их от меню
+ *  полосы вкладок: onMenuAction один на оба, и чужое action'у не должно совпасть. */
+const NAV_MENU_CURRENT = 'nav-current'
+const NAV_MENU_NEW = 'nav-new'
+
+/** URL вкладки, для которой открыто контекстное меню: ПКМ сам по себе ничего не открывает. */
+let menuUrl: string | null = null
 
 let deps!: LinkStripDeps
 
 export function initLinkStrip(d: LinkStripDeps): void {
   deps = d
+  if (typeof window !== 'undefined' && window.shell && typeof window.shell.onMenuAction === 'function') {
+    window.shell.onMenuAction((action) => {
+      const url = menuUrl
+      menuUrl = null
+      if (!url) return
+      if (action === NAV_MENU_NEW) openTab(url, { activate: true })
+      else if (action === NAV_MENU_CURRENT && !focusTabByUrl(url)) deps.navigateCurrent(url)
+    })
+  }
 }
 
 function stripEl(): HTMLElement {
@@ -51,6 +70,44 @@ export function currentViewUrl(): string {
   }
 }
 
+/**
+ * Поведение вкладки ленты (и строки её в выпадающем списке папки):
+ * ЛКМ — переход в текущем окне: если вкладка с таким URL уже открыта,
+ * переключаемся на неё, иначе навигируем текущую (новую не создаём);
+ * СКМ и пункт меню — новая вкладка.
+ * afterOpen вызывается после любого открытия — списку папки он закрывает себя.
+ */
+function wireNavTab(el: HTMLElement, url: string, afterOpen?: () => void): void {
+  el.addEventListener('click', () => {
+    if (!focusTabByUrl(url)) deps.navigateCurrent(url)
+    afterOpen?.()
+  })
+  el.addEventListener('auxclick', (event) => {
+    const mouse = event as MouseEvent
+    // Кнопка 1 — средняя. На button'е средний клик не даёт click, на строке
+    // списка — тем более, так что ЛКМ-обработчик сюда не попадёт.
+    if (mouse.button !== 1) return
+    mouse.preventDefault()
+    openTab(url, { activate: true })
+    afterOpen?.()
+  })
+  el.addEventListener('contextmenu', (event) => {
+    const mouse = event as MouseEvent
+    mouse.preventDefault()
+    showNavTabMenu(url)
+  })
+}
+
+/** Контекстное меню вкладки ленты: открыть в текущем окне или в новой вкладке. */
+function showNavTabMenu(url: string): void {
+  if (typeof window === 'undefined' || !window.shell || typeof window.shell.popupMenu !== 'function') return
+  menuUrl = url
+  void window.shell.popupMenu([
+    { label: 'Открыть в текущем окне', action: NAV_MENU_CURRENT },
+    { label: 'Открыть в новой вкладке', action: NAV_MENU_NEW },
+  ])
+}
+
 // Лента ссылок в третьей строке оболочки (под полосой вкладок и тулбаром).
 // Всегда видима (даже при пустом списке), иначе кнопки +/⋮ внутри скрытой
 // ленты недостижимы, а в тулбаре отдельной кнопки не было — на чистой
@@ -71,7 +128,7 @@ export function renderStrip(): void {
     btn.dataset.url = tab.url
     btn.textContent = tab.name
     btn.title = tab.url
-    btn.addEventListener('click', () => focusOrOpenTab(tab.url))
+    wireNavTab(btn, tab.url)
     tabsBarEl().append(btn)
   }
   if (!hasUserFolders()) return
@@ -174,10 +231,7 @@ function renderGroupPanel(): void {
     url.className = 'tg-url'
     url.textContent = tab.url
     row.append(name, url)
-    row.addEventListener('click', () => {
-      focusOrOpenTab(tab.url)
-      closeGroupPanel()
-    })
+    wireNavTab(row, tab.url, closeGroupPanel)
     list.append(row)
   }
   section.append(list)

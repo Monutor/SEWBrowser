@@ -265,7 +265,10 @@ async function init(): Promise<void> {
     moveTab,
     openEditForm,
     deleteTab,
-    moveTabToFolder
+    moveTabToFolder,
+    navigateCurrent: (url) => {
+      void navigate(url)
+    }
   })
   initNavStore({
     config: () => config,

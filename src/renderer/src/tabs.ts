@@ -368,6 +368,20 @@ export function focusOrOpenTab(rawUrl: string): void {
   openTab(url, { activate: true })
 }
 
+/**
+ * Активировать уже открытую вкладку с таким URL. false — такой вкладки нет,
+ * и вызывающий решает сам: перейти текущей или создать новую (focusOrOpenTab).
+ * Лента ссылок этим отличается от неё: ЛКМ не должен плодить вкладки.
+ */
+export function focusTabByUrl(rawUrl: string): boolean {
+  const url = normalizeTabUrl(rawUrl)
+  if (!url) return false
+  const found = tabs.find((tab) => tab.url === url)
+  if (!found) return false
+  activateTab(found)
+  return true
+}
+
 export function setTabUrl(tab: ShellTab, url: string): void {
   if (!tabs.includes(tab)) return
   tab.url = url

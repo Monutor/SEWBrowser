@@ -409,6 +409,27 @@ describe('focusOrOpenTab', () => {
   })
 })
 
+describe('focusTabByUrl', () => {
+  it('переключается на уже открытую вкладку и ничего не создаёт', () => {
+    setup()
+    const a = tabsModule.openTab('https://a.mvideoeldorado.ru/')
+    tabsModule.openTab('https://b.mvideoeldorado.ru/')
+    assert.ok(a)
+    assert.equal(tabsModule.focusTabByUrl('https://a.mvideoeldorado.ru/'), true)
+    assert.equal(tabsModule.listTabs().length, 2)
+    assert.equal(tabsModule.isActiveTab(a), true)
+  })
+
+  it('сообщает false для незнакомого URL и для пустой строки', () => {
+    setup()
+    tabsModule.openTab('https://a.mvideoeldorado.ru/')
+    assert.equal(tabsModule.focusTabByUrl('https://c.mvideoeldorado.ru/'), false)
+    assert.equal(tabsModule.focusTabByUrl('   '), false)
+    assert.equal(tabsModule.focusTabByUrl('javascript:void(0)'), false)
+    assert.equal(tabsModule.listTabs().length, 1)
+  })
+})
+
 describe('setTabUrl и setTabTitle', () => {
   it('обновляет модель и подпись кнопки', () => {
     const h = setup()
