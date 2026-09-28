@@ -211,10 +211,75 @@
   var listEl = null
   var statusEl = null
   var toggleEl = null // ярлык-стрелка на правом краю (док-шторка)
+  var sortEl = null // <select> сортировки файлов
   var collapsed = true
   try {
     collapsed = localStorage.getItem('scans-block:collapsed') !== '0'
   } catch (e) {}
+  // Последний отрендеренный список — чтобы смена сортировки перерисовывала
+  // его локально, без захода в мост (иначе список мигал и ждал диск).
+  var lastList = null
+
+  // --- сортировка файлов ----------------------------------------------------
+  // Режим переживает перезапуск страницы (рядом с collapsed/top в localStorage).
+  // По умолчанию — свежие сверху: так же отдаёт список main.
+  var SORTS = [
+    { id: 'date-desc', label: 'Сначала новые' },
+    { id: 'date-asc', label: 'Сначала старые' },
+    { id: 'name-asc', label: 'Имя: А → Я' },
+    { id: 'name-desc', label: 'Имя: Я → А' },
+    { id: 'size-desc', label: 'Размер: большие сверху' },
+    { id: 'size-asc', label: 'Размер: меньшие сверху' },
+    { id: 'type-asc', label: 'Тип файла' }
+  ]
+  var sortId = 'date-desc'
+  try {
+    var savedSort = localStorage.getItem('scans-block:sort')
+    if (savedSort) {
+      for (var si = 0; si < SORTS.length; si++) {
+        if (SORTS[si].id === savedSort) { sortId = savedSort; break }
+      }
+    }
+  } catch (e) {}
+
+  // Русский алфавит и числа внутри имени («скан2» раньше «скан10»). Без
+  // Collator сравниваем строками — чуть хуже, зато не падаем.
+  var collator = null
+  try { collator = new Intl.Collator('ru', { numeric: true, sensitivity: 'base' }) } catch (e) {}
+  function cmpName(a, b) {
+    var x = String((a && a.name) || '')
+    var y = String((b && b.name) || '')
+    if (collator) return collator.compare(x, y)
+    return x < y ? -1 : x > y ? 1 : 0
+  }
+  function cmpDate(a, b) {
+    return (Date.parse((a && a.modifiedAt) || '') || 0) - (Date.parse((b && b.modifiedAt) || '') || 0)
+  }
+  function cmpSize(a, b) {
+    return (Number(a && a.bytes) || 0) - (Number(b && b.bytes) || 0)
+  }
+  function cmpType(a, b) {
+    var x = extOf(a)
+    var y = extOf(b)
+    return x < y ? -1 : x > y ? 1 : 0
+  }
+  // Вторичный ключ всегда по имени: без него равные по основному ключу файлы
+  // прыгали бы между обновлениями списка, и он выглядел бы «мигающим».
+  function sortRecords(list) {
+    var arr = (list || []).slice()
+    arr.sort(function (a, b) {
+      var d = 0
+      if (sortId === 'date-asc') d = cmpDate(a, b)
+      else if (sortId === 'date-desc') d = -cmpDate(a, b)
+      else if (sortId === 'name-desc') d = -cmpName(a, b)
+      else if (sortId === 'size-desc') d = -cmpSize(a, b)
+      else if (sortId === 'size-asc') d = cmpSize(a, b)
+      else if (sortId === 'type-asc') d = cmpType(a, b)
+      else d = cmpName(a, b)
+      return d !== 0 ? d : cmpName(a, b)
+    })
+    return arr
+  }
 
   function iconFor(rec) {
     var e = extOf(rec)
@@ -282,7 +347,7 @@
 
       var inFolderBtn = el('button')
       inFolderBtn.className = 'scans-block-item-btn'
-      inFolderBtn.title = 'Показать в папике'
+      inFolderBtn.title = 'Показать в папке'
       inFolderBtn.textContent = '📁'
       inFolderBtn.addEventListener('click', function (e) {
         e.stopPropagation()
@@ -396,8 +461,9 @@
       for (var d = 0; d < dirNames.length; d++) {
         body.appendChild(renderDir(node.children[dirNames[d]], depth + 1))
       }
-      for (var f = 0; f < node.files.length; f++) {
-        body.appendChild(appendFileRow(node.files[f], depth + 1))
+      var dirFiles = sortRecords(node.files)
+      for (var f = 0; f < dirFiles.length; f++) {
+        body.appendChild(appendFileRow(dirFiles[f], depth + 1))
       }
     }
     refresh()
@@ -431,8 +497,9 @@
     for (var i = 0; i < names.length; i++) {
       body.appendChild(renderDir(tree.children[names[i]], 0))
     }
-    for (var j = 0; j < tree.files.length; j++) {
-      body.appendChild(appendFileRow(tree.files[j], 0))
+    var rootFiles = sortRecords(tree.files)
+    for (var j = 0; j < rootFiles.length; j++) {
+      body.appendChild(appendFileRow(rootFiles[j], 0))
     }
     function refresh() {
       toggle.textContent = collapsed ? '▸' : '▾'
@@ -464,8 +531,9 @@
     section.appendChild(title)
     var body = el('div', 'scans-block-section-body')
     section.appendChild(body)
-    for (var i = 0; i < picked.length; i++) {
-      body.appendChild(renderItem(picked[i]))
+    var pickedFiles = sortRecords(picked)
+    for (var i = 0; i < pickedFiles.length; i++) {
+      body.appendChild(renderItem(pickedFiles[i]))
     }
     function refresh() {
       toggle.textContent = collapsed ? '▸' : '▾'
@@ -492,6 +560,7 @@
     // Список от вотчера/main содержит только файлы папки — picked-записи
     // (только в памяти) сохраняем, иначе живое обновление стирало выбранное.
     var incoming = Array.isArray(list) ? list : []
+    lastList = incoming
     var picked = files.filter(function (f) { return isPicked(f) })
     var seen = {}
     incoming.forEach(function (r) { if (r && r.id) seen[r.id] = true })
@@ -743,6 +812,30 @@
     actions.appendChild(refreshBtn)
 
     panel.appendChild(actions)
+
+    // Сортировка — своей строкой, чтобы не теснить кнопки действий (панель 340px).
+    var sortBar = el('div', 'scans-block-sortbar')
+    var sortLabel = el('span', 'scans-block-sortbar-label')
+    sortLabel.textContent = 'Сортировка'
+    sortBar.appendChild(sortLabel)
+    sortEl = el('select', 'scans-block-sort')
+    sortEl.title = 'Как упорядочить файлы в списке'
+    for (var s = 0; s < SORTS.length; s++) {
+      var opt = el('option')
+      opt.value = SORTS[s].id
+      opt.textContent = SORTS[s].label
+      sortEl.appendChild(opt)
+    }
+    sortEl.value = sortId
+    sortEl.addEventListener('change', function () {
+      sortId = sortEl.value
+      try { localStorage.setItem('scans-block:sort', sortId) } catch (e) {}
+      // Перерисовываем из последнего списка: сортировка — чисто вид, и ходить
+      // за ним на диск незачем (список бы мигнул).
+      if (lastList) render(lastList)
+    })
+    sortBar.appendChild(sortEl)
+    panel.appendChild(sortBar)
 
     statusEl = el('div', 'scans-block-status')
     panel.appendChild(statusEl)

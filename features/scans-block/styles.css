@@ -157,6 +157,41 @@
   cursor: default;
 }
 
+.scans-block-sortbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 8px;
+}
+
+.scans-block-sortbar-label {
+  font-size: 11px;
+  color: #9a9da0;
+  white-space: nowrap;
+}
+
+.scans-block-sort {
+  flex: 1;
+  min-width: 0;
+  background: #3c3f41;
+  color: #c9ccd0;
+  border: 1px solid #56595b;
+  border-radius: 6px;
+  padding: 5px 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.scans-block-sort:hover {
+  background: #4a4d4f;
+  color: #fff;
+}
+
+.scans-block-sort option {
+  background: #3c3f41;
+  color: #c9ccd0;
+}
+
 .scans-block-status {
   padding: 5px 12px 9px;
   font-size: 11px;
