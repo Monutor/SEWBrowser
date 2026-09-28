@@ -5,6 +5,8 @@ export interface TaskAlertElements {
   open: Pick<HTMLButtonElement, 'onclick'>
   all: Pick<HTMLButtonElement, 'hidden' | 'onclick'>
   close: Pick<HTMLButtonElement, 'onclick'>
+  /** Полоска таймера показа: длительностью анимации управляет контроллер. */
+  bar: Pick<HTMLElement, 'hidden' | 'style' | 'offsetWidth'>
 }
 
 export interface TaskAlertController {
@@ -51,9 +53,29 @@ export function createTaskAlert(elements: TaskAlertElements): TaskAlertControlle
     }
   }
 
+  /**
+   * Запустить заливку полоски с нуля на ttlSec (столько же живёт сама карточка).
+   * ttlSec <= 0 — карточка не скрывается, таймеру нечего показывать: прячем.
+   * Перезапуск анимации — через сброс + reflow, иначе повторный show() с тем же
+   * TTL не запустит её заново (стиль не изменился, анимация уже доиграла).
+   */
+  const startBarFill = (ttlSec: number): void => {
+    const bar = elements.bar
+    if (ttlSec <= 0) {
+      bar.hidden = true
+      return
+    }
+    bar.hidden = false
+    bar.style.animation = 'none'
+    void bar.offsetWidth
+    bar.style.animation = ''
+    bar.style.animationDuration = `${ttlSec}s`
+  }
+
   const close = (): void => {
     stopTimer()
     elements.root.hidden = true
+    elements.bar.hidden = true
     elements.open.onclick = null
     elements.all.onclick = null
     elements.all.hidden = true
@@ -85,6 +107,7 @@ export function createTaskAlert(elements: TaskAlertElements): TaskAlertControlle
     elements.close.onclick = close
     const ttl = typeof ttlSec === 'number' && Number.isFinite(ttlSec) ? Math.floor(ttlSec) : 0
     if (ttl > 0) timer = setTimeout(close, ttl * 1000)
+    startBarFill(ttl)
   }
 
   return { show, close }

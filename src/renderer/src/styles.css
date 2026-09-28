@@ -826,6 +826,50 @@ body {
   gap: 8px;
 }
 
+/* Таймер показа: дорожка рисуется псевдоэлементом карточки, заливка — отдельным
+   элементом, её анимацию запускает task-alert.ts на время до автоскрытия.
+   Абсолютное позиционирование выносит оба из flex-потока карточки. */
+#task-alert::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  border-radius: 0 0 8px 8px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.task-alert-bar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  width: 100%;
+  border-radius: 0 0 8px 8px;
+  background: linear-gradient(90deg, #ffd166, #f59e0b);
+  transform-origin: left center;
+  transform: scaleX(0);
+  animation-name: task-alert-bar-fill;
+  /* 60 c — дефолт «Времени показа уведомлений»; task-alert.ts ставит своё. */
+  animation-duration: 60s;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+.task-alert-bar[hidden] {
+  display: none;
+}
+
+@keyframes task-alert-bar-fill {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
 #task-alert button {
   padding: 7px 12px;
   border: 1px solid rgba(255, 255, 255, 0.35);
@@ -870,6 +914,12 @@ body {
 @media (prefers-reduced-motion: reduce) {
   #task-alert {
     animation: none;
+  }
+
+  /* Движения нет — таймер не тикает: карточка просто висит до закрытия. */
+  #task-alert::after,
+  .task-alert-bar {
+    display: none;
   }
 }
 
@@ -1753,6 +1803,24 @@ body {
 .prompt-card input[type='password']:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+.prompt-remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+
+.prompt-remember input[type='checkbox'] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 .prompt-error {

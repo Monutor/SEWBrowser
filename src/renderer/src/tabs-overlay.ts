@@ -19,7 +19,7 @@ import {
 
 export interface TabsOverlayDeps {
   config(): ShellConfig | null
-  promptFolderPassword(folderId: string): Promise<string | null>
+  /** Разрешить операцию с защищённой папкой (пароль введён или «запомнен»). */
   requireFolderPassword(folderId: string): Promise<boolean>
   cancelFolderPasswordPrompt(): void
 }

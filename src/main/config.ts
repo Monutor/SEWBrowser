@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { normalizeRememberMinutes } from './credentials/folderUnlock'
 
 export interface NavTab {
   id: string;
@@ -78,6 +79,8 @@ export interface SewConfig {
   scannerAppPath: string;
   /** Аргументы запуска софта сканера (напр. HP G3110 требует -mg3110) */
   scannerAppArgs: string;
+  /** Сколько минут не спрашивать пароль защищённой папки после галки «запомнить» (1..1440) */
+  folderPasswordRememberMinutes: number;
   /** Папки, куда HP-софт сохраняет отсканированные файлы — мониторятся на новые файлы */
   scanFolders: ScanFolder[];
   /** Устаревшее одиночное поле (миграция со старых конфигов). Не используется как источник истины. */
@@ -99,8 +102,9 @@ const DEFAULTS: SewConfig = {
     clearOnExit: 'none',
     tabs: [],
     folders: [],
-    scannerAppPath: '',
-    scannerAppArgs: '',
+  scannerAppPath: '',
+  scannerAppArgs: '',
+  folderPasswordRememberMinutes: 5,
     scanFolders: [],
 }
 
@@ -250,6 +254,10 @@ function sanitizeConfig(user: Partial<SewConfig>): SewConfig {
     tabs,
     scannerAppPath: pickString(user.scannerAppPath, ''),
     scannerAppArgs: pickString(user.scannerAppArgs, ''),
+    folderPasswordRememberMinutes: normalizeRememberMinutes(
+      user.folderPasswordRememberMinutes,
+      DEFAULTS.folderPasswordRememberMinutes,
+    ),
     scanFolders: pickScanFolders(user.scanFolders),
   }
 }

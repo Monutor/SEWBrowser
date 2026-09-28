@@ -7,19 +7,25 @@ export interface PromptFolder {
 export interface FolderPasswordPromptHooks {
   /** Папка по id; undefined, если папки нет. */
   findFolder(folderId: string): PromptFolder | undefined
+  /** Сколько минут держать «запомненный» пароль (настройка оболочки). */
+  rememberMinutes(): number
 }
 
 export interface FolderPasswordPromptController {
   wire(): void
   cancel(): void
   prompt(folderId: string): Promise<string | null>
-  require(folderId: string): Promise<boolean>
+  /** Разрешить работу с папкой: без защиты, по «запомненному» паролю или после ввода. */
+  authorize(folderId: string): Promise<boolean>
 }
 
 const promptEl = (): HTMLElement | null => document.getElementById('password-prompt')
 const promptFolderNameEl = (): HTMLElement | null => document.getElementById('prompt-folder-name')
 const promptPasswordEl = (): HTMLInputElement | null =>
   document.getElementById('prompt-password') as HTMLInputElement | null
+const promptRememberEl = (): HTMLInputElement | null =>
+  document.getElementById('prompt-remember') as HTMLInputElement | null
+const promptRememberMinEl = (): HTMLElement | null => document.getElementById('prompt-remember-min')
 const promptErrorEl = (): HTMLElement | null => document.getElementById('prompt-error')
 const promptOkBtn = (): HTMLButtonElement | null =>
   document.getElementById('prompt-ok') as HTMLButtonElement | null
@@ -46,6 +52,12 @@ export function createFolderPasswordPrompt(hooks: FolderPasswordPromptHooks): Fo
     resolve?.(null)
   }
 
+  /** Срок «запомнить» из настроек; 5 минут — тот же дефолт, что в main/config.ts. */
+  function rememberMinutes(): number {
+    const value = Math.floor(Number(hooks.rememberMinutes()))
+    return Number.isFinite(value) && value > 0 ? value : 5
+  }
+
   /** Показать диалог ввода пароля для защищённой папки.
    *  Возвращает введённый пароль (при верном) или null при отмене.
    *  Неверный пароль не закрывает диалог — показывает ошибку и ждёт повтора. */
@@ -60,6 +72,12 @@ export function createFolderPasswordPrompt(hooks: FolderPasswordPromptHooks): Fo
     currentPromptFolderId = group?.id ?? folderId
     folderNameEl.textContent = group ? `Папка «${group.name}»` : 'Введите пароль'
     passwordEl.value = ''
+    // Срок «запомнить» показываем в подписи галки — он задаётся в настройках.
+    const minutes = rememberMinutes()
+    const rememberEl = promptRememberEl()
+    if (rememberEl) rememberEl.checked = true
+    const rememberMinEl = promptRememberMinEl()
+    if (rememberMinEl) rememberMinEl.textContent = String(minutes)
     const errorEl = promptErrorEl()
     if (errorEl) errorEl.hidden = true
     el.hidden = false
@@ -76,7 +94,8 @@ export function createFolderPasswordPrompt(hooks: FolderPasswordPromptHooks): Fo
     errorEl.hidden = false
   }
 
-  /** Проверить введённый пароль: неверный — показать ошибку и оставить диалог открытым. */
+  /** Проверить введённый пароль: неверный — показать ошибку и оставить диалог открытым.
+   *  Галка «запомнить» уходит в main: он держит папку открытой на срок из настроек. */
   async function submit(): Promise<void> {
     const passwordEl = promptPasswordEl()
     if (!passwordEl) return
@@ -89,7 +108,8 @@ export function createFolderPasswordPrompt(hooks: FolderPasswordPromptHooks): Fo
       cancel()
       return
     }
-    const ok = await window.shell.verifyFolderPassword(currentPromptFolderId, value)
+    const remember = promptRememberEl()?.checked === true
+    const ok = await window.shell.verifyFolderPassword(currentPromptFolderId, value, remember)
     if (!ok) {
       showPromptError('Неверный пароль')
       passwordEl.value = ''
@@ -112,13 +132,21 @@ export function createFolderPasswordPrompt(hooks: FolderPasswordPromptHooks): Fo
     })
   }
 
-  /** Запросить текущий пароль защищённой па перед удалением или снятием/смены защиты.
-   *  Возвращает true, если защита отсутствует или пароль введён верно; false — при отмене или ошибке. */
-  async function require(folderId: string): Promise<boolean> {
+  /** Запросить пароль защищённой папки перед операцией (удаление, смена/снятие
+   *  защиты, раскрытие папки). Возвращает true, если защиты нет, папка уже
+   *  «запомнена» (галка в прошлый раз) или пароль введён верно.
+   *  Разблокировку держит main в памяти — переживает клики по папке, но не
+   *  перезапуск приложения. */
+  async function authorize(folderId: string): Promise<boolean> {
     const group = hooks.findFolder(folderId)
     if (!group?.passwordId) return true // Без защиты — проверка не нужна.
+    try {
+      if (await window.shell.isFolderUnlocked(folderId)) return true
+    } catch {
+      // main недоступен — просто спросим пароль (хуже, но не сломано).
+    }
     return (await prompt(folderId)) !== null
   }
 
-  return { wire, cancel, prompt, require }
+  return { wire, cancel, prompt, authorize }
 }

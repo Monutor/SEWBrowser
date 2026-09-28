@@ -278,9 +278,13 @@ const api = {
   /** Снять защиту папки удалением записи с паролем */
   clearFolderPassword: (folderId: string): Promise<void> =>
     ipcRenderer.invoke('folder-passwords:clear', folderId),
-  /** Проверить пароль папки (шифрохранилище недоступно → false) */
-  verifyFolderPassword: (folderId: string, password: string): Promise<boolean> =>
-    ipcRenderer.invoke('folder-passwords:verify', { folderId, password }),
+  /** Проверить пароль папки (шифрохранилище недоступно → false).
+   *  remember=true — запомнить его на срок из настроек и не спрашивать заново. */
+  verifyFolderPassword: (folderId: string, password: string, remember?: boolean): Promise<boolean> =>
+    ipcRenderer.invoke('folder-passwords:verify', { folderId, password, remember: remember === true }),
+  /** Не спрашивать пароль, пока папка «запомнена» (разблокировка только в памяти) */
+  isFolderUnlocked: (folderId: string): Promise<boolean> =>
+    ipcRenderer.invoke('folder-passwords:unlocked', folderId),
   /** Хранилище данных плагина (замена chrome.storage.local) */
   pluginDataGet: (plugin: string, keys?: string[]): Promise<Record<string, unknown>> =>
     ipcRenderer.invoke('plugin-data:get', plugin, keys),

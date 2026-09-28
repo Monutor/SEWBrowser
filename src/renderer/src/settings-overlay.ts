@@ -44,6 +44,7 @@ const el = {
   storageUsage: () => document.getElementById('set-storage-usage') as HTMLElement | null,
   cookies: () => document.getElementById('set-cookies') as HTMLElement | null,
   clearOnExit: () => document.getElementById('set-clear-on-exit') as HTMLSelectElement | null,
+  folderRemember: () => document.getElementById('set-folder-remember') as HTMLInputElement | null,
   scannerApp: () => document.getElementById('set-scanner-app') as HTMLInputElement | null,
   scannerArgs: () => document.getElementById('set-scanner-args') as HTMLInputElement | null,
   scanFoldersList: () => document.getElementById('set-scan-folders') as HTMLElement | null,
@@ -126,6 +127,8 @@ export function openSettings(): void {
     }
   }
   if (setClearOnExit) setClearOnExit.value = config.clearOnExit
+  const setFolderRemember = el.folderRemember()
+  if (setFolderRemember) setFolderRemember.value = String(config.folderPasswordRememberMinutes ?? 5)
   void loadTnSettings()
   const setScannerApp = el.scannerApp()
   const setScannerArgs = el.scannerArgs()
@@ -167,6 +170,13 @@ async function saveSettings(): Promise<void> {
     clearOnExit: (setClearOnExit?.value as ShellConfig['clearOnExit']) ?? config.clearOnExit,
     scannerAppPath: setScannerApp?.value.trim() ?? config.scannerAppPath,
     scannerAppArgs: setScannerArgs?.value.trim() ?? (config as ShellConfig).scannerAppArgs ?? '',
+  }
+  // Срок «запомнить пароль»: пустое или нечисловое поле — не трогаем настройку,
+  // диапазон (1..1440) досохраняет main (normalizeRememberMinutes в config.ts).
+  const folderRememberRaw = el.folderRemember()?.value.trim() ?? ''
+  const folderRemember = Number(folderRememberRaw)
+  if (folderRememberRaw && Number.isFinite(folderRemember)) {
+    patch.folderPasswordRememberMinutes = folderRemember
   }
   try {
     const oldStartUrl = config.startUrl

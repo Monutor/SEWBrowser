@@ -189,6 +189,7 @@
       <button id="task-alert-all" type="button" hidden>Все задания</button>
       <button id="task-alert-close" type="button" title="Закрыть" aria-label="Закрыть">&times;</button>
     </div>
+    <div id="task-alert-bar" class="task-alert-bar" title="До скрытия уведомления" hidden></div>
   </div>
 
   <div id="toast" hidden></div>
@@ -385,6 +386,20 @@
         <summary>Плагины (переключение применится при следующей загрузке страницы)</summary>
         <div id="set-plugins"></div>
       </details>
+      <details class="settings-row settings-details">
+        <summary>Пароли папок вкладок</summary>
+        <div class="settings-details-body">
+          <label class="settings-row">
+            Запомнить введённый пароль на, минут (1–1440, по умолчанию 5)
+            <input id="set-folder-remember" type="number" min="1" max="1440" step="1" />
+          </label>
+          <div class="settings-subblock">
+            В диалоге ввода пароля папки есть галка «Запомнить»: пока она включена, папка не спрашивает
+            пароль заново. Разблокировка живёт только в памяти — после перезапуска приложения пароль
+            спросят снова, снять защиту папки он тоже не даёт (нужен пароль владельца).
+          </div>
+        </div>
+      </details>
       <details class="settings-row settings-details" open>
         <summary>Уведомления о заданиях (применяются со следующего опроса, без перезагрузки)</summary>
         <div class="settings-details-body">
@@ -397,7 +412,7 @@
             <input id="set-tn-interval" type="number" min="15" step="1" />
           </label>
           <label class="settings-row">
-            Время показа уведомлений, секунд (0 — не скрывать, по умолчанию 60)
+            Время показа уведомлений, секунд (0 — не скрывать и без полоски таймера, по умолчанию 60)
             <input id="set-tn-alert-ttl" type="number" min="0" step="1" />
           </label>
           <label class="settings-row settings-check">
@@ -778,6 +793,10 @@
       <div class="prompt-title">Введите пароль</div>
       <div class="prompt-subtitle" id="prompt-folder-name"></div>
       <input id="prompt-password" type="password" autocomplete="off" spellcheck="false" />
+      <label class="prompt-remember">
+        <input id="prompt-remember" type="checkbox" checked />
+        Запомнить на <span id="prompt-remember-min">5</span> мин
+      </label>
       <div class="prompt-error" id="prompt-error" hidden></div>
       <div class="prompt-actions">
         <button type="button" id="prompt-cancel">Отмена</button>

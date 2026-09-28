@@ -176,6 +176,8 @@ interface ShellConfig {
   folders: NavFolder[]
   scannerAppPath: string
   scannerAppArgs: string
+  /** Сколько минут не спрашивать пароль папки после галки «запомнить» (1..1440) */
+  folderPasswordRememberMinutes: number
   scanFolders: ScanFolder[]
 }
 
@@ -399,8 +401,11 @@ interface ShellApi {
   saveFolderPassword(folderId: string, password: string): Promise<string | null>
   /** Снять защиту папки удалением записи с паролем */
   clearFolderPassword(folderId: string): Promise<void>
-  /** Проверить пароль папки (шифрохранилище недоступно → false) */
-  verifyFolderPassword(folderId: string, password: string): Promise<boolean>
+  /** Проверить пароль папки (шифрохранилище недоступно → false).
+   *  remember=true — запомнить пароль на срок из настроек (без галки — спросить снова). */
+  verifyFolderPassword(folderId: string, password: string, remember?: boolean): Promise<boolean>
+  /** Папка «запомнена» (введена с галкой «запомнить»): пароль заново не спрашиваем */
+  isFolderUnlocked(folderId: string): Promise<boolean>
   pluginDataGet(plugin: string, keys?: string[]): Promise<Record<string, unknown>>
   pluginDataSet(plugin: string, obj: Record<string, unknown>): Promise<boolean>
   pluginDataRemove(plugin: string, keys: string[]): Promise<boolean>

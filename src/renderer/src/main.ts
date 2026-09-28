@@ -50,14 +50,12 @@ let addressMenu: AddressMenuController | null = null
 /** Диалог пароля защищённой папки; собирается в init */
 let folderPrompt: FolderPasswordPromptController | null = null
 
-/** Пароль папки: null при отмене или если контроллер ещё не собран. */
-function promptFolderPassword(folderId: string): Promise<string | null> {
-  return folderPrompt ? folderPrompt.prompt(folderId) : Promise.resolve(null)
-}
-
-/** Разрешить операцию с защищённой папкой; false — пароль не введён. */
-function requireFolderPassword(folderId: string): Promise<boolean> {
-  return folderPrompt ? folderPrompt.require(folderId) : Promise.resolve(false)
+/**
+ * Разрешить работу с защищённой папкой: защиты нет, пароль «запомнен» на
+ * настроенный срок (тогда диалога нет) или введён верно. false — отмена/ошибка.
+ */
+function ensureFolderAccess(folderId: string): Promise<boolean> {
+  return folderPrompt ? folderPrompt.authorize(folderId) : Promise.resolve(false)
 }
 
 /** Скрыть диалог ввода пароля, разрешив промис как «отмена». */
@@ -76,14 +74,16 @@ const taskAlertText = document.getElementById('task-alert-text') as HTMLElement 
 const taskAlertOpen = document.getElementById('task-alert-open') as HTMLButtonElement | null
 const taskAlertAll = document.getElementById('task-alert-all') as HTMLButtonElement | null
 const taskAlertClose = document.getElementById('task-alert-close') as HTMLButtonElement | null
-const taskAlert = taskAlertRoot && taskAlertTitle && taskAlertText && taskAlertOpen && taskAlertAll && taskAlertClose
+const taskAlertBar = document.getElementById('task-alert-bar') as HTMLElement | null
+const taskAlert = taskAlertRoot && taskAlertTitle && taskAlertText && taskAlertOpen && taskAlertAll && taskAlertClose && taskAlertBar
   ? createTaskAlert({
       root: taskAlertRoot,
       title: taskAlertTitle,
       text: taskAlertText,
       open: taskAlertOpen,
       all: taskAlertAll,
-      close: taskAlertClose
+      close: taskAlertClose,
+      bar: taskAlertBar
     })
   : null
 const toolbar = document.getElementById('toolbar') as HTMLElement | null
@@ -254,13 +254,12 @@ async function init(): Promise<void> {
   wireTemplates({ plugins: () => plugins })
   initTabsOverlay({
     config: () => config,
-    promptFolderPassword,
-    requireFolderPassword,
+    requireFolderPassword: ensureFolderAccess,
     cancelFolderPasswordPrompt
   })
   initLinkStrip({
     config: () => config,
-    promptFolderPassword,
+    ensureFolderAccess,
     closeTabs,
     moveTab,
     openEditForm,
@@ -282,7 +281,8 @@ async function init(): Promise<void> {
   })
   wireTabs()
   folderPrompt = createFolderPasswordPrompt({
-    findFolder: (folderId) => orderedGroups().find((g) => g.id === folderId)
+    findFolder: (folderId) => orderedGroups().find((g) => g.id === folderId),
+    rememberMinutes: () => config?.folderPasswordRememberMinutes ?? 5
   })
     folderPrompt.wire()
   wireUpdater()

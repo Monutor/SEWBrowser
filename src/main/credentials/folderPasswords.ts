@@ -2,6 +2,7 @@ import { app, safeStorage } from 'electron'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
+import { createFolderUnlockStore } from './folderUnlock'
 
 /**
  * Пароли к папкам вкладок. Хранятся ТОЛЬКО в шифрованном виде: safeStorage ОС
@@ -49,6 +50,28 @@ export function isFolderPasswordEncryptionAvailable(): boolean {
 }
 
 /**
+ * Сессионные разблокировки папок («запомнить пароль» на N минут). Только память
+ * процесса: пароль открытым текстом здесь не лежит — хранится лишь отметка
+ * «эта папка уже проверена», срок задаёт config.folderPasswordRememberMinutes.
+ */
+const unlocks = createFolderUnlockStore()
+
+/** Запомнить верный пароль папки на minutes минут. */
+export function unlockFolder(folderId: string, minutes: number): void {
+  unlocks.unlock(folderId, minutes)
+}
+
+/** Не спрашивать пароль, пока папка «запомнена». */
+export function isFolderUnlocked(folderId: string): boolean {
+  return unlocks.isUnlocked(folderId)
+}
+
+/** Снять разблокировку папки. */
+export function lockFolder(folderId: string): void {
+  unlocks.lock(folderId)
+}
+
+/**
  * Сохранить пароль папки (создание или замена существующего). Пустой пароль —
  * снимает защиту (удаление записи). Возвращает id записи (для NavFolder.passwordId)
  * или null, если пароль пустой или шифрохранилище недоступно.
@@ -56,6 +79,8 @@ export function isFolderPasswordEncryptionAvailable(): boolean {
 export function saveFolderPassword(folderId: string, password: string): string | null {
   const trimmed = (password ?? '').trim()
   if (!isFolderPasswordEncryptionAvailable()) return null
+  // Пароль меняется — прежняя разблокировка («запомнить») больше недействительна.
+  unlocks.lock(folderId)
   if (!trimmed) {
     clearFolderPassword(folderId)
     return null
@@ -73,6 +98,7 @@ export function saveFolderPassword(folderId: string, password: string): string |
 
 /** Снять защиту папки (удалить запись с паролем). */
 export function clearFolderPassword(folderId: string): void {
+  unlocks.lock(folderId)
   const all = readAll()
   const next = all.filter((a) => a.folderId !== folderId)
   if (next.length === all.length) return

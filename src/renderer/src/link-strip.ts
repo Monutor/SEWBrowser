@@ -9,7 +9,8 @@ import { UNASSIGNED_FOLDER, fillFolderSelect, hasUserFolders, orderedGroups, tab
  */
 export interface LinkStripDeps {
   config(): ShellConfig | null
-  promptFolderPassword(folderId: string): Promise<string | null>
+  /** Разрешить раскрытие защищённой папки (без пароля, «запомнено» или введён). */
+  ensureFolderAccess(folderId: string): Promise<boolean>
   closeTabs(): void
   moveTab(tabId: string, delta: number): void
   openEditForm(tab: NavTab): void
@@ -164,9 +165,9 @@ async function toggleExpandInStrip(folderId: string): Promise<void> {
     renderStrip()
     return
   }
-  const group = orderedGroups().find((g) => g.id === folderId)
-  // Защищённую папку разворачиваем только после ввода правильного пароля.
-  if (group?.passwordId && (await deps.promptFolderPassword(folderId)) === null) return // Отмена.
+  // Защищённую папку разворачиваем только после ввода правильного пароля
+  // (или пока он «запомнен» — тогда диалога нет).
+  if (!(await deps.ensureFolderAccess(folderId))) return
   expandedGroupId = folderId
   renderStrip()
   renderGroupPanel()

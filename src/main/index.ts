@@ -9,7 +9,7 @@ import { autoUpdater } from 'electron-updater'
 import { getConfig, isDebugMode, saveConfig, type ScanFolder } from './config'
 import { loadPlugins, listAllPlugins } from './plugins/loader'
 import { getPluginData, removePluginData, setPluginData } from './plugins/store'
-import { clearFolderPassword, isFolderPasswordEncryptionAvailable, saveFolderPassword, verifyFolderPassword } from './credentials/folderPasswords'
+import { clearFolderPassword, isFolderPasswordEncryptionAvailable, isFolderUnlocked, lockFolder, saveFolderPassword, unlockFolder, verifyFolderPassword } from './credentials/folderPasswords'
 import { getAccountSecrets, getLastUsedAccountId, listAccounts, removeAccount, saveAccount, setLastUsedAccountId } from './credentials/store'
 import { appendDownloadRecord, clearDownloadHistory, loadDownloadHistory, removeDownloadRecord } from './downloads/history'
 import { screenshotFileName } from './screenshot'
@@ -573,10 +573,20 @@ function createWindow(): void {
      clearFolderPassword(folderId)
    })
    ipcMain.handle('folder-passwords:verify', (_event, input: unknown) => {
-     const v = (input ?? {}) as { folderId?: unknown; password?: unknown }
+     const v = (input ?? {}) as { folderId?: unknown; password?: unknown; remember?: unknown }
      if (typeof v.folderId !== 'string' || !v.folderId) return false
      if (!isFolderPasswordEncryptionAvailable()) return false
-     return verifyFolderPassword(v.folderId, typeof v.password === 'string' ? v.password : '')
+     const ok = verifyFolderPassword(v.folderId, typeof v.password === 'string' ? v.password : '')
+     if (!ok) return false
+     // Галка «запомнить пароль»: держим папку открытой на срок из настроек.
+     // Без галки — снимаем прежнюю разблокировку, пароль спросят снова.
+     if (v.remember === true) unlockFolder(v.folderId, getConfig().folderPasswordRememberMinutes)
+     else lockFolder(v.folderId)
+     return true
+   })
+   ipcMain.handle('folder-passwords:unlocked', (_event, folderId: unknown) => {
+     if (typeof folderId !== 'string' || !folderId) return false
+     return isFolderUnlocked(folderId)
    })
   ipcMain.on('window:min', () => mainWindow?.minimize())
   ipcMain.handle('shell:open-external', (_event, url: unknown) => {
