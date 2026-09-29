@@ -171,6 +171,8 @@ interface ShellConfig {
   zoom: Record<string, number>
   print?: PrintSettings
   downloadsDir?: string
+  stockDir?: string
+  stockObjectId: string
   clearOnExit: 'none' | 'cache' | 'all'
   tabs: NavTab[]
   folders: NavFolder[]
@@ -236,6 +238,13 @@ interface NetFetchResult {
   ok: boolean
   status: number
   data: unknown
+}
+
+interface StockDownloadResult {
+  ok: boolean
+  path?: string
+  name?: string
+  error?: string
 }
 
 interface StorageUsage {
@@ -430,6 +439,10 @@ interface ShellApi {
   copyText(text: string): Promise<boolean>
   /** Выбор папки сохранения файлов; null — отмена */
   pickDownloadsDir(): Promise<string | null>
+  /** Скачать отчёт об остатках SEW (xlsx) в папку остатков; objectId — код магазина */
+  downloadStock(objectId?: string): Promise<StockDownloadResult>
+  /** Выбор папки для отчёта об остатках; null — отмена */
+  pickStockDir(): Promise<string | null>
   /** Принтеры системы (список одинаков для всех webContents) */
   listPrinters(): Promise<ShellPrinter[]>
   /** ПКМ по странице → «Печать…»: main шлёт 'shell:open-print' */

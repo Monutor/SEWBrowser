@@ -12,6 +12,7 @@ import { getPluginData, removePluginData, setPluginData } from './plugins/store'
 import { clearFolderPassword, isFolderPasswordEncryptionAvailable, isFolderUnlocked, lockFolder, saveFolderPassword, unlockFolder, verifyFolderPassword } from './credentials/folderPasswords'
 import { getAccountSecrets, getLastUsedAccountId, listAccounts, removeAccount, saveAccount, setLastUsedAccountId } from './credentials/store'
 import { appendDownloadRecord, clearDownloadHistory, loadDownloadHistory, removeDownloadRecord } from './downloads/history'
+import { bearerHeader, isValidObjectId, parseStockReport, stockFileName, stockReportUrl } from './downloads/stockReport'
 import { screenshotFileName } from './screenshot'
 import { clearSoundFile, mimeForSoundExt, readSoundFile, saveSoundFile } from './sounds/store'
 import { isSoundSizeOk, isSoundSlot, pickSoundExt } from './sounds/validate'
@@ -107,6 +108,18 @@ function defaultSaveDir(): string {
     return existsSync(configured) && statSync(configured).isDirectory() ? configured : fallback
   } catch {
     return fallback
+  }
+}
+
+/** Папка для отчёта об остатках: своя настройка, иначе папка загрузок.
+ *  Несуществующая папка не должна ломать сохранение — откат на загрузки. */
+function stockSaveDir(): string {
+  const configured = getConfig().stockDir
+  if (!configured) return defaultSaveDir()
+  try {
+    return existsSync(configured) && statSync(configured).isDirectory() ? configured : defaultSaveDir()
+  } catch {
+    return defaultSaveDir()
   }
 }
 
@@ -338,6 +351,20 @@ function createWindow(): void {
     const dir = Array.isArray(picked) ? picked[0] : undefined
     if (!dir) return null
     saveConfig({ downloadsDir: dir })
+    return dir
+  })
+  // Папка для отчёта об остатках. Пустая строка = папка загрузок (defaultSaveDir),
+  // поэтому сброс = пустая строка, как у downloadsDir.
+  ipcMain.handle('stock:pick-dir', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return null
+    const picked = dialog.showOpenDialogSync(mainWindow, {
+      title: 'Папка для отчёта об остатках',
+      defaultPath: stockSaveDir(),
+      properties: ['openDirectory', 'createDirectory'],
+    })
+    const dir = Array.isArray(picked) ? picked[0] : undefined
+    if (!dir) return null
+    saveConfig({ stockDir: dir })
     return dir
   })
   // Список системных принтеров для диалога печати. Список одинаков для любого
@@ -1355,6 +1382,126 @@ function createWindow(): void {
     })
     void win.loadURL(pathToFileURL(htmlPath).toString())
   }
+
+  /**
+   * Bearer SEW из живой гостевой страницы. API отдаёт 401 на запрос без него:
+   * куки гостя (общая default session) не заменяют заголовок. Источник —
+   * перехват заголовков SPA в features/sew-auth; запасной путь — токены
+   * Keycloak в sessionStorage/localStorage. Токен живёт только в этой функции
+   * и в заголовке запроса: ни в лог, ни в историю загрузок, ни в renderer.
+   * Если ни одна вкладка SEW не открыта или страница ещё не слала запросы —
+   * null, вызывающий покажет понятный текст.
+   */
+  const SEW_BEARER_JS = `(function () {
+    try {
+      if (typeof window.__sewAuthBearer === 'string' && window.__sewAuthBearer) {
+        return window.__sewAuthBearer
+      }
+      var stores = []
+      try { stores.push(window.sessionStorage) } catch (e) {}
+      try { stores.push(window.localStorage) } catch (e) {}
+      for (var i = 0; i < stores.length; i++) {
+        var raw = stores[i].getItem('keycloak.token')
+        if (!raw) continue
+        var parsed = null
+        try { parsed = JSON.parse(raw) } catch (e) {}
+        var tok = parsed && (parsed.token || parsed.idToken || parsed.accessToken)
+        if (typeof tok === 'string' && tok) return 'Bearer ' + tok
+      }
+    } catch (e) {}
+    return null
+  })()`
+
+  async function fetchSewBearer(): Promise<string | null> {
+    for (const id of attachedGuests) {
+      const guest = webContents.fromId(id)
+      if (!guest || guest.isDestroyed()) continue
+      const url = guest.getURL()
+      if (!/(^|\.)mvideoeldorado\.ru$/i.test(safeHost(url))) continue
+      let raw: unknown = null
+      try {
+        raw = await guest.executeJavaScript(SEW_BEARER_JS)
+      } catch {
+        continue
+      }
+      const header = bearerHeader(raw)
+      if (header) return header
+    }
+    return null
+  }
+
+  /** Хост URL без учёта регистра и мусора; '' на не-строке/битом URL. */
+  function safeHost(url: string): string {
+    try {
+      return new URL(url).hostname
+    } catch {
+      return ''
+    }
+  }
+
+  // Отчёт об остатках по кнопке тулбара. Ответ SEW — не файл, а JSON-конверт
+  // с base64 внутри, поэтому качаем JSON целиком и распаковываем в Node: одна
+  // распаковка вместо base64 через executeJavaScript и без лимита на размер.
+  // net.fetch идёт в default session, куки гостя общие — SSO работает без
+  // перелогина; но API требует ещё и Bearer (см. fetchSewBearer), поэтому
+  // заголовок берём из живой вкладки SEW. Повторный клик в тот же день
+  // перезаписывает файл: на день и магазин держим один свежий отчёт.
+  ipcMain.handle('stock:download', async (_event, objectId: unknown) => {
+    const config = getConfig()
+    // Из renderer приходит только код магазина: адрес собирается из константы
+    // по этому коду, произвольный URL сквозь мост не проходит.
+    const shop = isValidObjectId(objectId) ? objectId : config.stockObjectId
+    if (!isValidObjectId(shop)) return { ok: false, error: 'код магазина не задан' }
+    const dir = stockSaveDir()
+    const seq = ++downloadSeq
+    const startedAt = new Date().toISOString()
+    const who = await resolveAttribution(null)
+    const fail = (message: string): { ok: false; error: string } => {
+      console.warn('[shell] stock download failed:', message)
+      sendDownloadEvent(seq, 'отчёт об остатках', { type: 'done', ok: false, state: 'failed' })
+      appendDownloadRecord({
+        id: randomUUID(),
+        name: 'отчёт об остатках',
+        path: dir,
+        bytes: 0,
+        state: 'error',
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        ...who,
+      })
+      return { ok: false, error: message }
+    }
+    sendDownloadEvent(seq, 'отчёт об остатках', { type: 'started' })
+    try {
+      const auth = await fetchSewBearer()
+      if (!auth) throw new Error('Bearer SEW не найден: откройте страницу SEW и повторите')
+      const res = await net.fetch(stockReportUrl(shop), { headers: { Accept: 'application/json', Authorization: auth } })
+      if (res.status === 401) throw new Error('сессия SEW протухла — обновите страницу SEW')
+      if (res.status === 403) throw new Error('нет прав на остатки по магазину ' + shop)
+      if (!res.ok) throw new Error('HTTP ' + res.status)
+      const report = parseStockReport(await res.json())
+      const name = stockFileName(shop, report.responseDate, report.ext)
+      const filePath = join(dir, name)
+      writeFileSync(filePath, report.data)
+      const bytes = report.data.length
+      const finishedAt = new Date().toISOString()
+      sendDownloadEvent(seq, name, { type: 'progress', received: bytes, total: bytes, percent: 100 })
+      sendDownloadEvent(seq, name, { type: 'done', ok: true, path: filePath, state: 'completed' })
+      appendDownloadRecord({
+        id: randomUUID(),
+        name,
+        path: filePath,
+        bytes,
+        state: 'done',
+        startedAt,
+        finishedAt,
+        ...who,
+      })
+      return { ok: true, path: filePath, name }
+    } catch (err) {
+      return fail(String((err as Error)?.message ?? err))
+    }
+  })
 
   async function downloadGuestUrl(guest: WebContents, url: string): Promise<void> {
     const id = ++downloadSeq

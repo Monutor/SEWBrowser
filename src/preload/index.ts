@@ -42,9 +42,21 @@ interface ShellConfigLike {
   /** Настройки диалога печати; нет — renderer ставит свои дефолты */
   print?: PrintSettingsLike
   downloadsDir?: string
+  stockDir?: string
+  stockObjectId: string
   clearOnExit: 'none' | 'cache' | 'all'
   tabs: NavTabLike[]
   scanFolders: ScanFolderLike[]
+}
+
+interface StockDownloadResult {
+  ok: boolean
+  /** Полный путь сохранённого файла — только при ok */
+  path?: string
+  /** Имя файла — только при ok */
+  name?: string
+  /** Причина неудачи — только при !ok */
+  error?: string
 }
 
 interface DownloadEventLike {
@@ -328,6 +340,11 @@ const api = {
   copyText: (text: string): Promise<boolean> => ipcRenderer.invoke('clipboard:write-text', text),
   /** Выбор папки сохранения файлов (окно «Загрузки»); null — отмена */
   pickDownloadsDir: (): Promise<string | null> => ipcRenderer.invoke('downloads:pick-dir'),
+  /** Скачать отчёт об остатках по коду магазина; objectId — код из настроек */
+  downloadStock: (objectId?: string): Promise<StockDownloadResult> =>
+    ipcRenderer.invoke('stock:download', objectId),
+  /** Выбор папки для отчёта об остатках; null — отмена */
+  pickStockDir: (): Promise<string | null> => ipcRenderer.invoke('stock:pick-dir'),
   /** Принтеры системы для диалога печати (name идёт в deviceName) */
   listPrinters: (): Promise<ShellPrinterLike[]> => ipcRenderer.invoke('printers:list'),
   /** ПКМ по странице → «Печать…»: main шлёт 'shell:open-print' */

@@ -1,0 +1,6 @@
+{
+  "name": "sew-auth",
+  "version": "1.0.0",
+  "description": "Перехватывает Bearer SEW из запросов SPA и кладёт его в window.__sewAuthBearer для main",
+  "renderer": "./main.js"
+}

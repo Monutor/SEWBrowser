@@ -2,6 +2,7 @@ import { app } from 'electron'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { normalizeRememberMinutes } from './credentials/folderUnlock'
+import { DEFAULT_OBJECT_ID, isValidObjectId } from './downloads/stockReport'
 
 export interface NavTab {
   id: string;
@@ -70,8 +71,12 @@ export interface SewConfig {
    print?: PrintSettings;
   /** Папка сохранения файлов по умолчанию; пустая строка — системная «Загрузки» */
   downloadsDir?: string;
+  /** Папка для отчёта об остатках; пустая строка — та же, что downloadsDir */
+  stockDir?: string;
+  /** Код магазина для отчёта об остатках (objectId в запросе) */
+  stockObjectId: string;
    /** Автоочистка при выходе: 'none' | 'cache' (только HTTP-кэш) | 'all' (кэш + все хранилища) */
-   clearOnExit: 'none' | 'cache' | 'all';
+  clearOnExit: 'none' | 'cache' | 'all';
    tabs: NavTab[];
    /** Папки для группировки вкладок (один уровень). Связаны через NavTab.folderId. */
    folders: NavFolder[];
@@ -105,6 +110,7 @@ const DEFAULTS: SewConfig = {
   scannerAppPath: '',
   scannerAppArgs: '',
   folderPasswordRememberMinutes: 5,
+  stockObjectId: DEFAULT_OBJECT_ID,
     scanFolders: [],
 }
 
@@ -249,6 +255,8 @@ function sanitizeConfig(user: Partial<SewConfig>): SewConfig {
     zoom: { ...DEFAULTS.zoom, ...pickZoom(user.zoom) },
     print: pickPrint(user.print),
     downloadsDir: pickString(user.downloadsDir, ''),
+    stockDir: pickString(user.stockDir, ''),
+    stockObjectId: isValidObjectId(user.stockObjectId) ? user.stockObjectId : DEFAULT_OBJECT_ID,
     clearOnExit: user.clearOnExit === 'cache' || user.clearOnExit === 'all' ? user.clearOnExit : 'none',
     folders,
     tabs,
@@ -281,6 +289,12 @@ export function saveConfig(partial: Partial<SewConfig>): SewConfig {
   // только не-строки, а не пустые.
   if ('downloadsDir' in validPartial && typeof validPartial.downloadsDir !== 'string') {
     delete validPartial.downloadsDir
+  }
+  if ('stockDir' in validPartial && typeof validPartial.stockDir !== 'string') {
+    delete validPartial.stockDir
+  }
+  if ('stockObjectId' in validPartial && !isValidObjectId(validPartial.stockObjectId)) {
+    delete validPartial.stockObjectId
   }
   const merged: Partial<SewConfig> = {
     ...current,

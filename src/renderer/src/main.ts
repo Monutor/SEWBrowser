@@ -25,6 +25,7 @@ import {
 } from './templates-overlay'
 import { openAccounts, closeAccounts, wireAccounts, checkLoginForm, accountsOverlayEl, setLoginPrompted } from './accounts-overlay'
 import { wireDownloads, closeDownloads, downloadsOverlayEl } from './downloads-overlay'
+import { wireStockReport } from './stock-report'
 import { initSettings, wireSettings, closeSettings, settingsOverlayEl } from './settings-overlay'
 import { initBridges, startScansBridge, startSewHelperBridge, startTasksNotifyBridge } from './bridges'
 import { initTabEvents, startLinkIntake, wireTabEvents } from './tab-events'
@@ -250,6 +251,7 @@ async function init(): Promise<void> {
   wireSettings()
   wireAccounts()
   wireDownloads()
+  wireStockReport()
   wireHelp()
   wireTemplates({ plugins: () => plugins })
   initTabsOverlay({
