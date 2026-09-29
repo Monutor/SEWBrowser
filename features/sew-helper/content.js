@@ -433,8 +433,32 @@ function fillDialogBarcode(dialog, barcode) {
   try { input.focus(); } catch (e) { /* noop */ }
 }
 
+const SHELF_SECTION_BLOCKED_TITLES = [
+  '\u041D\u0430\u0447\u0430\u043B\u043E \u043F\u0440\u0438\u0435\u043C\u043A\u0438'
+];
+
+const SHELF_SECTION_BLOCKED_MARKERS = [
+  '.receiving-start-content',
+  '[formcontrolname="lorryNumber"]',
+  '.seal-radio-group'
+];
+
+function isShelfSectionBlocked(dialog) {
+  for (var i = 0; i < SHELF_SECTION_BLOCKED_MARKERS.length; i++) {
+    if (dialog.querySelector(SHELF_SECTION_BLOCKED_MARKERS[i])) return true;
+  }
+  const title = dialog.querySelector('.mat-mdc-dialog-title, [matdialogtitle]');
+  let text = (title && title.textContent) || '';
+  text = text.replace(/\u0451/g, '\u0435').replace(/\u0401/g, '\u0415').toLowerCase();
+  for (var j = 0; j < SHELF_SECTION_BLOCKED_TITLES.length; j++) {
+    if (text.indexOf(SHELF_SECTION_BLOCKED_TITLES[j]) !== -1) return true;
+  }
+  return false;
+}
+
 function injectShelfSection(dialog) {
   if (dialog.querySelector('.sew-helper-shelf-section')) return;
+  if (isShelfSectionBlocked(dialog)) return;
   const actions = dialog.querySelector('.mat-mdc-dialog-actions');
   if (!actions) return;
   const section = document.createElement('div');
