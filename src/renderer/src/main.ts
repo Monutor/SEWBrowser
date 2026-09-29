@@ -357,6 +357,7 @@ async function init(): Promise<void> {
   window.shell.onScansChanged((files) => {
     const payload = JSON.stringify(files ?? [])
     for (const tab of listTabs()) {
+      if (!tab.loaded) continue
       void guestJS<void>(tab, 'scans-push', '(function(list){try{window.dispatchEvent(new CustomEvent("scans-block:update",{detail:list}))}catch(e){}})(' + payload + ')').catch(() => {})
     }
   })

@@ -357,7 +357,9 @@ interface ShellApi {
   windowMax(): void
   windowClose(): void
   setFullscreen(enable?: boolean): Promise<boolean>
+  openPageWindow(url: string, title?: string): Promise<boolean>
   attachGuest(webContentsId: number): void
+  setGuestPollHost(webContentsId: number): void
   onShortcut(cb: (name: string) => void): void
   openExternal(url: string): Promise<boolean>
   showItemInFolder(filePath: string): Promise<boolean>

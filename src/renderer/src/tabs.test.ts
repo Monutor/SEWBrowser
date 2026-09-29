@@ -107,6 +107,10 @@ interface Harness {
   demoted: number[]
   /** Зарегистрированные обработчики onMenuAction — тест шлёт в них action вручную */
   menuActions: Array<(action: string) => void>
+  /** Вызовы openPageWindow: [url, title] — по ним проверяем Ctrl+ЛКМ */
+  pageWindows: Array<[string, string | undefined]>
+  /** Последний опубликованный опросный хост (id гостя, 0 — хоста нет) */
+  pollHostIds: number[]
 }
 
 function setup(
@@ -116,7 +120,7 @@ function setup(
   const container = mkEl('div')
   const strip = mkEl('div')
   const newTab = mkEl('button')
-  const h: Harness = { container, strip, newTab, wired: [], activated: [], closed: [], blocked: [], popupItems: [], demoted: [], menuActions: [] }
+  const h: Harness = { container, strip, newTab, wired: [], activated: [], closed: [], blocked: [], popupItems: [], demoted: [], menuActions: [], pageWindows: [], pollHostIds: [] }
   lastStrip = strip
   ;(globalThis as unknown as { window: unknown }).window = {
     shell: {
@@ -126,6 +130,13 @@ function setup(
       },
       onMenuAction: (cb: (action: string) => void): void => {
         h.menuActions.push(cb)
+      },
+      openPageWindow: (url: string, title?: string): Promise<boolean> => {
+        h.pageWindows.push([url, title])
+        return Promise.resolve(true)
+      },
+      setGuestPollHost: (id: number): void => {
+        h.pollHostIds.push(id)
       },
     },
   }
@@ -188,6 +199,90 @@ describe('openTab', () => {
     assert.equal(tabsModule.isActiveTab(first), true)
     assert.equal(second.view.getAttribute('data-hidden'), '')
     assert.deepEqual(h.activated, [first.id])
+  })
+
+  // Ленивая загрузка фоновых вкладок: пока вкладку не открыли, у неё нет ни
+  // webview в DOM, ни гостя — на слабых машинах это основная экономия памяти.
+  it('фоновая вкладка не грузится: webview нет в DOM, src не задан', () => {
+    const h = setup()
+    const first = tabsModule.openTab('https://sew.mvideoeldorado.ru/v2/')
+    const second = tabsModule.openTab('https://sew.mvideoeldorado.ru/v2/handover-v2/tasks', { activate: false })
+    assert.ok(first && second)
+    assert.equal(h.container.children.length, 1)
+    assert.equal(second.view.getAttribute('src'), null)
+    assert.equal(second.loaded, false)
+    // Обработчики вешаются сразу — иначе did-navigate первой загрузки ушёл бы в никуда
+    assert.deepEqual(h.wired, [first.id, second.id])
+  })
+
+  it('активация догружает фоновую вкладку ровно один раз', () => {
+    const h = setup()
+    tabsModule.openTab('https://sew.mvideoeldorado.ru/v2/')
+    const second = tabsModule.openTab('https://sew.mvideoeldorado.ru/v2/handover-v2/tasks', { activate: false })
+    assert.ok(second)
+    tabsModule.activateTab(second)
+    assert.equal(second.loaded, true)
+    assert.equal(h.container.children.length, 2)
+    assert.equal(second.view.getAttribute('src'), 'https://sew.mvideoeldorado.ru/v2/handover-v2/tasks')
+    // Повторная активация не плодит гостей и не перезагружает страницу
+    const srcAfter = second.view.getAttribute('src')
+    tabsModule.activateTab(second)
+    assert.equal(h.container.children.length, 2)
+    assert.equal(second.view.getAttribute('src'), srcAfter)
+  })
+
+  it('закрытие активной вкладки догружает ту, что становится активной', () => {
+    const h = setup()
+    const first = tabsModule.openTab('https://sew.mvideoeldorado.ru/v2/')
+    const second = tabsModule.openTab('https://sew.mvideoeldorado.ru/v2/handover-v2/tasks', { activate: false })
+    assert.ok(first && second)
+    tabsModule.closeTab(first.id)
+    assert.equal(second.loaded, true)
+    assert.equal(h.container.children.length, 1)
+  })
+
+  it('закрытие первой вкладки догружает нового опросного хоста', () => {
+    const h = setup()
+    const first = tabsModule.openTab('https://sew.mvideoeldorado.ru/v2/')
+    const second = tabsModule.openTab('https://sew.mvideoeldorado.ru/v2/handover-v2/tasks', { activate: false })
+    assert.ok(first && second)
+    tabsModule.closeTab(first.id)
+    assert.equal(second.isPrimary, true)
+    assert.equal(second.loaded, true)
+  })
+
+  it('перестановка первой вкладки догружает нового опросного хоста', () => {
+    const h = setup()
+    tabsModule.openTab('https://sew.mvideoeldorado.ru/v2/')
+    const second = tabsModule.openTab('https://sew.mvideoeldorado.ru/v2/handover-v2/tasks', { activate: false })
+    assert.ok(second)
+    tabsModule.moveTab(second.id, 0)
+    assert.equal(second.isPrimary, true)
+    assert.equal(second.loaded, true)
+  })
+
+  it('сплит догружает обе панели', () => {
+    const h = setup()
+    tabsModule.openTab('https://sew.mvideoeldorado.ru/v2/')
+    const second = tabsModule.openTab('https://sew.mvideoeldorado.ru/v2/handover-v2/tasks', { activate: false })
+    assert.ok(second)
+    tabsModule.splitView()
+    assert.equal(second.loaded, true)
+    assert.equal(h.container.children.length, 2)
+  })
+
+  it('публикует опросного хоста: его id гостя, у остальных — 0', () => {
+    const h = setup()
+    const first = tabsModule.openTab('https://sew.mvideoeldorado.ru/v2/')
+    const second = tabsModule.openTab('https://sew.mvideoeldorado.ru/v2/handover-v2/tasks', { activate: false })
+    assert.ok(first && second)
+    tabsModule.setTabGuestId(first, 11)
+    tabsModule.setTabGuestId(second, 22)
+    // Хост — первая вкладка, её id и публикуется (у второй свой id не в счёт)
+    assert.equal(h.pollHostIds[h.pollHostIds.length - 1], 11)
+    // Смена хоста (закрыли первую вкладку) публикует id нового
+    tabsModule.closeTab(first.id)
+    assert.equal(h.pollHostIds[h.pollHostIds.length - 1], 22)
   })
 
   it('не создаёт вкладку для хоста вне allowlist и сообщает об отказе', () => {
@@ -507,7 +602,7 @@ describe('полоса вкладок', () => {
     assert.equal(tabsModule.activeTab()?.url, 'https://sew.mvideoeldorado.ru/v2/')
   })
 
-  it('ПКМ по вкладке предлагает закрыть / закрыть другие / закрыть справа', () => {
+  it('ПКМ по вкладке предлагает открыть в окне / закрыть / закрыть другие / закрыть справа', () => {
     const h = setup()
     const a = tabsModule.openTab('https://a.mvideoeldorado.ru/')
     tabsModule.openTab('https://b.mvideoeldorado.ru/')
@@ -516,8 +611,33 @@ describe('полоса вкладок', () => {
     fire(h.strip.children[0], 'contextmenu', { preventDefault(): void {}, clientX: 10, clientY: 20 })
     assert.deepEqual(
       h.popupItems.map((item) => item.action),
-      ['close', 'close-others', 'close-right'],
+      ['open-window', 'close', 'close-others', 'close-right'],
     )
+  })
+
+  it('Ctrl+ЛКМ открывает страницу вкладки в отдельном окне и не активирует вкладку', () => {
+    const h = setup()
+    const a = tabsModule.openTab('https://a.mvideoeldorado.ru/')
+    tabsModule.openTab('https://b.mvideoeldorado.ru/')
+    const c = tabsModule.openTab('https://c.mvideoeldorado.ru/')
+    assert.ok(a && c)
+    // Кликаем по НЕактивной вкладке a — актуальной остаётся c
+    fire(h.strip.children[0], 'mousedown', { button: 0, ctrlKey: true, preventDefault(): void {} })
+    assert.deepEqual(h.pageWindows, [[a.url, a.title]])
+    fire(h.strip.children[0], 'click', {})
+    assert.equal(tabsModule.activeTab()?.id, c.id)
+  })
+
+  it('обычный ЛКМ по вкладке окно не открывает', () => {
+    const h = setup()
+    const a = tabsModule.openTab('https://a.mvideoeldorado.ru/')
+    tabsModule.openTab('https://b.mvideoeldorado.ru/')
+    const c = tabsModule.openTab('https://c.mvideoeldorado.ru/')
+    assert.ok(a && c)
+    fire(h.strip.children[0], 'mousedown', { button: 0, ctrlKey: false, preventDefault(): void {} })
+    assert.deepEqual(h.pageWindows, [])
+    fire(h.strip.children[0], 'click', {})
+    assert.equal(tabsModule.activeTab()?.id, a.id)
   })
 
   it('меню закрывает вкладку, остальные и справа', () => {

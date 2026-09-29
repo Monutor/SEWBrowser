@@ -17,6 +17,7 @@ docs/
 .gemini/
 .superpowers/
 *.code-workspace
+OPTIMIZATION.md
 
 # Editors / OS
 .vscode/

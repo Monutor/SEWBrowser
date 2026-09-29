@@ -176,8 +176,16 @@ const api = {
   /** enable опущен — переключить; возвращает новое состояние fullscreen */
   setFullscreen: (enable?: boolean): Promise<boolean> =>
     ipcRenderer.invoke('window:fullscreen', enable),
+  /** Открыть страницу вкладки в отдельном окне (Ctrl+ЛКМ по вкладке) */
+  openPageWindow: (url: string, title?: string): Promise<boolean> =>
+    ipcRenderer.invoke('window:open-page', { url, title }),
   /** Привязка гостевого webContents (для перехвата хоткеев внутри страницы) */
   attachGuest: (webContentsId: number): void => ipcRenderer.send('guest:attach', webContentsId),
+  /**
+   * Кто сейчас опросный хост (первая вкладка): только его таймеры main не
+   * троттлит, иначе tasks-notify в скрытой вкладке замолчит. 0 — хоста нет.
+   */
+  setGuestPollHost: (webContentsId: number): void => ipcRenderer.send('guest:poll-host', webContentsId),
   onShortcut: (cb: (name: string) => void): void => {
     ipcRenderer.on('shell:shortcut', (_event, name: string) => cb(name))
   },

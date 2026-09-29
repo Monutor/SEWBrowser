@@ -1,4 +1,4 @@
-import { clampTabIndex, cycleTabIndex, normalizeTabUrl, tabFavicon, tabTitle } from './tabs-core.ts'
+import { clampTabIndex, cycleTabIndex, isOpenInWindowGesture, normalizeTabUrl, tabFavicon, tabTitle } from './tabs-core.ts'
 
 /**
  * Менеджер вкладок: по одному живому <webview> на вкладку, все работают одновременно.
@@ -27,6 +27,14 @@ export interface ShellTab {
    * Пустая строка — картинки нет, рисуем буквенный кружок.
    */
   faviconData: string
+  /**
+   * Вкладка загружена: webview создан, src установлен, гость живёт.
+   * Фоновые вкладки создаются лениво (см. ensureTabLoaded) — пока флаг снят,
+   * webview даже не вставлен в DOM, и гостя за вкладкой просто нет.
+   */
+  loaded: boolean
+  /** id гостевого webContents (0, пока вкладка не загружена) — нужен main для троттлинга. */
+  guestId: number
 }
 
 export interface TabsHooks {
@@ -68,6 +76,11 @@ let focusPane: 'left' | 'right' = 'left'
 const stripButtons = new Map<number, HTMLButtonElement>()
 /** Порядок id, отрисованный в прошлый раз, — по нему решаем, нужна ли пересборка полосы. */
 let stripOrder: number[] = []
+/**
+ * Id вкладки, для которой mousedown уже открыл окно: ensuing click не должен
+ * ещё и активировать вкладку. Сбрасывается на самом click.
+ */
+let suppressClickTabId = 0
 
 export function initTabs(opts: TabsOptions): void {
   options = opts
@@ -146,6 +159,10 @@ export function splitView(): boolean {
   split = { leftId: tabs[0].id, rightId: tabs[1].id }
   focusPane = 'left'
   activeId = split.leftId
+  // Обе панели на виду — обе должны быть загружены (вторая могла остаться
+  // фоновой и незагруженной).
+  ensureTabLoaded(tabs[0])
+  ensureTabLoaded(tabs[1])
   applyVisibility()
   renderTabBar()
   o.hooks.onActivated(tabs[0])
@@ -219,6 +236,8 @@ export function openTab(rawUrl: string, opts?: { activate?: boolean }): ShellTab
       maxNav: 0,
       pendingHistory: 0,
       faviconData: '',
+      loaded: false,
+      guestId: 0,
     }
     if (pane === 'left') {
       split.leftId = fresh.id
@@ -227,9 +246,9 @@ export function openTab(rawUrl: string, opts?: { activate?: boolean }): ShellTab
       split.rightId = fresh.id
       tabs.push(fresh)
     }
-    o.container.appendChild(view)
     o.hooks.wire(fresh)
-    view.setAttribute('src', url)
+    // Панель становится активной сразу, поэтому грузим без ленивости.
+    ensureTabLoaded(fresh)
     focusPane = pane
     activeId = fresh.id
     applyVisibility()
@@ -248,19 +267,61 @@ export function openTab(rawUrl: string, opts?: { activate?: boolean }): ShellTab
     maxNav: 0,
     pendingHistory: 0,
     faviconData: '',
+    loaded: false,
+    guestId: 0,
   }
   tabs.push(tab)
-  o.container.appendChild(view)
   // Порядок важен: сначала обработчики, потом загрузка — иначе did-navigate уйдёт в никуда
   o.hooks.wire(tab)
-  view.setAttribute('src', url)
   if (opts?.activate === false) {
+    // Фоновая вкладка: страницу не грузим, пока её не откроют. Экономит
+    // отдельный процесс Chromium на каждую вкладку (главный расход памяти).
     applyVisibility()
     renderTabBar()
   } else {
+    ensureTabLoaded(tab)
     activateTab(tab)
   }
+  publishPollHost()
   return tab
+}
+
+/**
+ * Вставить webview вкладки в DOM (если ещё не вставлен) и запустить загрузку.
+ * До этого вкладка не существует для Chromium: ни гостя, ни его памяти, ни
+ * таймеров. Вызывается при активации, при смене опросного хоста и при сплите.
+ */
+function ensureTabLoaded(tab: ShellTab): void {
+  const o = options
+  if (!o || tab.loaded) return
+  tab.loaded = true
+  o.container.appendChild(tab.view)
+  viewLoadUrl(tab)
+}
+
+/** Загрузка/переход гостя на tab.url с безопасной обработкой ошибок. */
+function viewLoadUrl(tab: ShellTab): void {
+  try {
+    tab.view.setAttribute('src', tab.url)
+  } catch (err) {
+    console.warn('[shell] tab load failed:', err)
+  }
+}
+
+/**
+ * Сообщить main, какой гость сейчас опросный (первая вкладка): только ему
+ * оболочка оставляет таймеры без троттлинга — на нём висит tasks-notify.
+ */
+function publishPollHost(): void {
+  if (typeof window === 'undefined' || !window.shell || typeof window.shell.setGuestPollHost !== 'function') return
+  const primary = tabs.find((tab) => tab.isPrimary)
+  void window.shell.setGuestPollHost(primary?.guestId ?? 0)
+}
+
+/** Гость вкладки поднялся (dom-ready): запоминаем его id и публикуем опросного хоста. */
+export function setTabGuestId(tab: ShellTab, id: number): void {
+  tab.guestId = id
+  publishPollHost()
 }
 
 export function closeTab(id: number): void {
@@ -279,6 +340,9 @@ export function closeTab(id: number): void {
   } catch {
     /* webview уже мог быть уничтожен — не критично */
   }
+  publishPollHost()
+  // Новый опросный хост обязан быть загружен: на нём висит tasks-notify.
+  if (tabs.length > 0) ensureTabLoaded(tabs[0])
   // Разделение держится на двух вкладках: закрыли одну — остаётся одна на всё окно
   if (split && tabs.length !== 2) {
     unsplit()
@@ -294,6 +358,7 @@ export function closeTab(id: number): void {
   if (activeId === id) {
     const next = tabs[index] ?? tabs[tabs.length - 1]
     activeId = next.id
+    ensureTabLoaded(next)
     applyVisibility()
     renderTabBar()
     o.hooks.onActivated(next)
@@ -322,6 +387,9 @@ export function moveTab(id: number, toIndex: number): void {
     previousPrimary.isPrimary = false
     tabs[0].isPrimary = true
     o.hooks.onPrimaryChanged?.(previousPrimary)
+    publishPollHost()
+    // Новый опросный хост должен быть загружен, иначе tasks-notify некуда встать.
+    ensureTabLoaded(tabs[0])
   }
   renderTabBar()
 }
@@ -337,6 +405,7 @@ export function activateTab(tab: ShellTab): void {
     }
   }
   activeId = tab.id
+  ensureTabLoaded(tab)
   applyVisibility()
   renderTabBar()
   options.hooks.onActivated(tab)
@@ -511,7 +580,22 @@ function createTabButton(tab: ShellTab): HTMLButtonElement {
   })
   button.append(fav, label, close)
   button.addEventListener('click', () => {
+    // Ctrl+ЛКМ уже отработал на mousedown (открыл окно) — вкладку не активируем.
+    if (suppressClickTabId === tab.id) {
+      suppressClickTabId = 0
+      return
+    }
     activateTab(tab)
+  })
+  button.addEventListener('mousedown', (event) => {
+    const mouse = event as MouseEvent
+    suppressClickTabId = 0
+    if (!isOpenInWindowGesture(mouse)) return
+    // Ловим на mousedown, а не на click: окно должно подняться сразу,
+    // не дожидаясь отпускания кнопки. preventDefault гасит фокус и выделение.
+    mouse.preventDefault()
+    suppressClickTabId = tab.id
+    openTabInPageWindow(tab)
   })
   button.addEventListener('auxclick', (event) => {
     const mouse = event as MouseEvent
@@ -640,10 +724,30 @@ function updateTabButton(button: HTMLButtonElement, tab: ShellTab): void {
   if (label) label.textContent = tab.title
 }
 
+/**
+ * Открыть адрес в отдельном окне страницы. Общая точка для полосы вкладок
+ * и ленты ссылок: main сам разбирается с allowlist и заголовком окна.
+ */
+export function openUrlInPageWindow(url: string, title = ''): void {
+  if (!url) return
+  if (typeof window === 'undefined' || !window.shell || typeof window.shell.openPageWindow !== 'function') return
+  void window.shell.openPageWindow(url, title)
+}
+
+/**
+ * Открыть страницу вкладки в отдельном окне (Ctrl+ЛКМ по вкладке и пункт
+ * контекстного меню). Вкладка в оболочке остаётся на месте — окно получает
+ * копию страницы.
+ */
+export function openTabInPageWindow(tab: ShellTab): void {
+  openUrlInPageWindow(tab.url || tab.lastAllowedUrl, tab.title)
+}
+
 function showTabMenu(tab: ShellTab): void {
   if (typeof window === 'undefined' || !window.shell || typeof window.shell.popupMenu !== 'function') return
   const index = tabs.findIndex((entry) => entry.id === tab.id)
   const items: Array<{ label: string; action: string }> = [
+    { label: 'Открыть в новом окне', action: 'open-window' },
     { label: 'Закрыть вкладку', action: 'close' },
   ]
   if (split) {
@@ -662,6 +766,10 @@ function showTabMenu(tab: ShellTab): void {
 }
 
 function handleTabMenuAction(tab: ShellTab, action: string): void {
+  if (action === 'open-window') {
+    openTabInPageWindow(tab)
+    return
+  }
   if (action === 'split') {
     splitView()
     return

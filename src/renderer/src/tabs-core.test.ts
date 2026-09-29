@@ -4,6 +4,7 @@ import {
   clampTabIndex,
   cycleTabIndex,
   hostOfTabUrl,
+  isOpenInWindowGesture,
   normalizeTabUrl,
   tabTitle,
 } from './tabs-core.ts'
@@ -137,6 +138,23 @@ describe('tabFavicon', () => {
   it('хост не разобрать — заглушка', async () => {
     const { tabFavicon } = await import('./tabs-core.ts')
     assert.equal(tabFavicon('мусор').letter, '?')
+  })
+})
+
+describe('isOpenInWindowGesture', () => {
+  it('Ctrl+ЛКМ и Cmd+ЛКМ открывают вкладку в новом окне', () => {
+    assert.equal(isOpenInWindowGesture({ button: 0, ctrlKey: true }), true)
+    assert.equal(isOpenInWindowGesture({ button: 0, metaKey: true }), true)
+  })
+  it('обычный клик по вкладке ничего не открывает', () => {
+    assert.equal(isOpenInWindowGesture({ button: 0 }), false)
+    assert.equal(isOpenInWindowGesture({ button: 0, ctrlKey: false, metaKey: false }), false)
+  })
+  it('средняя кнопка остаётся за закрытием вкладки', () => {
+    assert.equal(isOpenInWindowGesture({ button: 1, ctrlKey: true }), false)
+  })
+  it('ПКМ не считается', () => {
+    assert.equal(isOpenInWindowGesture({ button: 2, ctrlKey: true }), false)
   })
 })
 

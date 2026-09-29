@@ -228,6 +228,7 @@ async function clearSessionAndLogout(): Promise<void> {
     // Сессия общая для всего окна — перезагружаем ВСЕ вкладки, иначе неактивные
     // продолжают рендерить залогиненную SEW до ручного F5.
     for (const tab of listTabs()) {
+      if (!tab.loaded) continue
       try {
         tab.view.reload()
       } catch (err) {
@@ -467,6 +468,7 @@ async function clearStorageTarget(target: 'cache' | 'cookies'): Promise<void> {
       // Куки общие для всего окна — перезагружаем ВСЕ вкладки, иначе неактивные
       // продолжают рендерить залогиненную SEW до ручного F5.
       for (const tab of listTabs()) {
+        if (!tab.loaded) continue
         try {
           tab.view.reload()
         } catch (err) {

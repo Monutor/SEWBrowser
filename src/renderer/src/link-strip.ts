@@ -1,4 +1,5 @@
 import { activeView, focusOrOpenTab, focusTabByUrl, openTab } from './tabs'
+import { isOpenInWindowGesture } from './tabs-core.ts'
 import { UNASSIGNED_FOLDER, fillFolderSelect, hasUserFolders, orderedGroups, tabsInFolder } from './nav-store'
 
 /**
@@ -27,6 +28,10 @@ const NAV_MENU_NEW = 'nav-new'
 
 /** URL вкладки, для которой открыто контекстное меню: ПКМ сам по себе ничего не открывает. */
 let menuUrl: string | null = null
+
+/** URL вкладки, у которой mousedown уже открыл окно: ensuing click не должен
+ *  ещё и увести текущую вкладку. Сбрасывается на самом click. */
+let suppressClickUrl: string | null = null
 
 let deps!: LinkStripDeps
 
@@ -75,12 +80,32 @@ export function currentViewUrl(): string {
  * Поведение вкладки ленты (и строки её в выпадающем списке папки):
  * ЛКМ — переход в текущем окне: если вкладка с таким URL уже открыта,
  * переключаемся на неё, иначе навигируем текущую (новую не создаём);
- * СКМ и пункт меню — новая вкладка.
+ * СКМ и пункт меню — новая вкладка;
+ * Ctrl+ЛКМ — новая вкладка в фоне (как Ctrl+клик по ссылке в самой странице:
+ * LINK_HOOK в tab-events.ts тоже открывает её без активации).
  * afterOpen вызывается после любого открытия — списку папки он закрывает себя.
  */
 function wireNavTab(el: HTMLElement, url: string, afterOpen?: () => void): void {
   el.addEventListener('click', () => {
+    // Ctrl+ЛКМ уже отработал на mousedown (открыл вкладку) — перехода не будет.
+    if (suppressClickUrl === url) {
+      suppressClickUrl = null
+      return
+    }
     if (!focusTabByUrl(url)) deps.navigateCurrent(url)
+    afterOpen?.()
+  })
+  el.addEventListener('mousedown', (event) => {
+    const mouse = event as MouseEvent
+    // Сброс на каждом нажатии: если click не придёт (строку выпадающего списка
+    // уже отсоединил afterOpen), флаг не должен утечь на следующий клик.
+    suppressClickUrl = null
+    if (!isOpenInWindowGesture(mouse)) return
+    // Ловим на mousedown, чтобы вкладка появилась сразу, не дожидаясь
+    // отпускания кнопки; preventDefault гасит фокус и выделение.
+    mouse.preventDefault()
+    suppressClickUrl = url
+    openTab(url)
     afterOpen?.()
   })
   el.addEventListener('auxclick', (event) => {

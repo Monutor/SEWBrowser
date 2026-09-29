@@ -7,6 +7,7 @@ import {
   openTab,
   setSplitFocus,
   setTabFavicon,
+  setTabGuestId,
   setTabTitle,
   setTabUrl,
   splitPaneOf,
@@ -168,8 +169,11 @@ export function wireTabEvents(tab: ShellTab): void {
   })
   view.addEventListener('dom-ready', () => {
     guestReady.add(view)
-    // Привязка гостевого webContents для перехвата хоткеев внутри страницы
+    // Привязка гостевого webContents для перехвата хоткеев внутри страницы.
+    // id запоминаем вкладке: по нему оболочка публикует опросного хоста,
+    // которому main не даёт троттлить таймеры.
     try {
+      setTabGuestId(tab, view.getWebContentsId())
       window.shell.attachGuest(view.getWebContentsId())
     } catch (err) {
       console.warn('[shell] guest attach failed:', err)

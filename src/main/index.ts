@@ -8,6 +8,8 @@ import { randomUUID } from 'node:crypto'
 import { autoUpdater } from 'electron-updater'
 import { getConfig, isDebugMode, saveConfig, type ScanFolder } from './config'
 import { loadPlugins, listAllPlugins } from './plugins/loader'
+import { bffFetch } from './bff'
+import { openPageWindow } from './pageWindow'
 import { getPluginData, removePluginData, setPluginData } from './plugins/store'
 import { clearFolderPassword, isFolderPasswordEncryptionAvailable, isFolderUnlocked, lockFolder, saveFolderPassword, unlockFolder, verifyFolderPassword } from './credentials/folderPasswords'
 import { getAccountSecrets, getLastUsedAccountId, listAccounts, removeAccount, saveAccount, setLastUsedAccountId } from './credentials/store'
@@ -143,9 +145,6 @@ function sanitizeFileName(raw: unknown, fallback: string, ext?: string): string 
   if (base.length > 180) base = base.slice(0, 180)
   return base || fallback
 }
-
-/** Единственные URL, доступные через fetch-мост 'net:fetch' (BFF mvideo для sew-helper) */
-const BFF_URL_RE = /^https:\/\/www\.mvideo\.ru\/(bff\/product-details\?productId=[\w-]+|products\/[\w-]+)\/?$/
 
 /** Иконка вкладки: допустимые mime и предел размера (крупные картинки не грузим) */
 const FAVICON_MIME_RE = /^image\/(png|jpeg|jpg|gif|webp|svg\+xml|x-icon|vnd\.microsoft\.icon|ico)$/
@@ -474,34 +473,9 @@ function createWindow(): void {
   })
   // ---------- Узкий fetch-мост для плагинов (BFF mvideo) ----------
   // Гость не может ходить в BFF напрямую: BFF отдаёт ACAO только www.mvideo.ru,
-  // из страницы SEW запрос режется CORS. net.fetch CORS не подвержен, а куки
-  // у него общие с webview (default session). URL строго из allowlist ниже.
-  ipcMain.handle('net:fetch', async (_event, url: unknown) => {
-    if (typeof url !== 'string' || !BFF_URL_RE.test(url)) return { ok: false, status: 0, data: null }
-    try {
-      const sku = /productId=([\w-]+)/.exec(url)?.[1]
-      const headers: Record<string, string> = { Accept: 'application/json' }
-      if (sku) {
-        // прогрев кук — зеркалит ensureCookies() из background.js расширения
-        try {
-          await (await net.fetch(`https://www.mvideo.ru/products/${sku}`)).text()
-        } catch {
-          // прогрев не критичен — пробуем BFF как есть
-        }
-        headers.Referer = `https://www.mvideo.ru/products/${sku}`
-      }
-      const res = await net.fetch(url, { headers })
-      let data: unknown = null
-      try {
-        data = await res.json()
-      } catch {
-        data = null
-      }
-      return { ok: res.ok, status: res.status, data }
-    } catch {
-      return { ok: false, status: 0, data: null }
-    }
-  })
+  // из страницы SEW запрос режется CORS. Сама загрузка — в bff.ts, её же
+  // использует насос BFF в окнах страницы (pageWindow.ts).
+  ipcMain.handle('net:fetch', (_event, url: unknown) => bffFetch(url))
   // Иконка вкладки: renderer не может забрать картинку с чужого хоста (CORS),
   // поэтому качаем в main через net.fetch и отдаём готовый data-URL.
   ipcMain.handle('favicon:fetch', async (_event, url: unknown) => {
@@ -980,11 +954,40 @@ function createWindow(): void {
     mainWindow.setFullScreen(next)
     return mainWindow.isFullScreen()
   })
+  // Ctrl+ЛКМ по вкладке / пункт меню: страница вкладки в отдельном окне
+  // (без тулбара оболочки, но с плагинами — см. pageWindow.ts).
+  ipcMain.handle('window:open-page', (_event, payload: unknown) => {
+    const data = (payload ?? {}) as { url?: unknown; title?: unknown }
+    return openPageWindow(data.url, data.title, { isAllowed: isAllowedUrl })
+  })
 
   // Хоткеи внутри гостевой страницы: фокус находится в webview,
   // shell-UI их не видит — перехватываем через before-input-event
   // и пересылаем в renderer, где живёт единый обработчик.
   const attachedGuests = new Set<number>()
+  /**
+   * Гость опросного хоста (первая вкладка оболочки) — единственный, чьи таймеры
+   * не троттлим: на нём висит tasks-notify, и Chromium ужимает setInterval в
+   * скрытой вкладке, из-за чего уведомления о заданиях молча перестают приходить.
+   * Остальные вкладки фоновые — их таймеры ровно то, что мы глушим.
+   */
+  let pollHostGuestId = 0
+  const applyGuestThrottling = (guest: WebContents): void => {
+    try {
+      guest.setBackgroundThrottling(guest.id !== pollHostGuestId)
+    } catch (err) {
+      console.warn('[shell] setBackgroundThrottling failed:', err)
+    }
+  }
+  // Хост меняется при перестановке/закрытии вкладок, поэтому пересчитываем
+  // троттлинг у всех уже подключённых гостей, а не только у новых.
+  ipcMain.on('guest:poll-host', (_event, id: unknown) => {
+    pollHostGuestId = typeof id === 'number' ? id : 0
+    for (const guestId of attachedGuests) {
+      const guest = webContents.fromId(guestId)
+      if (guest && !guest.isDestroyed()) applyGuestThrottling(guest)
+    }
+  })
   ipcMain.on('guest:attach', (_event, id: number) => {
     if (typeof id !== 'number' || attachedGuests.has(id)) return
     const guest = webContents.fromId(id)
@@ -1010,14 +1013,9 @@ function createWindow(): void {
     }
     guest.on('will-navigate', (event, url) => denyBlocked(event, url))
     guest.on('will-redirect', (event, url) => denyBlocked(event, url))
-    // Троттлинг фоновых гостей выключаем: первая вкладка (единственный опросный
-    // хост tasks-notify) почти всегда скрыта через [data-hidden], а Chromium
-    // иначе ужимает её setInterval — уведомления молча перестают приходить.
-    try {
-      guest.setBackgroundThrottling(false)
-    } catch (err) {
-      console.warn('[shell] setBackgroundThrottling failed:', err)
-    }
+    // Троттлинг фоновых гостей оставляем включённым (экономит CPU на слабых
+    // машинах); без троттлинга только опросный хост — см. applyGuestThrottling.
+    applyGuestThrottling(guest)
     guest.on('before-input-event', (event, input) => {
       if (input.type !== 'keyDown') return
       const name = guestShortcutName(input)

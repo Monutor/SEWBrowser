@@ -71,6 +71,8 @@ export async function pumpSewHelperBff(): Promise<boolean> {
     // hadWork: был ли хоть один запрос — по нему адаптивный таймер держит 500мс.
     let hadWork = false
     for (const tab of listTabs()) {
+      // Ленивая (ещё не загруженная) вкладка гостя не имеет — опрашивать некого.
+      if (!tab.loaded) continue
       // Гостевая часть — полностью неубиваемая (вложенные try/catch): reject
       // executeJavaScript Electron всегда дублирует внутренним логом
       // "GUEST_VIEW_MANAGER_CALL: ...", поэтому гость не должен кидать
@@ -190,6 +192,7 @@ export async function pumpScansBridge(): Promise<boolean> {
     // ждёт в госте с таймаутом — обходим все вкладки подряд.
     let hadWork = false
     for (const tab of listTabs()) {
+      if (!tab.loaded) continue
       let rawTake: string
       try {
         rawTake = await guestJS<string>(

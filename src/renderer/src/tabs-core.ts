@@ -93,6 +93,18 @@ export function extractNewTabUrls(raw: unknown): string[] {
 }
 
 /**
+ * Жест «открыть вкладку в новом окне»: Ctrl+ЛКМ (на macOS — Cmd+ЛКМ).
+ * Средняя кнопка в полосе вкладок занята закрытием, поэтому button должен быть 0.
+ */
+export function isOpenInWindowGesture(event: {
+  button?: number
+  ctrlKey?: boolean
+  metaKey?: boolean
+}): boolean {
+  return event.button === 0 && (event.ctrlKey === true || event.metaKey === true)
+}
+
+/**
  * Адрес иконки вкладки из `<link rel="icon">` страницы: резолвим относительный href
  * против адреса страницы и оставляем только http(s) (data:, blob:, javascript: в favicon
  * не умеем — их отдаёт только сам гость).
