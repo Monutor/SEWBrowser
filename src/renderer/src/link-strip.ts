@@ -281,6 +281,30 @@ export function updateActiveTab(): void {
   }
 }
 
+/** Переход по строке вкладки оверлея. Вкладки защищённой папки в оверлее не
+ *  рисуются, пока пароль не введён; проверка здесь — страховка на случай, если
+ *  строка всё же оказалась в DOM (или папку заблокировали при открытом оверлее). */
+async function navigateFromOverlayRow(tab: NavTab): Promise<void> {
+  if (tab.folderId && !(await deps.ensureFolderAccess(tab.folderId))) return
+  deps.closeTabs()
+  focusOrOpenTab(tab.url)
+}
+
+/** Перенос вкладки из строки в выбранную папку. В защищённую — только после
+ *  пароля, иначе вкладка попала бы в закрытую папку без спроса. При отказе
+ *  выбор возвращается к фактической папке вкладки. */
+async function moveRowToFolder(tab: NavTab, sel: HTMLSelectElement, value: string): Promise<void> {
+  if (value === UNASSIGNED_FOLDER) {
+    deps.moveTabToFolder(tab.id, null)
+    return
+  }
+  if (!(await deps.ensureFolderAccess(value))) {
+    fillFolderSelect(sel, tab.folderId)
+    return
+  }
+  deps.moveTabToFolder(tab.id, value)
+}
+
 // Строка вкладки в оверлее: название/ссылка + перемещение по папке, поднять/
 // опустить (в пределах папки), редактирование, удаление. Клик по строке —
 // навигация; кнопки и селектор папки через stopPropagation.
@@ -301,8 +325,7 @@ export function createTabRow(tab: NavTab): HTMLElement {
   row.append(info)
   row.addEventListener('click', (e: MouseEvent) => {
     if ((e.target as HTMLElement)?.closest('.tab-row button') || (e.target as HTMLElement).closest('.tab-folder-select')) return
-    void deps.closeTabs()
-    focusOrOpenTab(tab.url)
+    void navigateFromOverlayRow(tab)
   })
   const up = tabRowButton('↑', 'Поднять выше', () => void deps.moveTab(tab.id, -1))
   const down = tabRowButton('↓', 'Опустить ниже', () => void deps.moveTab(tab.id, 1))
@@ -315,7 +338,7 @@ export function createTabRow(tab: NavTab): HTMLElement {
   fillFolderSelect(sel, tab.folderId)
   sel.addEventListener('change', (e: Event) => {
     const v = (e.target as HTMLSelectElement).value
-    void deps.moveTabToFolder(tab.id, v === UNASSIGNED_FOLDER ? null : v)
+    void moveRowToFolder(tab, sel, v)
   })
   row.append(sel)
   return row

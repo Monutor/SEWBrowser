@@ -1,5 +1,6 @@
 import { setStatus } from './status-ui'
 import { normalizeUrl, hostOf } from './util'
+import { folderSectionState } from './folder-access-core'
 import { createTabRow, tabRowButton, closeGroupPanel, renderStrip } from './link-strip'
 import {
   orderedGroups,
@@ -76,6 +77,13 @@ function folderSelectEl(): HTMLSelectElement {
 let tabsOpen = false
 let editingTabId: string | null = null
 let editingFolderId: string | null = null
+
+/**
+ * Защищённые папки, раскрытые в текущем оверлее. Сбрасывается при закрытии:
+ * разблокировка с TTL живёт в main, и renderer не должен показывать содержимое
+ * дольше, чем main держит папку открытой.
+ */
+const revealedFolders = new Set<string>()
 
 export function isTabsOpen(): boolean {
   return tabsOpen
@@ -156,9 +164,9 @@ export async function saveCurrentFolder(): Promise<void> {
     const i = folders.findIndex((f) => f.id === editingFolderId)
     if (i !== -1) {
       const existing = folders[i]
-      // Снятие или смена пароля уже защищённой папки — только после проверки текущего пароля.
-      const touchesProtection = !protectChecked || Boolean(password)
-      if (existing.passwordId && touchesProtection && !(await deps.requireFolderPassword(existing.id))) return
+      // Любое сохранение защищённой папки — даже простое переименование — только после
+      // проверки текущего пароля, иначе защиту можно обойти переименованием.
+      if (existing.passwordId && !(await deps.requireFolderPassword(existing.id))) return
       if (protectChecked && password) {
         // Задать или заменить пароль.
         const pid = await window.shell.saveFolderPassword(existing.id, password)
@@ -204,6 +212,16 @@ export async function deleteFolder(id: string): Promise<void> {
   await Promise.all([saveFolders(folders), saveTabs(tabs)])
 }
 
+/**
+ * Раскрыть защищённую папку в оверлее. Содержимое появляется только после верного
+ * пароля (или «запомненного» — тогда диалога нет); отмена ничего не меняет.
+ */
+async function revealProtectedFolder(folderId: string): Promise<void> {
+  if (!(await deps.requireFolderPassword(folderId))) return
+  revealedFolders.add(folderId)
+  refreshTabsList()
+}
+
 export function refreshTabsList(): void {
   const cfg = deps.config()
   if (!listEl() || !cfg) return
@@ -217,25 +235,52 @@ export function refreshTabsList(): void {
   for (const group of orderedGroups()) {
     if (group.id === UNASSIGNED_FOLDER) continue
     const groupTabs = tabsInFolder(group.id)
+    // Защищённая папка закрыта, пока пароль не введён: вкладки не рисуем вовсе,
+    // чтобы по ссылкам нельзя было перейти в обход ленты (там гейт есть).
+    const { locked, expanded } = folderSectionState({
+      hasPassword: !!group.passwordId,
+      revealed: revealedFolders.has(group.id),
+      collapsed: isFolderCollapsed(group.id),
+    })
     const section = document.createElement('div')
-    section.className = 'folder-section' + (isFolderCollapsed(group.id) ? ' collapsed' : '')
+    section.className = 'folder-section' + (expanded ? '' : ' collapsed')
     section.dataset.folderId = group.id
     const header = document.createElement('div')
     header.className = 'folder-header'
     const chevron = document.createElement('span')
     chevron.className = 'folder-chevron'
-    chevron.textContent = isFolderCollapsed(group.id) ? '▶' : '▼'
+    chevron.textContent = expanded ? '▼' : '▶'
     const titleEl = document.createElement('span')
     titleEl.className = 'folder-name'
     titleEl.textContent = group.name
-    const count = document.createElement('span')
-    count.className = 'folder-count'
-    count.textContent = String(groupTabs.length)
-    header.append(chevron, titleEl, count)
+    header.append(chevron, titleEl)
+    if (locked) {
+      // Счётчик тоже скрываем: он выдавал бы число вкладок в закрытой папке.
+      const lock = document.createElement('span')
+      lock.className = 'folder-lock'
+      lock.textContent = '🔒'
+      lock.title = 'Защищена паролем'
+      header.append(lock)
+    } else {
+      const count = document.createElement('span')
+      count.className = 'folder-count'
+      count.textContent = String(groupTabs.length)
+      header.append(count)
+    }
     // Сворачивание секции по клику на шапке (кнопки переименования/удаления — отдельно).
     header.addEventListener('click', (event) => {
       const target = event.target as HTMLElement | null
       if (target && target.closest('.folder-rename, .folder-del')) return
+      if (group.passwordId) {
+        // Защищённая: раскрытие спрашивает пароль, сворачивание — нет.
+        if (expanded) {
+          revealedFolders.delete(group.id)
+          refreshTabsList()
+        } else {
+          void revealProtectedFolder(group.id)
+        }
+        return
+      }
       toggleFolderCollapse(group.id)
     })
     if (group.id !== UNASSIGNED_FOLDER) {
@@ -248,13 +293,22 @@ export function refreshTabsList(): void {
     section.append(header)
     const body = document.createElement('div')
     body.className = 'folder-tabs'
-    if (!groupTabs.length) {
-      const empty = document.createElement('div')
-      empty.className = 'tabs-empty-hint'
-      empty.textContent = 'Нет вкладок'
-      body.append(empty)
+    if (locked) {
+      // Страховка на случай, если секцию почему-то не скрыл CSS: имён и ссылок
+      // в теле нет вовсе, а не «скрыты стилями».
+      const hint = document.createElement('div')
+      hint.className = 'tabs-empty-hint'
+      hint.textContent = '🔒 Защищённая папка'
+      body.append(hint)
+    } else {
+      if (!groupTabs.length) {
+        const empty = document.createElement('div')
+        empty.className = 'tabs-empty-hint'
+        empty.textContent = 'Нет вкладок'
+        body.append(empty)
+      }
+      for (const tab of groupTabs) body.append(createTabRow(tab))
     }
-    for (const tab of groupTabs) body.append(createTabRow(tab))
     section.append(body)
     listEl().append(section)
   }
@@ -292,6 +346,9 @@ export async function saveCurrentTab(): Promise<void> {
     const existing = deps.config()?.tabs.find((t) => t.id === editingTabId)
     folderId = existing?.folderId
   }
+  // Вкладку кладут в защищённую папку только после пароля: иначе её содержимое
+  // пополняется без пароля, и чужая вкладка появится в закрытой секции.
+  if (folderId && !(await deps.requireFolderPassword(folderId))) return
   const tabs = [...(deps.config()?.tabs ?? [])]
   if (editingTabId) {
     const i = tabs.findIndex((t) => t.id === editingTabId)
@@ -343,6 +400,9 @@ export function openTabs(): void {
   if (!overlayEl()) return
   editingTabId = null
   editingFolderId = null
+  // Каждая сессия оверлея стартует с закрытыми защищёнными папками: инвариант не
+  // зависит от того, закрыли ли оверлей предыдущий раз.
+  revealedFolders.clear()
   resetFolderForm()
   tabFormEl() && (tabFormEl().hidden = true)
   refreshTabsList()
@@ -356,6 +416,9 @@ export function closeTabs(): void {
   tabsOpen = false
   editingTabId = null
   editingFolderId = null
+  // Раскрытые защищённые папки «забываем»: при следующем открытии содержимое
+  // снова под паролем (срок разблокировки в main renderer не отслеживает).
+  revealedFolders.clear()
   resetFolderForm()
   tabFormEl() && (tabFormEl().hidden = true)
 }

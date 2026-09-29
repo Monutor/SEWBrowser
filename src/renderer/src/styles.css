@@ -3254,6 +3254,12 @@ body {
   color: var(--text-dim);
 }
 
+/* Замок на закрытой защищённой папке (вместо счётчика вкладок). */
+.folder-lock {
+  font-size: 11px;
+  line-height: 1;
+}
+
 .folder-rename,
 .folder-del {
   background: none;

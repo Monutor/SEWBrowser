@@ -1,3 +1,4 @@
+import { exportableTabs } from './folder-access-core'
 import { setStatus } from './status-ui'
 import { TABS_FILE_FORMAT, TABS_FILE_VERSION, parseTabFile, type TabFilePayload } from './tabs-file.ts'
 
@@ -25,24 +26,34 @@ export function isFolderCollapsed(folderId: string): boolean {
 
 /** Формат файла: заголовок для валидации + папки + массив вкладок. */
 export function buildTabsJson(): string {
+  // Защищённые папки и вкладки внутри них в файл не попадают: иначе пароль
+  // обходится выгруженной ссылкой.
+  const { folders, tabs } = exportableTabs({ folders: deps.config()?.folders ?? [], tabs: deps.config()?.tabs ?? [] })
   const payload: TabFilePayload = {
     format: TABS_FILE_FORMAT,
     version: TABS_FILE_VERSION,
-    folders: (deps.config()?.folders ?? []).map((f) => ({ id: f.id, name: f.name })),
-    tabs: (deps.config()?.tabs ?? []).map((t) => ({ id: t.id, name: t.name, url: t.url, ...(t.folderId ? { folderId: t.folderId } : {}) })),
+    folders: folders.map((f) => ({ id: f.id, name: f.name })),
+    tabs: tabs.map((t) => ({ id: t.id, name: t.name, url: t.url, ...(t.folderId ? { folderId: t.folderId } : {}) })),
   }
   return JSON.stringify(payload, null, 2)
 }
 
 export async function exportTabs(): Promise<void> {
-  const tabs = deps.config()?.tabs ?? []
-  if (!tabs.length) {
+  const cfg = deps.config()
+  if (!cfg?.tabs.length) {
     setStatus('Нет вкладок для экспорта')
     return
   }
+  const { folders, tabs } = exportableTabs({ folders: cfg.folders, tabs: cfg.tabs })
+  if (!tabs.length) {
+    setStatus('Все вкладки в защищённых папках — экспортировать нечего')
+    return
+  }
+  const skipped = cfg.tabs.length - tabs.length
+  const info = skipped ? `, скрыто защищённых: ${skipped}` : ''
   const stamp = new Date().toISOString().slice(0, 10)
   const ok = await window.shell.saveTabsFile(buildTabsJson(), `sewbrowser-tabs-${stamp}.json`)
-  setStatus(ok ? `Экспорт: ${tabs.length} вкладок (${(deps.config()?.folders ?? []).length} папок) сохранён` : 'Экпорт отменён')
+  setStatus(ok ? `Экспорт: ${tabs.length} вкладок (${folders.length} папок) сохранён${info}` : 'Экпорт отменён')
 }
 
 export function importTabs(file: File): void {
