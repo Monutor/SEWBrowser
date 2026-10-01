@@ -812,21 +812,40 @@
 
   // --- Запуск -------------------------------------------------------------
 
-  function init() {
-    if (document.getElementById('sew-inventory-panel')) return
-    buildPanel()
-    // После F9/F5 содержимое панели ЛП ещё не отрисовано — раскрываем сами,
-    // иначе первый клик по «Собрать состав» упирается в пустую шапку.
-    if (readLpOrExplain().headerHidden) expandPanelsUntilHeader(0)
+  /**
+ * Похоже на лист подсчёта: в таблице позиций есть колонка `cdk-column-materialName`.
+ * Нужна, чтобы не раскрывать аккордеоны на посторонних страницах SEW — там тоже
+ * есть панели, но шапки ЛП в них нет.
+ */
+function looksLikeLpPage() {
+  return document.querySelector('td.cdk-column-materialName') !== null
+}
+
+function init() {
+  if (document.getElementById('sew-inventory-panel')) return
+  buildPanel()
+  try {
+    // После F5 содержимое панели ЛП ещё не отрисовано — раскрываем сами, иначе
+    // первый клик по «Собрать состав» упирается в пустую шапку. На страницах,
+    // где панелей нет (readLpOrExplain вернул null), .headerHidden не читаем:
+    // раньше тут был TypeError, который ронял весь init — панель замирала с
+    // надписью «ЛП не найден» даже после перехода на ЛП.
+    var guess = readLpOrExplain()
+    if (guess && guess.headerHidden && looksLikeLpPage()) expandPanelsUntilHeader(0)
     refreshLp()
     if (!state.lp) setStatus('открой лист подсчёта')
     else if (state.lp.headerHidden) setStatus('шапка ЛП свёрнута — раскрываем…')
     else setStatus('нажмите «Собрать состав»')
-    // Страница SEW — SPA: тот же ЛП может дорисоваться после входа, а при
-    // переходе на другой ЛП шапка меняется. Поэтому дешёвый опрос шапки, а не
-    // одноразовое чтение. Перечитываем таблицу только когда ЛП реально сменился.
-    setInterval(function () {
-      if (state.busy) return
+  } catch (err) {
+    console.warn('[sew-inventory] init failed:', err)
+    setStatus('плагин не смог разобрать страницу: ' + ((err && err.message) || err))
+  }
+  // Страница SEW — SPA: тот же ЛП может дорисоваться после входа, а при
+  // переходе на другой ЛП шапка меняется. Поэтому дешёвый опрос шапки, а не
+  // одноразовое чтение. Перечитываем таблицу только когда ЛП реально сменился.
+  setInterval(function () {
+    if (state.busy) return
+    try {
       var key = lpKeyOf(readLpOrExplain())
       // Пока таблица пустая, продолжаем пробовать: плагин инжектится раньше,
       // чем SPA её нарисует. Дальше перечитываем только при смене ЛП.
@@ -839,8 +858,11 @@
       }
       els.stats.innerHTML = ''
       setStatus('нажмите «Собрать состав»')
-    }, RESCAN_MS)
-  }
+    } catch (err) {
+      console.warn('[sew-inventory] rescan failed:', err)
+    }
+  }, RESCAN_MS)
+}
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init)
