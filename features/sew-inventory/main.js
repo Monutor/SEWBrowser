@@ -273,6 +273,21 @@ function lpNumberFromUrl() {
   return match ? match[1] : ''
 }
 
+/**
+ * Как вбивать ШК полки. В торговом зале товар один на всю полку, поэтому ШК
+ * полки вбивается ОДИН раз на лист подсчёта. На складе товар лежит в своей
+ * ячейке, и там полка идёт перед каждым товаром (решение от 01.10.2026:
+ * сначала разбираемся с ТЗ, склад — потом).
+ */
+function isTradingHall(zone) {
+  return normText(zone).indexOf('торговый зал') !== -1
+}
+
+/** ШК ячейки позиции из выгрузки остатков (колонка «ШК ячейки хранения»). */
+function shelfBarcodeOf(row) {
+  return row && row.cellBarcode ? String(row.cellBarcode).trim() : ''
+}
+
 /** ЛП на текущем экране или null. */
   function readLp() {
     var zone = propValue('Зона ЛП') || propValueLoose('зона')
@@ -365,7 +380,7 @@ function lpNumberFromUrl() {
         missing.push({ sku: row.sku, name: row.name })
         continue
       }
-      matched.push({ sku: row.sku, name: row.name, qty: left.qty, barcode: left.barcode, cell: left.cell, counted: row.counted })
+      matched.push({ sku: row.sku, name: row.name, qty: left.qty, barcode: left.barcode, cell: left.cell, cellBarcode: left.cellBarcode, counted: row.counted })
       units += left.qty
       if (left.qty <= 0) zero.push({ sku: row.sku, name: row.name })
     }
@@ -615,10 +630,15 @@ function lpNumberFromUrl() {
       var summary = summarize(state.rows, stockRows)
       state.summary = summary
       renderSummary(summary, answer.name || '')
+      var preview = buildQueue(summary)
+      var zoneForQueue = resolveZone()
+      var sheetShelf = pickSheetShelfBarcode(preview, zoneForQueue)
       els.start.disabled = false
-      var queue = buildQueue(summary)
-      setStatus('готово: к вносу ' + queue.total + ' шт' +
-        (queue.skipped.length ? ', без ШК ' + queue.skipped.length : '') +
+      var shelfNote = isTradingHall(zoneForQueue)
+        ? (sheetShelf ? ', ШК полки ' + sheetShelf + ' один раз' : ', ШК полки нет в остатках')
+        : ', ШК полки перед каждым товаром'
+      setStatus('готово: к вносу ' + preview.total + ' шт' + shelfNote +
+        (preview.skipped.length ? ', без ШК ' + preview.skipped.length : '') +
         '. Можно нажимать «Старт подсчёта».')
       saveLastRun(state.lp, summary)
     } catch (err) {
@@ -817,10 +837,35 @@ function lpNumberFromUrl() {
         skipped.push({ sku: item.sku, reason: 'нет ШК' })
         continue
       }
-      items.push({ sku: item.sku, name: item.name, barcode: item.barcode, remaining: remaining, entered: 0 })
+      items.push({
+        sku: item.sku,
+        name: item.name,
+        barcode: item.barcode,
+        cell: item.cell,
+        cellBarcode: shelfBarcodeOf(item),
+        remaining: remaining,
+        entered: 0
+      })
       total += remaining
     }
     return { items: items, skipped: skipped, total: total }
+  }
+
+  /**
+   * ШК полки для ввода один раз на лист: берём ячейку, названную так же, как
+   * зона (у ТЗ это ячейка «ТОРГОВЫЙ ЗАЛ» с ШК STL000000010003), иначе — ШК
+   * первой позиции с известной ячейкой.
+   */
+  function pickSheetShelfBarcode(queue, zone) {
+    var want = normText(zone)
+    var fallback = ''
+    for (var i = 0; i < queue.items.length; i++) {
+      var item = queue.items[i]
+      if (!item.cellBarcode) continue
+      if (!fallback) fallback = item.cellBarcode
+      if (normText(item.cell) === want) return item.cellBarcode
+    }
+    return fallback
   }
 
   function formatEta(seconds) {
@@ -850,8 +895,47 @@ function lpNumberFromUrl() {
     var zoneDone = { shelf: '' }
     var zone = resolveZone()
 
-    for (var i = 0; i < queue.items.length; i++) {
+    // Полка. В торговом зале она одна на весь лист — вбиваем её ШК один раз
+    // перед первой позицией, иначе SEW не поймёт, с какой полки товар.
+    var perItemShelf = !isTradingHall(zone)
+    var shelfEntered = false
+
+    function noteShelf(unit) {
+      if (unit.shelf) zoneDone.shelf = unit.shelf
+    }
+
+    if (!perItemShelf) {
+      var sheetShelf = pickSheetShelfBarcode(queue, zone)
+      if (sheetShelf) {
+        setStatus('вношу ШК полки ' + sheetShelf + '…')
+        var first = await enterUnit(zone, sheetShelf)
+        noteShelf(first)
+        if (!first.ok) {
+          run.failed.push({ sku: 'полка ' + sheetShelf, name: 'ШК ячейки хранения', entered: 0 })
+          run.stopped = true
+          setStatus('ШК полки не принят — очередь остановлена')
+        } else {
+          shelfEntered = true
+        }
+      } else {
+        setStatus('у позиций нет ШК ячейки — полку не вношу, вбивай вручную')
+      }
+    }
+
+    for (var i = 0; i < queue.items.length && !run.stopped; i++) {
       var item = queue.items[i]
+      // На складе полка идёт перед каждым товаром: там товар лежит в своей ячейке.
+      if (perItemShelf && !shelfEntered && item.cellBarcode) {
+        var shelfUnit = await enterUnit(zone, item.cellBarcode)
+        noteShelf(shelfUnit)
+        if (!shelfUnit.ok) {
+          run.failed.push({ sku: 'полка ' + item.cellBarcode, name: item.cell || item.name, entered: 0 })
+          run.stopped = true
+          setStatus('ШК полки не принят на ' + item.sku + ' — очередь остановлена')
+          break
+        }
+        shelfEntered = true
+      }
       while (item.remaining > 0) {
         if (run.stopped) break
         if (run.paused) {
@@ -859,7 +943,7 @@ function lpNumberFromUrl() {
           continue
         }
         var unit = await enterUnit(zone, item.barcode)
-        if (unit.shelf) zoneDone.shelf = unit.shelf
+        noteShelf(unit)
         if (!unit.ok) {
           run.failed.push({ sku: item.sku, name: item.name, entered: item.entered })
           run.stopped = true
@@ -872,7 +956,6 @@ function lpNumberFromUrl() {
         updateProgress()
         saveProgress(zone, run)
       }
-      if (run.stopped) break
     }
 
     els.pause.hidden = true
