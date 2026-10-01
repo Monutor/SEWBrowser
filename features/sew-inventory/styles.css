@@ -141,6 +141,31 @@
   word-break: break-word;
 }
 
+/* Поле зоны ЛП: после старта подсчёта шапка скрыта, зону вводим вручную. */
+.sew-inv-zonerow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.sew-inv-zonelabel {
+  flex: 0 0 auto;
+  color: #4a5568;
+}
+
+.sew-inv-zone {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 7px;
+  font: inherit;
+  font-size: 12px;
+  color: #1f2430;
+  background: #ffffff;
+  border: 1px solid #c8cede;
+  border-radius: 6px;
+}
+
 /* Прогресс автовноса: цифры крупнее, чтобы читались с расстояния. */
 .sew-inv-progress {
   margin-top: 8px;

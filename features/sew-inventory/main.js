@@ -39,7 +39,46 @@
     rows: [],
     busy: false,
     lpKey: '',
-    summary: null
+    summary: null,
+    /** Зона по номеру ЛП: { '924147': 'Торговый зал' }. После старта ЛП шапка с
+     *  «Зоной ЛП» скрывается, а ЛП может длиться часами — запоминаем. */
+    zoneByLp: {}
+  }
+
+  /** Номер ЛП для памяти о зоне: из шапки или из маршрута. */
+  function lpNumberOrUnknown() {
+    if (state.lp && state.lp.number) return state.lp.number
+    return lpNumberFromUrl()
+  }
+
+  /** Память о зонах живёт в plugin-data — это несколько строк, а не состав. */
+  async function loadRememberedZones() {
+    try {
+      var data = await chrome.storage.local.get('zoneByLp')
+      if (data && data.zoneByLp && typeof data.zoneByLp === 'object') state.zoneByLp = data.zoneByLp
+    } catch (e) {
+      /* без памяти — введём зону вручную */
+    }
+  }
+
+  function rememberZone(zone) {
+    var number = lpNumberOrUnknown()
+    if (!number || !zone) return
+    state.zoneByLp[number] = zone
+    try {
+      chrome.storage.local.set({ zoneByLp: state.zoneByLp })
+    } catch (e) {
+      /* не страшно */
+    }
+  }
+
+  /** Зона для работы: шапка → память → поле вручную. */
+  function resolveZone() {
+    if (state.lp && normText(state.lp.zone)) return state.lp.zone
+    var remembered = state.zoneByLp[lpNumberOrUnknown()]
+    if (remembered) return remembered
+    var typed = normText(els.zoneInput ? els.zoneInput.value : '')
+    return typed ? els.zoneInput.value.trim() : ''
   }
 
   /** Ключ ЛП: тот же номер в другой зоне — уже другой лист, пусть и с тем же номером. */
@@ -404,6 +443,26 @@ function lpNumberFromUrl() {
     body.appendChild(els.lp)
     body.appendChild(els.status)
 
+    // Зона ЛП. После старта подсчёта шапка скрывается, а ЛП идёт долго: зону
+    // вводим один раз вручную или берём из шапки (до старта) и запоминаем.
+    var zoneRow = el('div', 'sew-inv-zonerow')
+    zoneRow.appendChild(el('span', 'sew-inv-zonelabel', 'Зона'))
+    els.zoneInput = el('input', 'sew-inv-zone')
+    els.zoneInput.type = 'text'
+    els.zoneInput.placeholder = 'например, Торговый зал'
+    els.zoneInput.autocomplete = 'off'
+    els.zoneInput.title = 'Плагин запомнит эту зону для текущего ЛП'
+    els.zoneList = document.createElement('datalist')
+    els.zoneList.id = 'sew-inv-zones'
+    els.zoneInput.setAttribute('list', els.zoneList.id)
+    zoneRow.appendChild(els.zoneInput)
+    zoneRow.appendChild(els.zoneList)
+    els.zoneInput.addEventListener('change', function () {
+      rememberZone(els.zoneInput.value.trim())
+      renderLpLine()
+    })
+    body.appendChild(zoneRow)
+
     var actions = el('div', 'sew-inv-actions')
     els.collect = el('button', 'sew-inv-btn sew-inv-primary', 'Собрать состав')
     els.collect.type = 'button'
@@ -505,9 +564,13 @@ function lpNumberFromUrl() {
     }
     var counted = 0
     for (var i = 0; i < state.rows.length; i++) counted += state.rows[i].counted
+    var zone = resolveZone()
+    // Показываем в поле то, чем реально пользуемся: из шапки, из памяти или
+    // введённое вручную — иначе поле пустое, а подсчёт идёт по другой зоне.
+    if (els.zoneInput && normText(els.zoneInput.value) !== normText(zone)) els.zoneInput.value = zone
     els.lp.textContent =
-      'ЛП № ' + (state.lp.number || '?') + ' · зона «' + (state.lp.zone || '?') + '» · позиций ' + state.rows.length +
-      ' · посчитано ' + counted
+      'ЛП № ' + (state.lp.number || '?') + ' · зона «' + (zone || 'не задана — укажи ниже') + '» · позиций ' +
+      state.rows.length + ' · посчитано ' + counted
   }
 
   async function collect() {
@@ -520,8 +583,9 @@ function lpNumberFromUrl() {
       setStatus(notFoundReason())
       return
     }
-    if (!state.lp.zone) {
-      setStatus('в шапке ЛП нет «Зоны ЛП» — не знаю, чьи остатки брать')
+    var zone = resolveZone()
+    if (!zone) {
+      setStatus('зона ЛП неизвестна — впиши её в поле «Зона» (запомню для этого ЛП)')
       return
     }
     if (state.rows.length === 0) {
@@ -532,10 +596,20 @@ function lpNumberFromUrl() {
     els.collect.disabled = true
     setStatus('качаю остатки и разбираю ЛП…')
     try {
-      var answer = await requestStock(state.lp.zone, [])
+      var answer = await requestStock(zone, [])
       if (!answer || !answer.ok) {
         setStatus('остатки не получились: ' + ((answer && answer.error) || 'нет ответа'))
         return
+      }
+      rememberZone(zone)
+      // Зоны из файла — подсказка для выпадающего списка в поле зоны.
+      if (Array.isArray(answer.zones) && els.zoneList) {
+        els.zoneList.innerHTML = ''
+        for (var z = 0; z < answer.zones.length; z++) {
+          var opt = document.createElement('option')
+          opt.value = answer.zones[z]
+          els.zoneList.appendChild(opt)
+        }
       }
       var stockRows = Array.isArray(answer.rows) ? answer.rows : []
       var summary = summarize(state.rows, stockRows)
@@ -774,7 +848,7 @@ function lpNumberFromUrl() {
     run.failed = []
     run.startedAt = Date.now()
     var zoneDone = { shelf: '' }
-    var zone = state.lp.zone
+    var zone = resolveZone()
 
     for (var i = 0; i < queue.items.length; i++) {
       var item = queue.items[i]
@@ -971,9 +1045,12 @@ function notFoundReason() {
 }
 
 function init() {
-  if (document.getElementById('sew-inventory-panel')) return
-  buildPanel()
-  try {
+    if (document.getElementById('sew-inventory-panel')) return
+    buildPanel()
+    void loadRememberedZones().then(function () {
+      refreshLp()
+    })
+    try {
     // Панели НЕ раскрываем: содержимое свёрнутого mat-expansion-panel в разметке
     // SEW тоже присутствует (проверено диагностикой), клики по чужим панелям
     // только мешали бы на посторонних экранах.
