@@ -50,9 +50,9 @@
 
   // --- DOM листа подсчёта -------------------------------------------------
 
-  /** Значение свойства шапки: «Зона ЛП», «Номер ЛП» и т.п. */
-  function propValue(name) {
-    var box = document.querySelector('fck-property[name="' + name + '"] .value')
+  /** Склеенное значение свойства по найденному элементу fck-property. */
+  function propTextOf(prop) {
+    var box = prop.querySelector('.value')
     if (!box) return ''
     var words = box.querySelectorAll('.word')
     if (words.length === 0) return box.textContent.replace(/\s+/g, ' ').trim()
@@ -62,6 +62,29 @@
       if (text) parts.push(text)
     }
     return parts.join(' ').replace(/\s+/g, ' ').trim()
+  }
+
+  /** Значение свойства шапки: «Зона ЛП», «Номер ЛП» и т.п. */
+  function propValue(name) {
+    var prop = document.querySelector('fck-property[name="' + name + '"]')
+    return prop ? propTextOf(prop) : ''
+  }
+
+  /**
+   * Тот же поиск, но по вхождению подписи («Зона» вместо «Зона ЛП», «Номер
+   * инвентаризации» вместо «Номер ЛП»). На разных экранах подсчёта SEW
+   * называет поля по-разному, а нам нужна зона и номер — падать на этом нельзя,
+   * иначе ЛП считается ненайденным при открытой шапке.
+   */
+  function propValueLoose(needle) {
+    var want = normText(needle)
+    var props = document.querySelectorAll('fck-property[name]')
+    for (var i = 0; i < props.length; i++) {
+      if (normText(props[i].getAttribute('name')).indexOf(want) === -1) continue
+      var value = propTextOf(props[i])
+      if (value) return value
+    }
+    return ''
   }
 
   /** Есть ли на экране аккордеон ЛП (шапка лежит внутри его панели). */
@@ -141,14 +164,14 @@
 
   /** ЛП на текущем экране или null. */
   function readLp() {
-    var zone = propValue('Зона ЛП')
-    var number = propValue('Номер ЛП')
+    var zone = propValue('Зона ЛП') || propValueLoose('зона')
+    var number = propValue('Номер ЛП') || propValueLoose('номер лп') || propValueLoose('номер')
     if (!zone && !number) return null
     return {
       zone: zone,
       number: number,
-      title: propValue('Название ЛП'),
-      kind: propValue('Тип ЛП'),
+      title: propValue('Название ЛП') || propValueLoose('название'),
+      kind: propValue('Тип ЛП') || propValueLoose('тип'),
       headerHidden: false
     }
   }
