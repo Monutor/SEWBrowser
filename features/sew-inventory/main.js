@@ -813,12 +813,14 @@
   // --- Запуск -------------------------------------------------------------
 
   /**
- * Похоже на лист подсчёта: в таблице позиций есть колонка `cdk-column-materialName`.
- * Нужна, чтобы не раскрывать аккордеоны на посторонних страницах SEW — там тоже
- * есть панели, но шапки ЛП в них нет.
+ * Похоже на экран подсчёта. Таблица позиций — хороший признак, но после F5 её
+ * может не быть в DOM (она внутри свёрнутой панели), а распознавать по ней
+ * значит не раскрывать панель, в которой она и лежит. Поэтому основной признак —
+ * маршрут SEW вида /v2/stocktaking/…/results, он не зависит от состояния панелей.
  */
 function looksLikeLpPage() {
-  return document.querySelector('td.cdk-column-materialName') !== null
+  var path = String(location.pathname || '')
+  return path.indexOf('/stocktaking/') !== -1 || document.querySelector('td.cdk-column-materialName') !== null
 }
 
 function init() {
