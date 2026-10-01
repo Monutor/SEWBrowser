@@ -197,7 +197,7 @@
   /** ЛП на текущем экране или null. */
   function readLp() {
     var zone = propValue('Зона ЛП') || propValueLoose('зона')
-    var number = propValue('Номер ЛП') || propValueLoose('номер лп') || propValueLoose('номер')
+    var number = propValue('Номер ЛП') || propValueLoose('номер лп')
     if (!zone && !number) return null
     return {
       zone: zone,
@@ -865,7 +865,62 @@
     }
   }
 
-  // --- Запуск -------------------------------------------------------------
+  /**
+ * Полный срез того, что плагин видит на странице. Нужен, когда «ЛП не найден»
+ * или «позиций 0»: сразу видно, где шапка, где таблица и что с панелями.
+ * Вызывается из консоли гостя: copy(JSON.stringify(window.__sewInventory.diagnose(), null, 1))
+ */
+function diagnose() {
+  var props = []
+  var allProps = document.querySelectorAll('fck-property[name]')
+  for (var i = 0; i < allProps.length; i++) {
+    var panel = allProps[i].closest('.mat-expansion-panel')
+    props.push({
+      name: allProps[i].getAttribute('name'),
+      value: propTextOf(allProps[i]),
+      inPanel: !!panel,
+      panelExpanded: panel ? panel.classList.contains('mat-expansion-panel-expanded') : null
+    })
+  }
+  var panels = []
+  var allPanels = document.querySelectorAll('.mat-expansion-panel')
+  for (var j = 0; j < allPanels.length; j++) {
+    var header = allPanels[j].querySelector('.mat-expansion-panel-header')
+    panels.push({
+      header: header ? header.textContent.replace(/\s+/g, ' ').trim().slice(0, 60) : '',
+      expanded: allPanels[j].classList.contains('mat-expansion-panel-expanded'),
+      rows: allPanels[j].querySelectorAll('tr').length
+    })
+  }
+  var tables = []
+  var allTables = document.querySelectorAll('table')
+  for (var t = 0; t < allTables.length; t++) {
+    tables.push({
+      head: [].slice.call(allTables[t].querySelectorAll('thead th')).map(function (th) {
+        return th.textContent.trim()
+      }),
+      rows: allTables[t].querySelectorAll('tr').length,
+      cells: [].slice.call(allTables[t].querySelectorAll('tbody tr:first-child td')).map(function (td) {
+        return td.className.replace(/\s*ng-tns[^\s]*/g, '').trim().slice(0, 60)
+      })
+    })
+  }
+  return {
+    url: location.pathname,
+    looksLikeLpPage: looksLikeLpPage(),
+    hasExpansionPanels: hasExpansionPanels(),
+    trTotal: document.querySelectorAll('tr').length,
+    materialNameCells: document.querySelectorAll('td.cdk-column-materialName').length,
+    props: props,
+    panels: panels,
+    tables: tables,
+    readLp: readLp(),
+    readRowsCount: readRows().length,
+    readRows: readRows().slice(0, 3)
+  }
+}
+
+// --- Запуск -------------------------------------------------------------
 
   /**
  * Похоже на экран подсчёта. Таблица позиций — хороший признак, но после F5 её
@@ -932,6 +987,8 @@ function init() {
     readLp: readLp,
     readRows: readRows,
     collect: collect,
+    startRun: startRun,
+    diagnose: diagnose,
     state: state
   }
 })()
