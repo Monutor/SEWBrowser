@@ -150,22 +150,58 @@
     return 0
   }
 
-  /**
-   * Позиции ЛП из таблицы. Строки ищем по SKU, а не по классам колонок: на разных
-   * экранах подсчёта таблица устроена по-разному («слепой проход» с
-   * `cdk-column-*` и экран результатов со свойствами «Отсканировано»).
-   */
-  function readRows() {
-    var out = []
-    var trs = document.querySelectorAll('tbody tr')
-    if (trs.length === 0) trs = document.querySelectorAll('tr')
-    for (var i = 0; i < trs.length; i++) {
-      var sku = rowSku(trs[i])
-      if (!sku) continue
-      out.push({ sku: sku, name: rowName(trs[i]), counted: rowCounted(trs[i]) })
-    }
-    return out
+/**
+ * Элементы строк позиций. Основной случай — обычная таблица (`tbody tr`).
+ * На экране результатов подсчёта позиции размечены div'ами: `tr` в DOM нет
+ * вовсе, но у каждой позиции есть блок `.sku` с артикулом (и наша кнопка
+ * `sew-sku-copy`), поэтому строки собираем по этим маркерам и поднимаемся к
+ * общему предку — строке.
+ */
+function findRowElements() {
+  var rows = []
+  var trs = document.querySelectorAll('tbody tr')
+  for (var i = 0; i < trs.length; i++) rows.push(trs[i])
+  if (rows.length > 0) return rows
+
+  var marks = document.querySelectorAll('.sku-link, button.sew-sku-copy[data-sku]')
+  for (var j = 0; j < marks.length; j++) {
+    var host = marks[j].closest('[role="row"], .cdk-row, .mat-mdc-row')
+    if (!host) host = rowLikeAncestor(marks[j])
+    if (host && rows.indexOf(host) === -1) rows.push(host)
   }
+  return rows
+}
+
+/** Ближайший предок, похожий на строку: класс с row/item/cell в имени. */
+function rowLikeAncestor(node) {
+  var current = node
+  for (var depth = 0; current && depth < 8; depth++) {
+    var cls = typeof current.className === 'string' ? current.className : ''
+    if (/(^|\s|-)(row|item|position|goods|cell)/i.test(cls)) return current
+    current = current.parentElement
+  }
+  return node.parentElement || node
+}
+
+/**
+ * Позиции ЛП из таблицы. Строки ищем по SKU, а не по классам колонок: на разных
+ * экранах подсчёта таблица устроена по-разному («слепой проход» с
+ * `cdk-column-*` и экран результатов со свойствами «Отсканировано»).
+ */
+function readRows() {
+  var out = []
+  var rows = findRowElements()
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i]
+    // В div-сетке родитель может содержать сразу несколько позиций — в этом
+    // случае берём только свою: ищем SKU и «посчитано» внутри общей обёртки,
+    // но если SKU-меток больше одной, метка выбирается по совпадению строки.
+    var sku = rowSku(row)
+    if (!sku) continue
+    out.push({ sku: sku, name: rowName(row), counted: rowCounted(row) })
+  }
+  return out
+}
 
   /** ЛП на текущем экране или null. */
   function readLp() {
@@ -843,12 +879,31 @@ function diagnose() {
       })
     })
   }
+  // Контекст реальной строки позиции: несколько уровней вверх от «Отсканировано»
+  // или от нашей кнопки артикула. По нему видно, чем на самом деле является
+  // строка, когда <tr> в DOM нет.
+  var context = ''
+  var anchor = document.querySelector('fck-property[name*="Отсканировано"], fck-property[name*="сканировано"]') ||
+    document.querySelector('.sku-link, button.sew-sku-copy[data-sku]')
+  if (anchor) {
+    var chain = []
+    var node = anchor
+    for (var up = 0; node && up < 6; node = node.parentElement, up++) {
+      var cls = typeof node.className === 'string' ? node.className : ''
+      chain.push(node.tagName.toLowerCase() + (cls ? '.' + cls.replace(/\s*ng-tns[^\s]*/g, '').trim().split(/\s+/).slice(0, 4).join('.') : '') +
+        '[' + node.children.length + ']')
+    }
+    context = chain.join(' < ')
+  }
+
   return {
     url: location.pathname,
     looksLikeLpPage: looksLikeLpPage(),
     hasExpansionPanels: hasExpansionPanels(),
     trTotal: document.querySelectorAll('tr').length,
     materialNameCells: document.querySelectorAll('td.cdk-column-materialName').length,
+    rowElements: findRowElements().length,
+    context: context,
     props: props,
     panels: panels,
     tables: tables,
