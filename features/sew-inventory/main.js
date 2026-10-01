@@ -43,7 +43,7 @@
 
   /** Значение свойства шапки: «Зона ЛП», «Номер ЛП» и т.п. */
   function propValue(name) {
-    var box = document.querySelector('.common-info fck-property[name="' + name + '"] .value')
+    var box = document.querySelector('fck-property[name="' + name + '"] .value')
     if (!box) return ''
     var words = box.querySelectorAll('.word')
     if (words.length === 0) return box.textContent.replace(/\s+/g, ' ').trim()
@@ -53,6 +53,38 @@
       if (text) parts.push(text)
     }
     return parts.join(' ').replace(/\s+/g, ' ').trim()
+  }
+
+  /** Есть ли на экране аккордеон ЛП (шапка лежит внутри его панели). */
+  function hasExpansionPanels() {
+    return document.querySelectorAll('mat-expansion-panel').length > 0
+  }
+
+  /**
+   * Angular Material рендерит содержимое панели только ПОСЛЕ первого
+   * раскрытия, поэтому после перезагрузки страницы «Зона ЛП» в DOM отсутствует.
+   * Раскрываем ТОЛЬКО свёрнутые панели (уже открытые кликом закрылись бы) и
+   * останавливаемся, как только шапка появилась.
+   */
+  function expandPanelsUntilHeader(attempt) {
+    var tries = attempt || 0
+    if (propValue('Зона ЛП')) return true
+    if (tries >= 6) return false
+    var panels = document.querySelectorAll('mat-expansion-panel')
+    var clicked = false
+    for (var i = 0; i < panels.length; i++) {
+      if (panels[i].classList.contains('mat-expansion-panel-expanded')) continue
+      var header = panels[i].querySelector('.mat-expansion-panel-header')
+      if (!header) continue
+      header.click()
+      clicked = true
+      break
+    }
+    if (!clicked) return false
+    setTimeout(function () {
+      expandPanelsUntilHeader(tries + 1)
+    }, 350)
+    return false
   }
 
   /** Число из текста ячейки: «0», « 12 », «—» */
@@ -103,8 +135,21 @@
       zone: zone,
       number: number,
       title: propValue('Название ЛП'),
-      kind: propValue('Тип ЛП')
+      kind: propValue('Тип ЛП'),
+      headerHidden: false
     }
+  }
+
+  /**
+   * Шапка не найдена: то ли это не ЛП, то ли панель с общей информацией
+   * свёрнута (её содержимое тогда вообще не в DOM). Различаем по наличию
+   * аккордеона, чтобы не советовать «откройте ЛП» там, где он открыт.
+   */
+  function readLpOrExplain() {
+    var lp = readLp()
+    if (lp) return lp
+    if (!hasExpansionPanels()) return null
+    return { zone: '', number: '', title: '', kind: '', headerHidden: true }
   }
 
   // --- Мост остатков ------------------------------------------------------
@@ -271,6 +316,20 @@
       void collect()
     })
     actions.appendChild(els.collect)
+    els.expand = el('button', 'sew-inv-btn', 'Развернуть шапку')
+    els.expand.type = 'button'
+    els.expand.hidden = true
+    els.expand.title = 'Шапка ЛП лежит в свёрнутой панели — Material не отдаёт её содержимое'
+    els.expand.addEventListener('click', function () {
+      setStatus('раскрываю панель…')
+      expandPanelsUntilHeader(0)
+      setTimeout(function () {
+        if (state.busy) return
+        refreshLp()
+        if (state.lp && !state.lp.headerHidden) setStatus('нажмите «Собрать состав»')
+      }, 2400)
+    })
+    actions.appendChild(els.expand)
     body.appendChild(actions)
 
     els.stats = el('div', 'sew-inv-stats')
@@ -320,8 +379,8 @@
   // --- Сбор состава -------------------------------------------------------
 
   function refreshLp() {
-    state.lp = readLp()
-    state.rows = state.lp ? readRows() : []
+    state.lp = readLpOrExplain()
+    state.rows = state.lp && !state.lp.headerHidden ? readRows() : []
     state.lpKey = lpKeyOf(state.lp)
     renderLpLine()
   }
@@ -330,8 +389,16 @@
   function renderLpLine() {
     if (!state.lp) {
       els.lp.textContent = 'ЛП не найден — откройте лист подсчёта'
+      els.expand.hidden = true
       return
     }
+    if (state.lp.headerHidden) {
+      els.lp.textContent = 'Шапка ЛП свёрнута'
+      els.expand.hidden = false
+      setStatus('разверни панель с общей информацией или нажми кнопку')
+      return
+    }
+    els.expand.hidden = true
     var counted = 0
     for (var i = 0; i < state.rows.length; i++) counted += state.rows[i].counted
     els.lp.textContent =
@@ -345,7 +412,7 @@
     // состав читаем ЗДЕСЬ, а не берём снимок из init(): иначе в панели
     // «позиций 0» при полностью заполненной таблице.
     refreshLp()
-    if (!state.lp) {
+    if (!state.lp || state.lp.headerHidden) {
       setStatus('сначала откройте лист подсчёта')
       return
     }
@@ -414,11 +481,12 @@
     // одноразовое чтение. Перечитываем таблицу только когда ЛП реально сменился.
     setInterval(function () {
       if (state.busy) return
-      var key = lpKeyOf(readLp())
+      var key = lpKeyOf(readLpOrExplain())
       // Пока таблица пустая, продолжаем пробовать: плагин инжектится раньше,
       // чем SPA её нарисует. Дальше перечитываем только при смене ЛП.
       if (key === state.lpKey && state.rows.length > 0) return
       refreshLp()
+      if (state.lp && state.lp.headerHidden) return
       if (state.rows.length === 0) {
         if (state.lp) setStatus('ждём таблицу ЛП…')
         return
