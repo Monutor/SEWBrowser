@@ -124,16 +124,21 @@
           clearInterval(timer)
           var raw = box[id]
           delete box[id]
+          // Мост оболочки кладёт в ответ ОБЪЕКТ (JSON.stringify без кавычек в
+          // коде гостя даёт литерал) — принимаем и объект, и строку, чтобы
+          // не зависеть от того, как именно записан ответ.
           var parsed = null
-          try {
-            parsed = JSON.parse(raw)
-          } catch (e) {
-            parsed = null
+          if (typeof raw === 'string') {
+            try {
+              parsed = JSON.parse(raw)
+            } catch (e) {
+              parsed = null
+            }
+          } else if (raw && typeof raw === 'object') {
+            parsed = raw
           }
-          // Ответ может прийти строкой, а может (если оболочка ошиблась) мусором
-          // или 'null' — показываем кусок вместо молчаливого «нет ответа».
           if (!parsed || typeof parsed !== 'object') {
-            console.warn('[sew-inventory] нечитаемый ответ моста:', typeof raw, String(raw).slice(0, 200))
+            console.warn('[sew-inventory] нечитаемый ответ моста:', Object.prototype.toString.call(raw), String(raw).slice(0, 200))
             resolve({ ok: false, error: 'мост вернул мусор вместо ответа: ' + String(raw).slice(0, 60) })
             return
           }

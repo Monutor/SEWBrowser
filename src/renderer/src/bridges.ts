@@ -283,8 +283,9 @@ export async function pumpScansBridge(): Promise<boolean> {
  * в window.__sewInventoryReq, оболочка забирает его (splice — атомарно) и зовёт
  * window.shell.readStockForZone: в main файл скачивается тем же кодом, что и
  * кнопка «Остатки», и разбирается там же. Ответ кладём в
- * window.__sewInventoryRes[id] строкой (structured clone падает на объектах,
- * ловушка 17). IIFE ОБЯЗАТЕЛЬНО заканчивается `()()`.
+ * window.__sewInventoryRes[id] ОБЪЕКТОМ, как в BFF-мосте: JSON.stringify без
+ * кавычек в коде гостя даёт литерал, поэтому «строковый» ответ пришлось бы
+ * экранировать. IIFE ОБЯЗАТЕЛЬНО заканчивается `()()` (ловушка 17).
  */
 let inventoryBridgeStarted = false
 let inventoryTakeDiagged = false
