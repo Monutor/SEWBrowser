@@ -57,7 +57,7 @@
 
   /** Есть ли на экране аккордеон ЛП (шапка лежит внутри его панели). */
   function hasExpansionPanels() {
-    return document.querySelectorAll('mat-expansion-panel').length > 0
+    return document.querySelectorAll('.mat-expansion-panel').length > 0
   }
 
   /**
@@ -65,12 +65,16 @@
    * раскрытия, поэтому после перезагрузки страницы «Зона ЛП» в DOM отсутствует.
    * Раскрываем ТОЛЬКО свёрнутые панели (уже открытые кликом закрылись бы) и
    * останавливаемся, как только шапка появилась.
+   *
+   * Ищем по КЛАССУ `.mat-expansion-panel`, а не по тегу: SEW использует свои
+   * компоненты с теми же классами Material (fck-property, fck-sku-link и т.п.),
+   * и тег `mat-expansion-panel` в разметке может не встречаться вовсе.
    */
   function expandPanelsUntilHeader(attempt) {
     var tries = attempt || 0
     if (propValue('Зона ЛП')) return true
     if (tries >= 6) return false
-    var panels = document.querySelectorAll('mat-expansion-panel')
+    var panels = document.querySelectorAll('.mat-expansion-panel')
     var clicked = false
     for (var i = 0; i < panels.length; i++) {
       if (panels[i].classList.contains('mat-expansion-panel-expanded')) continue
