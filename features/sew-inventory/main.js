@@ -192,8 +192,6 @@ function findRowElements() {
   }
   return rows
 }
-  return rows
-}
 
 /** Ближайший предок, похожий на строку: класс с row/item/cell в имени. */
 function rowLikeAncestor(node) {
