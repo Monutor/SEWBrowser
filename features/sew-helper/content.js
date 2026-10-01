@@ -307,14 +307,12 @@ function createShelfCombobox(labelText, onChange) {
   window.addEventListener('resize', onReposition);
   document.addEventListener('scroll', onReposition, true);
 
-  function normalize(s) {
-    return (s || '').toLowerCase().replace(/-/g, '');
-  }
-
+  // SEWBrowser: поиск полки по трём написаниям (кириллица / ЙЦУКЕН /
+  // транслит) — ввод с английской раскладки тоже находит зону. Логика в
+  // shelf-match.js (подключён в manifest.json renderer до content.js).
   function render(filter) {
-    const f = normalize(filter);
     options.forEach(function (o) {
-      o.el.style.display = (!f || o.search.indexOf(f) !== -1) ? '' : 'none';
+      o.el.style.display = shelfMatches(o.keys, filter) ? '' : 'none';
     });
   }
 
@@ -377,9 +375,8 @@ function createShelfCombobox(labelText, onChange) {
         opt.className = 'sew-helper-combo-option';
         opt.textContent = s.zone + ' / ' + s.cell;
         opt.dataset.barcode = s.barcode;
-        opt.dataset.search = normalize(s.zone + ' ' + s.cell);
         list.appendChild(opt);
-        options.push({ el: opt, search: opt.dataset.search });
+        options.push({ el: opt, keys: shelfSearchKeys(s.zone, s.cell) });
       });
     },
     restore: function (value) {
