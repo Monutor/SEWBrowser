@@ -26,10 +26,15 @@
   var ANSWER_POLL_MS = 250
   var ANSWER_TIMEOUT_MS = 120000
   var RESCAN_MS = 2000
-  // Темп автовноса — как у sew-helper (пауза 900 мс + 300 мс на подтверждение),
-  // около 1,2 с на единицу. Позже станет настраиваемым в панели.
-  var STEP_BEFORE_OPEN_MS = 900
-  var STEP_BEFORE_CONFIRM_MS = 300
+// Темп автовноса — секунд на единицу, по умолчанию как у sew-helper (пауза перед
+// открытием диалога 900 мс + 300 мс на подтверждение ≈ 1,2 с). Настраивается в
+// панели и запоминается; фактические паузы считаются от него в stepWaits().
+var TEMPO_DEFAULT_SEC = 1.2
+var TEMPO_MIN_SEC = 0.4
+var TEMPO_MAX_SEC = 10
+// 300 мс перед «ОК» — не наш выбор, а время, которое нужно форме Angular, чтобы
+// принять введённое значение. Этот кусок темпа не сокращаем.
+var CONFIRM_MIN_MS = 300
   var DIALOG_WAIT_MS = 8000
   var UNIT_ATTEMPTS = 2
   var SHELF_WAIT_MS = 6000
@@ -40,9 +45,43 @@
     busy: false,
     lpKey: '',
     summary: null,
+    /** Секунд на единицу автовноса; настраивается в панели */
+    tempoSec: TEMPO_DEFAULT_SEC,
     /** Зона по номеру ЛП: { '924147': 'Торговый зал' }. После старта ЛП шапка с
      *  «Зоной ЛП» скрывается, а ЛП может длиться часами — запоминаем. */
     zoneByLp: {}
+  }
+
+  /** Темп из поля ввода, с зажимом в разумные пределы. */
+  function readTempoInput() {
+    var raw = els.tempoInput ? els.tempoInput.value : ''
+    var value = parseFloat(String(raw).replace(',', '.'))
+    if (!isFinite(value)) return TEMPO_DEFAULT_SEC
+    return Math.min(TEMPO_MAX_SEC, Math.max(TEMPO_MIN_SEC, value))
+  }
+
+  function applyTempo(seconds) {
+    state.tempoSec = Math.min(TEMPO_MAX_SEC, Math.max(TEMPO_MIN_SEC, seconds))
+    if (els.tempoInput) els.tempoInput.value = String(state.tempoSec)
+  }
+
+  /** Темп живёт в plugin-data: одна цифра, общий для всех ЛП. */
+  async function loadSettings() {
+    try {
+      var data = await chrome.storage.local.get(['zoneByLp', 'tempoSec'])
+      if (data && data.zoneByLp && typeof data.zoneByLp === 'object') state.zoneByLp = data.zoneByLp
+      if (data && data.tempoSec !== undefined) applyTempo(Number(data.tempoSec))
+    } catch (e) {
+      /* дефолты уже выставлены */
+    }
+  }
+
+  function saveTempo(seconds) {
+    try {
+      chrome.storage.local.set({ tempoSec: seconds })
+    } catch (e) {
+      /* не страшно */
+    }
   }
 
   /** Номер ЛП для памяти о зоне: из шапки или из маршрута. */
@@ -51,14 +90,9 @@
     return lpNumberFromUrl()
   }
 
-  /** Память о зонах живёт в plugin-data — это несколько строк, а не состав. */
+  /** Память о зонах и темп живут в plugin-data — это несколько строк, а не состав. */
   async function loadRememberedZones() {
-    try {
-      var data = await chrome.storage.local.get('zoneByLp')
-      if (data && data.zoneByLp && typeof data.zoneByLp === 'object') state.zoneByLp = data.zoneByLp
-    } catch (e) {
-      /* без памяти — введём зону вручную */
-    }
+    await loadSettings()
   }
 
   function rememberZone(zone) {
@@ -478,6 +512,24 @@ function shelfBarcodeOf(row) {
     })
     body.appendChild(zoneRow)
 
+    // Темп автовноса: секунд на единицу. Меняется на лету, даже на паузе.
+    var tempoRow = el('div', 'sew-inv-zonerow')
+    tempoRow.appendChild(el('span', 'sew-inv-zonelabel', 'Темп'))
+    els.tempoInput = el('input', 'sew-inv-zone')
+    els.tempoInput.type = 'number'
+    els.tempoInput.min = String(TEMPO_MIN_SEC)
+    els.tempoInput.max = String(TEMPO_MAX_SEC)
+    els.tempoInput.step = '0.1'
+    els.tempoInput.value = String(state.tempoSec)
+    els.tempoInput.title = 'Секунд на одну единицу. Быстрее 0,4 с SEW обычно не успевает обработать ШК'
+    els.tempoInput.addEventListener('change', function () {
+      applyTempo(readTempoInput())
+      saveTempo(state.tempoSec)
+    })
+    tempoRow.appendChild(els.tempoInput)
+    tempoRow.appendChild(el('span', 'sew-inv-zonelabel', 'сек/шт'))
+    body.appendChild(tempoRow)
+
     var actions = el('div', 'sew-inv-actions')
     els.collect = el('button', 'sew-inv-btn sew-inv-primary', 'Собрать состав')
     els.collect.type = 'button'
@@ -639,7 +691,7 @@ function shelfBarcodeOf(row) {
         : ', ШК полки перед каждым товаром'
       setStatus('готово: к вносу ' + preview.total + ' шт' + shelfNote +
         (preview.skipped.length ? ', без ШК ' + preview.skipped.length : '') +
-        '. Можно нажимать «Старт подсчёта».')
+        ' (~' + formatEta(preview.total * state.tempoSec) + ' при темпе ' + state.tempoSec + ' с/шт)')
       saveLastRun(state.lp, summary)
     } catch (err) {
       setStatus('ошибка сбора: ' + ((err && err.message) || err))
@@ -798,9 +850,10 @@ function shelfBarcodeOf(row) {
    */
   async function enterUnit(zone, barcode) {
     var shelf = ''
+    var waits = stepWaits()
     for (var attempt = 0; attempt < UNIT_ATTEMPTS; attempt++) {
       if (!findDialog()) {
-        await sleep(STEP_BEFORE_OPEN_MS)
+        await sleep(waits.open)
         if (!triggerDialog()) return { ok: false, shelf: shelf }
       }
       var target = await waitFor(findDialog, DIALOG_WAIT_MS, 100)
@@ -812,7 +865,7 @@ function shelfBarcodeOf(row) {
       if (!input || !confirm) return { ok: false, shelf: shelf }
       setNativeValue(input, barcode)
       if (input.value !== barcode) return { ok: false, shelf: shelf }
-      await sleep(STEP_BEFORE_CONFIRM_MS)
+      await sleep(waits.confirm)
       confirm.click()
       // Успех = диалог закрылся (SEW закрывает его сам после ОК).
       var closed = await waitFor(function () {
@@ -824,7 +877,19 @@ function shelfBarcodeOf(row) {
     return { ok: false, shelf: shelf }
   }
 
-  /** Очередь: по каждой позиции остаток минус уже посчитанное в ЛП. */
+  /**
+ * Паузы одной единицы из выбранного темпа. Всё, что не уходит на
+ * подтверждение, тратится на ожидание закрытия диалога — там SEW и так
+ * открывает его заново на каждый ШК.
+ */
+function stepWaits() {
+  var total = Math.round(state.tempoSec * 1000)
+  var confirm = Math.max(CONFIRM_MIN_MS, Math.round(total * 0.25))
+  var open = Math.max(120, total - confirm)
+  return { open: open, confirm: confirm }
+}
+
+/** Очередь: по каждой позиции остаток минус уже посчитанное в ЛП. */
   function buildQueue(summary) {
     var items = []
     var skipped = []
@@ -1014,7 +1079,7 @@ function shelfBarcodeOf(row) {
       startedAt: Date.now()
     }
     updateProgress()
-    setStatus('подсчёт идёт, ~' + formatEta(queue.total * 1.2) + '. Диалог откроет плагин.')
+    setStatus('подсчёт идёт, ~' + formatEta(queue.total * state.tempoSec) + '. Диалог откроет плагин.')
     try {
       await runQueue(queue)
     } catch (err) {
