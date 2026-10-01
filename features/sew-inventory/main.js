@@ -323,6 +323,11 @@
     state.lp = readLp()
     state.rows = state.lp ? readRows() : []
     state.lpKey = lpKeyOf(state.lp)
+    renderLpLine()
+  }
+
+  /** Строка шапки панели: номер, зона, позиции, посчитано. */
+  function renderLpLine() {
     if (!state.lp) {
       els.lp.textContent = 'ЛП не найден — откройте лист подсчёта'
       return
@@ -336,12 +341,20 @@
 
   async function collect() {
     if (state.busy) return
+    // Таблица ЛП дорисовывается Angular'ом позже инжекта плагина, поэтому
+    // состав читаем ЗДЕСЬ, а не берём снимок из init(): иначе в панели
+    // «позиций 0» при полностью заполненной таблице.
+    refreshLp()
     if (!state.lp) {
       setStatus('сначала откройте лист подсчёта')
       return
     }
     if (!state.lp.zone) {
       setStatus('в шапке ЛП нет «Зоны ЛП» — не знаю, чьи остатки брать')
+      return
+    }
+    if (state.rows.length === 0) {
+      setStatus('в таблице ЛП нет позиций — проверь, открыт ли лист подсчёта')
       return
     }
     state.busy = true
@@ -401,10 +414,17 @@
     // одноразовое чтение. Перечитываем таблицу только когда ЛП реально сменился.
     setInterval(function () {
       if (state.busy) return
-      if (lpKeyOf(readLp()) === state.lpKey) return
+      var key = lpKeyOf(readLp())
+      // Пока таблица пустая, продолжаем пробовать: плагин инжектится раньше,
+      // чем SPA её нарисует. Дальше перечитываем только при смене ЛП.
+      if (key === state.lpKey && state.rows.length > 0) return
       refreshLp()
+      if (state.rows.length === 0) {
+        if (state.lp) setStatus('ждём таблицу ЛП…')
+        return
+      }
       els.stats.innerHTML = ''
-      setStatus('открыт другой ЛП — нажмите «Собрать состав»')
+      setStatus('нажмите «Собрать состав»')
     }, RESCAN_MS)
   }
 
