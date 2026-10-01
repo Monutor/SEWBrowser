@@ -288,6 +288,7 @@ export async function pumpScansBridge(): Promise<boolean> {
  */
 let inventoryBridgeStarted = false
 let inventoryTakeDiagged = false
+let inventoryGatedLogged = false
 let inventoryDelay = 500
 let inventoryBusy = false
 export function startInventoryBridge(): void {
@@ -319,7 +320,13 @@ export function startInventoryBridge(): void {
 
 export async function pumpInventoryBridge(): Promise<boolean> {
   try {
-    if (!deps.plugins().some((p) => p.name === 'sew-inventory')) return false
+    if (!deps.plugins().some((p) => p.name === 'sew-inventory')) {
+      if (!inventoryGatedLogged) {
+        inventoryGatedLogged = true
+        console.warn('[inventory-bridge] плагин sew-inventory выключен в настройках — мост молчит')
+      }
+      return false
+    }
     let hadWork = false
     for (const tab of listTabs()) {
       if (!tab.loaded) continue
@@ -364,6 +371,13 @@ export async function pumpInventoryBridge(): Promise<boolean> {
           console.warn('[inventory-bridge] readStockForZone failed:', err)
           result = { ok: false, error: String((err as Error)?.message ?? err) }
         }
+        // По одному ответу на запрос — чтобы по консоли оболочки было видно, дошёл
+        // ли запрос гостя и что вернул main.
+        const summary = (result ?? null) as { ok?: boolean; rows?: unknown[]; error?: string } | null
+        console.info(
+          '[inventory-bridge] зона «' + (req.zone || '') + '»:',
+          summary && summary.ok ? 'позиций ' + (summary.rows ? summary.rows.length : 0) : 'ошибка — ' + (summary && summary.error),
+        )
         try {
           await guestJS<boolean>(
             tab,

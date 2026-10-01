@@ -122,12 +122,20 @@
         var box = window[RES] || {}
         if (box[id]) {
           clearInterval(timer)
+          var raw = box[id]
           delete box[id]
           var parsed = null
           try {
-            parsed = JSON.parse(box[id])
+            parsed = JSON.parse(raw)
           } catch (e) {
             parsed = null
+          }
+          // Ответ может прийти строкой, а может (если оболочка ошиблась) мусором
+          // или 'null' — показываем кусок вместо молчаливого «нет ответа».
+          if (!parsed || typeof parsed !== 'object') {
+            console.warn('[sew-inventory] нечитаемый ответ моста:', typeof raw, String(raw).slice(0, 200))
+            resolve({ ok: false, error: 'мост вернул мусор вместо ответа: ' + String(raw).slice(0, 60) })
+            return
           }
           resolve(parsed)
           return
@@ -135,7 +143,8 @@
         if (waited >= ANSWER_TIMEOUT_MS) {
           clearInterval(timer)
           delete box[id]
-          resolve({ ok: false, error: 'оболочка не ответила — проверь, что приложение открыто' })
+          console.warn('[sew-inventory] мост не ответил за', ANSWER_TIMEOUT_MS / 1000, 'с; в очереди осталось:', (window[REQ] || []).length)
+          resolve({ ok: false, error: 'оболочка не ответила — перезапусти приложение (main/preload меняются только при рестарте)' })
         }
       }, ANSWER_POLL_MS)
     })
