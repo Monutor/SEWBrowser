@@ -151,14 +151,31 @@
   }
 
 /**
+ * Поднимаем найденный кусок строки до целой: пока в родителе ровно один
+ * артикул, строка ещё не закончилась. Иначе «Отсканировано (1 этап)» и ШК
+ * товара остались бы в соседних ячейках и «посчитано» читалось как 0.
+ */
+function growToFullRow(host) {
+  var node = host
+  for (var depth = 0; node && node.parentElement && depth < 6; depth++) {
+    var parent = node.parentElement
+    if (parent.querySelectorAll('.sku-link').length !== 1) break
+    node = parent
+  }
+  return node
+}
+
+/**
  * Элементы строк позиций. Основной случай — обычная таблица (`tbody tr`).
  * На экране результатов подсчёта позиции размечены div'ами: `tr` в DOM нет
  * вовсе, но у каждой позиции есть блок `.sku` с артикулом (и наша кнопка
  * `sew-sku-copy`), поэтому строки собираем по этим маркерам и поднимаемся к
- * общему предку — строке.
+ * общему предку — строке. Маркеров на позицию два (`.sku-link` и кнопка), поэтому
+ * дедуплицируем по SKU: иначе позиций вдвое больше, чем на самом деле.
  */
 function findRowElements() {
   var rows = []
+  var seen = {}
   var trs = document.querySelectorAll('tbody tr')
   for (var i = 0; i < trs.length; i++) rows.push(trs[i])
   if (rows.length > 0) return rows
@@ -167,8 +184,14 @@ function findRowElements() {
   for (var j = 0; j < marks.length; j++) {
     var host = marks[j].closest('[role="row"], .cdk-row, .mat-mdc-row')
     if (!host) host = rowLikeAncestor(marks[j])
-    if (host && rows.indexOf(host) === -1) rows.push(host)
+    host = growToFullRow(host)
+    var sku = rowSku(host)
+    if (!sku || seen[sku]) continue
+    seen[sku] = true
+    rows.push(host)
   }
+  return rows
+}
   return rows
 }
 
@@ -184,21 +207,20 @@ function rowLikeAncestor(node) {
 }
 
 /**
- * Позиции ЛП из таблицы. Строки ищем по SKU, а не по классам колонок: на разных
- * экранах подсчёта таблица устроена по-разному («слепой проход» с
- * `cdk-column-*` и экран результатов со свойствами «Отсканировано»).
+ * Позиции ЛП. Строки ищем по SKU, а не по классам колонок: на разных экранах
+ * подсчёта таблица устроена по-разному («слепой проход» с `cdk-column-*` и
+ * экран результатов со свойствами «Отсканировано»). Повторы по SKU убираем —
+ * в разметке маркеров на позицию больше одного.
  */
 function readRows() {
   var out = []
+  var seen = {}
   var rows = findRowElements()
   for (var i = 0; i < rows.length; i++) {
-    var row = rows[i]
-    // В div-сетке родитель может содержать сразу несколько позиций — в этом
-    // случае берём только свою: ищем SKU и «посчитано» внутри общей обёртки,
-    // но если SKU-меток больше одной, метка выбирается по совпадению строки.
-    var sku = rowSku(row)
-    if (!sku) continue
-    out.push({ sku: sku, name: rowName(row), counted: rowCounted(row) })
+    var sku = rowSku(rows[i])
+    if (!sku || seen[sku]) continue
+    seen[sku] = true
+    out.push({ sku: sku, name: rowName(rows[i]), counted: rowCounted(rows[i]) })
   }
   return out
 }
