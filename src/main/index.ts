@@ -15,6 +15,7 @@ import { clearFolderPassword, isFolderPasswordEncryptionAvailable, isFolderUnloc
 import { getAccountSecrets, getLastUsedAccountId, listAccounts, removeAccount, saveAccount, setLastUsedAccountId } from './credentials/store'
 import { appendDownloadRecord, clearDownloadHistory, loadDownloadHistory, removeDownloadRecord } from './downloads/history'
 import { bearerHeader, isValidObjectId, parseStockReport, stockFileName, stockReportUrl } from './downloads/stockReport'
+import { readStockBalance } from './inventory/xlsx-core'
 import { screenshotFileName } from './screenshot'
 import { clearSoundFile, mimeForSoundExt, readSoundFile, saveSoundFile } from './sounds/store'
 import { isSoundSizeOk, isSoundSlot, pickSoundExt } from './sounds/validate'
@@ -1444,7 +1445,9 @@ function createWindow(): void {
   // перелогина; но API требует ещё и Bearer (см. fetchSewBearer), поэтому
   // заголовок берём из живой вкладки SEW. Повторный клик в тот же день
   // перезаписывает файл: на день и магазин держим один свежий отчёт.
-  ipcMain.handle('stock:download', async (_event, objectId: unknown) => {
+  // Функция, а не только обработчик: тем же кодом пользуется плагин
+  // sew-inventory (inventory:stock) — второй скачиватель не нужен.
+  async function runStockDownload(objectId?: unknown): Promise<{ ok: true; path: string; name: string } | { ok: false; error: string }> {
     const config = getConfig()
     // Из renderer приходит только код магазина: адрес собирается из константы
     // по этому коду, произвольный URL сквозь мост не проходит.
@@ -1498,6 +1501,36 @@ function createWindow(): void {
       return { ok: true, path: filePath, name }
     } catch (err) {
       return fail(String((err as Error)?.message ?? err))
+    }
+  }
+
+  ipcMain.handle('stock:download', (_event, objectId: unknown) => runStockDownload(objectId))
+
+  // Остатки для плагина sew-inventory: тот же файл, что и кнопка тулбара, но
+  // сразу разобранный и отфильтрованный по зоне ЛП и её SKU. Разбор идёт в
+  // main (в госте zip не распаковать), фильтрация — там же, чтобы не гонять
+  // 8 тысяч строк через мост и обратно в страницу.
+  ipcMain.handle('inventory:stock', async (_event, payload: unknown) => {
+    const req = (payload ?? {}) as { zone?: unknown; skus?: unknown }
+    const zone = typeof req.zone === 'string' ? req.zone : ''
+    const skus = Array.isArray(req.skus)
+      ? req.skus.filter((s): s is string => typeof s === 'string').slice(0, 100000)
+      : undefined
+    const file = await runStockDownload()
+    if (!file.ok) return { ok: false, error: file.error }
+    try {
+      const balance = readStockBalance(readFileSync(file.path), { zone: zone || undefined, skus })
+      return {
+        ok: true,
+        name: file.name,
+        totalRows: balance.totalRows,
+        matchedRows: balance.matchedRows,
+        zones: balance.zones,
+        rows: balance.rows,
+      }
+    } catch (err) {
+      console.warn('[shell] stock xlsx parse failed:', err)
+      return { ok: false, error: String((err as Error)?.message ?? err) }
     }
   })
 

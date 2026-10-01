@@ -59,6 +59,36 @@ interface StockDownloadResult {
   error?: string
 }
 
+/** Позиция остатков, собранная из выгрузки для плагина `sew-inventory` */
+interface StockInventoryRow {
+  sku: string
+  name: string
+  /** Сумма по всем ячейкам зоны */
+  qty: number
+  barcode: string
+  zone: string
+  cell: string
+  cellBarcode: string
+  /** Сколько строк (ячеек) сложилось в позицию */
+  cells: number
+}
+
+interface StockInventoryResult {
+  ok: boolean
+  /** Имя файла выгрузки — только при ok */
+  name?: string
+  /** Строк данных в файле, без шапки */
+  totalRows?: number
+  /** Строк, прошедших фильтр по зоне и SKU */
+  matchedRows?: number
+  /** Зоны файла */
+  zones?: string[]
+  /** Позиции по SKU, в порядке файла */
+  rows?: StockInventoryRow[]
+  /** Причина неудачи — только при !ok */
+  error?: string
+}
+
 interface DownloadEventLike {
   id: number
   name: string
@@ -353,6 +383,10 @@ const api = {
     ipcRenderer.invoke('stock:download', objectId),
   /** Выбор папки для отчёта об остатках; null — отмена */
   pickStockDir: (): Promise<string | null> => ipcRenderer.invoke('stock:pick-dir'),
+  /** Остатки для плагина sew-inventory: файл скачивается тем же кодом, что и
+   *  кнопка тулбара, и сразу разбирается в main по зоне ЛП и её SKU */
+  readStockForZone: (zone: string, skus: string[]): Promise<StockInventoryResult> =>
+    ipcRenderer.invoke('inventory:stock', { zone, skus }),
   /** Принтеры системы для диалога печати (name идёт в deviceName) */
   listPrinters: (): Promise<ShellPrinterLike[]> => ipcRenderer.invoke('printers:list'),
   /** ПКМ по странице → «Печать…»: main шлёт 'shell:open-print' */
