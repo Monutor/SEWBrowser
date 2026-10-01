@@ -223,10 +223,21 @@ function readRows() {
   return out
 }
 
-  /** ЛП на текущем экране или null. */
+  /**
+ * Номер ЛП из маршрута: /v2/stocktaking/task-list/<номер ЛП>/execute. Шапка на
+ * экране запуска может быть ещё не отрисована, а номер в адресе есть всегда —
+ * используем его как запасной источник (проверяем, что он похож на номер ЛП:
+ * в маршруте инвентаризации лежит номер ИНВЕНТАРИЗАЦИИ, а не ЛП).
+ */
+function lpNumberFromUrl() {
+  var match = /\/stocktaking\/task-list\/([0-9]+)\/execute/.exec(String(location.pathname || ''))
+  return match ? match[1] : ''
+}
+
+/** ЛП на текущем экране или null. */
   function readLp() {
     var zone = propValue('Зона ЛП') || propValueLoose('зона')
-    var number = propValue('Номер ЛП') || propValueLoose('номер лп')
+    var number = propValue('Номер ЛП') || propValueLoose('номер лп') || lpNumberFromUrl()
     if (!zone && !number) return null
     return {
       zone: zone,
@@ -506,9 +517,7 @@ function readRows() {
     // «позиций 0» при полностью заполненной таблице.
     refreshLp()
     if (!state.lp) {
-      setStatus(isInventoryScreen()
-        ? 'это экран инвентаризации — открой лист подсчёта'
-        : 'ЛП не найден — открой лист подсчёта')
+      setStatus(notFoundReason())
       return
     }
     if (!state.lp.zone) {
@@ -918,6 +927,7 @@ function diagnose() {
 
   return {
     url: location.pathname,
+    lpNumberFromUrl: lpNumberFromUrl(),
     looksLikeLpPage: looksLikeLpPage(),
     hasExpansionPanels: hasExpansionPanels(),
     trTotal: document.querySelectorAll('tr').length,
@@ -949,6 +959,17 @@ function looksLikeLpPage() {
   return document.querySelector('td.cdk-column-materialName') !== null || readRows().length > 0
 }
 
+/**
+ * Пояснение, почему ЛП «не найден»: экран инвентаризации, экран запуска ЛП
+ * (шапка ещё не отрисована) или просто не-LP.
+ */
+function notFoundReason() {
+  if (isInventoryScreen()) return 'это экран инвентаризации — открой лист подсчёта'
+  var fromUrl = lpNumberFromUrl()
+  if (fromUrl) return 'ЛП № ' + fromUrl + ' открывается — подожди, пока появится таблица позиций'
+  return 'ЛП не найден — открой лист подсчёта'
+}
+
 function init() {
   if (document.getElementById('sew-inventory-panel')) return
   buildPanel()
@@ -957,9 +978,7 @@ function init() {
     // SEW тоже присутствует (проверено диагностикой), клики по чужим панелям
     // только мешали бы на посторонних экранах.
     refreshLp()
-    if (!state.lp) setStatus(isInventoryScreen()
-      ? 'это экран инвентаризации — открой лист подсчёта (кнопка ручного ввода ШК есть там же)'
-      : 'открой лист подсчёта')
+    if (!state.lp) setStatus(notFoundReason())
     else setStatus('нажмите «Собрать состав»')
   } catch (err) {
     console.warn('[sew-inventory] init failed:', err)
