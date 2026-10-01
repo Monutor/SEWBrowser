@@ -1,18 +1,20 @@
-// main.js — плагин «Автоподсчёт ЛП» (sew-inventory), этап 1–3 плана
-// docs/plan-sew-inventory.md: читаем состав ЛП из DOM и сводим его с остатками
-// зоны из выгрузки SEW. Автовнос (этап 4) сюда ещё НЕ входит.
+// main.js — плагин «Автоподсчёт ЛП» (sew-inventory), этапы 1–4 плана
+// docs/plan-sew-inventory.md: читаем состав ЛП из DOM, сводим его с остатками
+// зоны из выгрузки SEW и вносим позиции в диалог ручного ввода ШК.
 //
-// Два неочевидных места, оба описаны в docs/dom-sew-inventory.md:
+// Три неочевидных места, все описаны в docs/dom-sew-inventory.md:
 //  1. В шапке ЛП каждое свойство — компонент `fck-property` с атрибутом `name`,
 //     а значение разбито на `<span class="word">` по словам. Без склейки слов
 //     «Торговый зал» превращается в «Торговыйзал» и не совпадёт с зоной файла.
 //  2. Суффиксы Angular (`ng-tns-…-2`, `_ngcontent-…`) меняются при каждой
 //     перезагрузке страницы, поэтому все селекторы строим на классах колонок
 //     `cdk-column-*` и именах свойств, а не на этих суффиксах.
+//  3. Кнопка ручного ввода и сам диалог ищутся по тем же признакам, что и в
+//     sew-helper: `sew-stt-barcode-manually`, кнопка с `svg path[d^="M5 4C"]`.
 //
 // Остатки берём НЕ из API: файлом, который качает кнопка «Остатки» в тулбаре
 // оболочки. У гостя нет window.shell, поэтому запрос идёт через мост оболочки:
-// кладём {id, zone, skus} в window.__sewInventoryReq, ответ приходит строкой в
+// кладём {id, zone, skus} в window.__sewInventoryReq, ответ приходит объектом в
 // window.__sewInventoryRes[id] (см. src/renderer/src/bridges.ts).
 
 (function () {
@@ -24,6 +26,13 @@
   var ANSWER_POLL_MS = 250
   var ANSWER_TIMEOUT_MS = 120000
   var RESCAN_MS = 2000
+  // Темп автовноса — как у sew-helper (пауза 900 мс + 300 мс на подтверждение),
+  // около 1,2 с на единицу. Позже станет настраиваемым в панели.
+  var STEP_BEFORE_OPEN_MS = 900
+  var STEP_BEFORE_CONFIRM_MS = 300
+  var DIALOG_WAIT_MS = 8000
+  var UNIT_ATTEMPTS = 2
+  var SHELF_WAIT_MS = 6000
 
   var state = {
     lp: null,
@@ -342,11 +351,40 @@
     var start = el('button', 'sew-inv-btn', 'Старт подсчёта')
     start.type = 'button'
     start.disabled = true
-    start.title = 'Автовнос появится на следующем этапе плана'
+    start.title = 'Внесёт остатки в диалог ручного ввода ШК'
     start.addEventListener('click', function () {
-      setStatus('автовнос ещё не реализован')
+      void startRun()
     })
+    els.start = start
     body.appendChild(start)
+
+    var runRow = el('div', 'sew-inv-actions')
+    var pause = el('button', 'sew-inv-btn', 'Пауза')
+    pause.type = 'button'
+    pause.hidden = true
+    pause.addEventListener('click', function () {
+      if (!state.run) return
+      state.run.paused = !state.run.paused
+      pause.textContent = state.run.paused ? 'Продолжить' : 'Пауза'
+      updateProgress()
+    })
+    els.pause = pause
+    var stop = el('button', 'sew-inv-btn', 'Стоп')
+    stop.type = 'button'
+    stop.hidden = true
+    stop.addEventListener('click', function () {
+      if (!state.run) return
+      state.run.stopped = true
+      state.run.paused = false
+      setStatus('останавливаюсь…')
+    })
+    els.stop = stop
+    runRow.appendChild(pause)
+    runRow.appendChild(stop)
+    body.appendChild(runRow)
+
+    els.progress = el('div', 'sew-inv-progress', '')
+    body.appendChild(els.progress)
 
     panel.appendChild(body)
     document.body.appendChild(panel)
@@ -445,7 +483,11 @@
       var summary = summarize(state.rows, stockRows)
       state.summary = summary
       renderSummary(summary, answer.name || '')
-      setStatus('готово')
+      els.start.disabled = false
+      var queue = buildQueue(summary)
+      setStatus('готово: к вносу ' + queue.total + ' шт' +
+        (queue.skipped.length ? ', без ШК ' + queue.skipped.length : '') +
+        '. Можно нажимать «Старт подсчёта».')
       saveLastRun(state.lp, summary)
     } catch (err) {
       setStatus('ошибка сбора: ' + ((err && err.message) || err))
@@ -474,6 +516,297 @@
       })
     } catch (e) {
       /* без сохранения не страшно */
+    }
+  }
+
+  // --- Автовнос (этап 4) --------------------------------------------------
+
+  function sleep(ms) {
+    return new Promise(function (resolve) {
+      setTimeout(resolve, ms)
+    })
+  }
+
+  /** Ждём появления условия; false — не дождались. */
+  async function waitFor(predicate, timeoutMs, stepMs) {
+    var waited = 0
+    var step = stepMs || 100
+    while (waited < (timeoutMs || DIALOG_WAIT_MS)) {
+      var value = predicate()
+      if (value) return value
+      await sleep(step)
+      waited += step
+    }
+    return predicate() || false
+  }
+
+  /** Диалог ручного ввода ШК — тот же, что автоматизирован в sew-helper. */
+  function findDialog() {
+    var tagged = document.querySelector('sew-stt-barcode-manually')
+    if (tagged && tagged.isConnected) return tagged
+    var hosts = document.querySelectorAll('.cdk-overlay-container .mat-mdc-dialog-component-host, .cdk-overlay-container .mat-mdc-dialog-surface')
+    for (var i = 0; i < hosts.length; i++) {
+      if (!hosts[i].querySelector('.button-confirm')) continue
+      if (!hosts[i].querySelector('input:not(.sew-helper-combo-input)')) continue
+      return hosts[i]
+    }
+    return null
+  }
+
+  /**
+   * Открыть диалог кнопкой ЛП. Ищем кнопку по иконке `M5 4C` (как в sew-helper),
+   * с запасным вариантом по подписи — «штрих»/«ручн»/«barcode»/«manual».
+   */
+  function triggerDialog() {
+    var buttons = document.querySelectorAll('shp-action-button button, rlc-action-button button, sew-iconed-action-button button')
+    var fallback = null
+    for (var i = 0; i < buttons.length; i++) {
+      var paths = buttons[i].querySelectorAll('svg path')
+      for (var j = 0; j < paths.length; j++) {
+        var d = (paths[j].getAttribute('d') || '').trim()
+        if (d.indexOf('M5 4C') === 0) {
+          buttons[i].click()
+          return true
+        }
+      }
+      if (!fallback) {
+        var hint = ((buttons[i].getAttribute('title') || '') + ' ' +
+          (buttons[i].getAttribute('aria-label') || '') + ' ' +
+          (buttons[i].textContent || '')).toLowerCase()
+        if (hint.indexOf('штрих') !== -1 || hint.indexOf('ручн') !== -1 ||
+          hint.indexOf('barcode') !== -1 || hint.indexOf('manual') !== -1) {
+          fallback = buttons[i]
+        }
+      }
+    }
+    if (fallback) {
+      fallback.click()
+      return true
+    }
+    return false
+  }
+
+  /** Значение поля через сеттер прототипа — иначе Angular не увидит ввод. */
+  function setNativeValue(input, value) {
+    try {
+      var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+      setter.call(input, value)
+    } catch (e) {
+      input.value = value
+    }
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+
+  function normText(value) {
+    return String(value || '').toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ').trim()
+  }
+
+  /**
+   * Зона-источник в диалоге: комбобокс sew-helper перечисляет ПОЛКИ
+   * («зона / ячейка»), а ЛП знает только зону, поэтому берём первую полку этой
+   * зоны и показываем выбор в панели — человек успевает поправить. Выбор
+   * подтверждается mousedown (так сделан pick() в sew-helper).
+   *
+   * Диалог создаётся заново на каждую единицу, но sew-helper восстанавливает
+   * прошлый выбор сам, поэтому поле обычно уже заполнено — тогда мы ничего не
+   * ждём и не тратим темп. Если поля нет (плагина полок нет / выбор сброшен) —
+   * подставляем зону и ждём список полок.
+   */
+  async function applyZoneSource(dialog, zone) {
+    var input = dialog.querySelector('.sew-helper-combo-input[data-slot="src"]')
+    if (!input) return ''
+    var want = normText(zone)
+    if (want && normText(input.value).indexOf(want) === 0) return input.value.trim()
+    setNativeValue(input, zone)
+    var options = await waitFor(function () {
+      var all = document.querySelectorAll('.sew-helper-combo-option')
+      var visible = []
+      for (var i = 0; i < all.length; i++) {
+        if (all[i].offsetParent !== null) visible.push(all[i])
+      }
+      return visible.length ? visible : false
+    }, SHELF_WAIT_MS, 250)
+    if (!options) return ''
+    for (var j = 0; j < options.length; j++) {
+      var text = normText(options[j].textContent)
+      if (text === want || text.indexOf(want + ' /') === 0 || text.indexOf(want + '/') === 0) {
+        options[j].dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+        await sleep(200)
+        return (options[j].textContent || '').trim()
+      }
+    }
+    return ''
+  }
+
+  /**
+   * Одна единица: открыть диалог, внести ШК, ОК. Возвращает {ok, shelf}:
+   * ok=false — SEW ШК не принял, тогда очередь останавливается, а не долбит в
+   * диалог (риск блокировки за частый ввод); shelf — какая полка попала в
+   * зону-источник (для отчёта в панели).
+   */
+  async function enterUnit(zone, barcode) {
+    var shelf = ''
+    for (var attempt = 0; attempt < UNIT_ATTEMPTS; attempt++) {
+      if (!findDialog()) {
+        await sleep(STEP_BEFORE_OPEN_MS)
+        if (!triggerDialog()) return { ok: false, shelf: shelf }
+      }
+      var target = await waitFor(findDialog, DIALOG_WAIT_MS, 100)
+      if (!target) return { ok: false, shelf: shelf }
+      var picked = await applyZoneSource(target, zone)
+      if (picked) shelf = picked
+      var input = target.querySelector('input:not(.sew-helper-combo-input)')
+      var confirm = target.querySelector('.button-confirm')
+      if (!input || !confirm) return { ok: false, shelf: shelf }
+      setNativeValue(input, barcode)
+      if (input.value !== barcode) return { ok: false, shelf: shelf }
+      await sleep(STEP_BEFORE_CONFIRM_MS)
+      confirm.click()
+      // Успех = диалог закрылся (SEW закрывает его сам после ОК).
+      var closed = await waitFor(function () {
+        return !findDialog()
+      }, 4000, 100)
+      if (closed) return { ok: true, shelf: shelf }
+      console.warn('[sew-inventory] ШК не принят (диалог не закрылся), попытка ' + (attempt + 2) + ' из ' + UNIT_ATTEMPTS)
+    }
+    return { ok: false, shelf: shelf }
+  }
+
+  /** Очередь: по каждой позиции остаток минус уже посчитанное в ЛП. */
+  function buildQueue(summary) {
+    var items = []
+    var skipped = []
+    var total = 0
+    for (var i = 0; i < summary.matched.length; i++) {
+      var item = summary.matched[i]
+      var remaining = Math.max(0, item.qty - item.counted)
+      if (remaining <= 0) continue
+      if (!item.barcode) {
+        skipped.push({ sku: item.sku, reason: 'нет ШК' })
+        continue
+      }
+      items.push({ sku: item.sku, name: item.name, barcode: item.barcode, remaining: remaining, entered: 0 })
+      total += remaining
+    }
+    return { items: items, skipped: skipped, total: total }
+  }
+
+  function formatEta(seconds) {
+    if (!isFinite(seconds) || seconds <= 0) return '—'
+    var minutes = Math.floor(seconds / 60)
+    var rest = Math.round(seconds % 60)
+    return minutes ? minutes + ' мин ' + rest + ' с' : rest + ' с'
+  }
+
+  function updateProgress() {
+    var run = state.run
+    var left = Math.max(0, run.total - run.entered)
+    var perUnit = run.startedAt ? (Date.now() - run.startedAt) / Math.max(1, run.entered) : 0
+    els.progress.textContent =
+      'внесено ' + run.entered + ' из ' + run.total + ' шт' +
+      (run.paused ? ' · пауза' : '') +
+      (left ? ' · осталось ~' + formatEta(left * perUnit) : ' · готово')
+  }
+
+  async function runQueue(queue) {
+    var run = state.run
+    run.total = queue.total
+    run.paused = false
+    run.stopped = false
+    run.failed = []
+    run.startedAt = Date.now()
+    var zoneDone = { shelf: '' }
+    var zone = state.lp.zone
+
+    for (var i = 0; i < queue.items.length; i++) {
+      var item = queue.items[i]
+      while (item.remaining > 0) {
+        if (run.stopped) break
+        if (run.paused) {
+          await sleep(300)
+          continue
+        }
+        var unit = await enterUnit(zone, item.barcode)
+        if (unit.shelf) zoneDone.shelf = unit.shelf
+        if (!unit.ok) {
+          run.failed.push({ sku: item.sku, name: item.name, entered: item.entered })
+          run.stopped = true
+          setStatus('ШК не принят на ' + item.sku + ' — очередь остановлена')
+          break
+        }
+        item.remaining--
+        item.entered++
+        run.entered++
+        updateProgress()
+        saveProgress(zone, run)
+      }
+      if (run.stopped) break
+    }
+
+    els.pause.hidden = true
+    els.stop.hidden = true
+    els.start.disabled = false
+    var done = run.failed.length === 0
+    setStatus(done
+      ? 'подсчёт внесён полностью: ' + run.entered + ' шт за ' + formatEta((Date.now() - run.startedAt) / 1000) +
+        (zoneDone.shelf ? ', зона-источник «' + zoneDone.shelf + '»' : '')
+      : 'остановлено: внесено ' + run.entered + ' из ' + run.total)
+    saveProgress(zone, run)
+  }
+
+  function saveProgress(zone, run) {
+    // Только счётчики: очередь на десятки тысяч строк в plugin-data ушла бы
+    // в снапшот, который пушится в каждую вкладку (ловушка про 8 МБ). Продолжение
+    // после перезагрузки восстанавливается пересбором состава: сколько уже
+    // внесено, ЛП показывает сам в cdk-column-primaryQty.
+    try {
+      chrome.storage.local.set({
+        lastProgress: {
+          zone: zone,
+          number: state.lp ? state.lp.number : '',
+          at: new Date().toISOString(),
+          total: run.total,
+          entered: run.entered,
+          failed: run.failed.length
+        }
+      })
+    } catch (e) {
+      /* без сохранения не страшно */
+    }
+  }
+
+  async function startRun() {
+    if (state.busy || !state.summary) return
+    var queue = buildQueue(state.summary)
+    if (queue.total === 0) {
+      setStatus('вносить нечего: всё уже посчитано или нет ШК')
+      return
+    }
+    if (queue.skipped.length) {
+      setStatus('без ШК: ' + queue.skipped.length + ' позиций — они не попадут в подсчёт')
+    }
+    state.busy = true
+    els.collect.disabled = true
+    els.start.disabled = true
+    els.pause.hidden = false
+    els.stop.hidden = false
+    state.run = {
+      total: queue.total,
+      entered: 0,
+      paused: false,
+      stopped: false,
+      failed: [],
+      startedAt: Date.now()
+    }
+    updateProgress()
+    setStatus('подсчёт идёт, ~' + formatEta(queue.total * 1.2) + '. Диалог откроет плагин.')
+    try {
+      await runQueue(queue)
+    } catch (err) {
+      setStatus('ошибка автовноса: ' + ((err && err.message) || err))
+    } finally {
+      state.busy = false
+      els.collect.disabled = false
     }
   }
 

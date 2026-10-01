@@ -140,3 +140,18 @@
   white-space: pre-line;
   word-break: break-word;
 }
+
+/* Прогресс автовноса: цифры крупнее, чтобы читались с расстояния. */
+.sew-inv-progress {
+  margin-top: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1f2430;
+  background: #eaf3e6;
+  border-radius: 6px;
+}
+
+.sew-inv-progress:empty {
+  display: none;
+}
