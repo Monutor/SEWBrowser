@@ -130,34 +130,66 @@
     return isFinite(value) ? value : 0
   }
 
+  /** SKU строки: сперва наш артикул-кнопка, потом текст «SKU: …». */
+  function rowSku(tr) {
+    var copyBtn = tr.querySelector('button.sew-sku-copy[data-sku]')
+    if (copyBtn) return copyBtn.getAttribute('data-sku') || ''
+    var link = tr.querySelector('.sku-link')
+    var fromLink = /SKU:\s*([0-9]+)/i.exec(link ? link.textContent : '')
+    if (fromLink) return fromLink[1]
+    var fromRow = /SKU:\s*([0-9]+)/i.exec(tr.textContent || '')
+    return fromRow ? fromRow[1] : ''
+  }
+
+  /** Название позиции: блок `.item-name` без вложенного `.sku`, иначе первый
+   *  текстовый td без фрагмента «SKU: …». */
+  function rowName(tr) {
+    var item = tr.querySelector('.item-name')
+    if (item) {
+      var parts = []
+      for (var i = 0; i < item.children.length; i++) {
+        var child = item.children[i]
+        if (child.classList.contains('sku')) continue
+        var text = child.textContent.trim()
+        if (text) parts.push(text)
+      }
+      if (parts.length) return parts.join(' ')
+    }
+    var firstCell = tr.querySelector('td')
+    var text = firstCell ? firstCell.textContent.replace(/\s+/g, ' ').trim() : ''
+    return text.replace(/SKU:\s*[0-9]+/gi, '').replace(/\s+/g, ' ').trim()
+  }
+
   /**
-   * Позиции ЛП из таблицы. Слепой проход отдаёт SKU и название, а в
-   * `cdk-column-primaryQty` — уже посчитанное количество.
+   * Уже посчитано в ЛП. На «слепом проходе» это отдельная колонка
+   * `cdk-column-primaryQty`, а на экране результатов — свойство
+   * «Отсканировано (1 этап)» внутри строки. Читаем оба варианта.
+   */
+  function rowCounted(tr) {
+    var qty = tr.querySelector('td.cdk-column-primaryQty')
+    if (qty) return cellNumber(qty.textContent)
+    var props = tr.querySelectorAll('fck-property[name]')
+    for (var i = 0; i < props.length; i++) {
+      var name = normText(props[i].getAttribute('name'))
+      var isCounted = name.indexOf('отсканировано') === 0 || name.indexOf('посчитано') === 0 || name === 'количество'
+      if (isCounted) return cellNumber(propTextOf(props[i]))
+    }
+    return 0
+  }
+
+  /**
+   * Позиции ЛП из таблицы. Строки ищем по SKU, а не по классам колонок: на разных
+   * экранах подсчёта таблица устроена по-разному («слепой проход» с
+   * `cdk-column-*` и экран результатов со свойствами «Отсканировано»).
    */
   function readRows() {
     var out = []
-    var trs = document.querySelectorAll('tbody tr.mat-mdc-row')
+    var trs = document.querySelectorAll('tbody tr')
+    if (trs.length === 0) trs = document.querySelectorAll('tr')
     for (var i = 0; i < trs.length; i++) {
-      var item = trs[i].querySelector('td.cdk-column-materialName .item-name')
-      if (!item) continue
-      var name = ''
-      for (var j = 0; j < item.children.length; j++) {
-        var child = item.children[j]
-        if (child.classList.contains('sku')) continue
-        var text = child.textContent.trim()
-        if (text) name += (name ? ' ' : '') + text
-      }
-      var sku = ''
-      var copyBtn = item.querySelector('button.sew-sku-copy[data-sku]')
-      if (copyBtn) sku = copyBtn.getAttribute('data-sku') || ''
-      if (!sku) {
-        var link = item.querySelector('.sku-link')
-        var match = /SKU:\s*(\d+)/i.exec(link ? link.textContent : '')
-        if (match) sku = match[1]
-      }
+      var sku = rowSku(trs[i])
       if (!sku) continue
-      var counted = cellNumber((trs[i].querySelector('td.cdk-column-primaryQty') || {}).textContent)
-      out.push({ sku: sku, name: name, counted: counted })
+      out.push({ sku: sku, name: rowName(trs[i]), counted: rowCounted(trs[i]) })
     }
     return out
   }
