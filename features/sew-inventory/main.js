@@ -87,41 +87,14 @@
     return ''
   }
 
-  /** Есть ли на экране аккордеон ЛП (шапка лежит внутри его панели). */
+  /** Есть ли на экране аккордеон (в нём лежит шапка ЛП). */
   function hasExpansionPanels() {
     return document.querySelectorAll('.mat-expansion-panel').length > 0
   }
 
-  /**
-   * Angular Material рендерит содержимое панели только ПОСЛЕ первого
-   * раскрытия, поэтому после перезагрузки страницы «Зона ЛП» в DOM отсутствует.
-   * Раскрываем ТОЛЬКО свёрнутые панели (уже открытые кликом закрылись бы) и
-   * останавливаемся, как только шапка появилась.
-   *
-   * Ищем по КЛАССУ `.mat-expansion-panel`, а не по тегу: SEW использует свои
-   * компоненты с теми же классами Material (fck-property, fck-sku-link и т.п.),
-   * и тег `mat-expansion-panel` в разметке может не встречаться вовсе.
-   */
-  function expandPanelsUntilHeader(attempt) {
-    var tries = attempt || 0
-    if (propValue('Зона ЛП')) return true
-    if (tries >= 6) return false
-    var panels = document.querySelectorAll('.mat-expansion-panel')
-    var clicked = false
-    for (var i = 0; i < panels.length; i++) {
-      if (panels[i].classList.contains('mat-expansion-panel-expanded')) continue
-      var header = panels[i].querySelector('.mat-expansion-panel-header')
-      if (!header) continue
-      header.click()
-      clicked = true
-      break
-    }
-    if (!clicked) return false
-    setTimeout(function () {
-      expandPanelsUntilHeader(tries + 1)
-    }, 350)
-    return false
-  }
+  // Панели не раскрываем: диагностикой подтверждено, что содержимое свёрнутого
+  // mat-expansion-panel в разметке SEW присутствует, а клики по чужим панелям
+  // только мешали бы на посторонних экранах.
 
   /** Число из текста ячейки: «0», « 12 », «—» */
   function cellNumber(text) {
@@ -203,21 +176,8 @@
       zone: zone,
       number: number,
       title: propValue('Название ЛП') || propValueLoose('название'),
-      kind: propValue('Тип ЛП') || propValueLoose('тип'),
-      headerHidden: false
+      kind: propValue('Тип ЛП') || propValueLoose('тип')
     }
-  }
-
-  /**
-   * Шапка не найдена: то ли это не ЛП, то ли панель с общей информацией
-   * свёрнута (её содержимое тогда вообще не в DOM). Различаем по наличию
-   * аккордеона, чтобы не советовать «откройте ЛП» там, где он открыт.
-   */
-  function readLpOrExplain() {
-    var lp = readLp()
-    if (lp) return lp
-    if (!hasExpansionPanels()) return null
-    return { zone: '', number: '', title: '', kind: '', headerHidden: true }
   }
 
   // --- Мост остатков ------------------------------------------------------
@@ -384,20 +344,6 @@
       void collect()
     })
     actions.appendChild(els.collect)
-    els.expand = el('button', 'sew-inv-btn', 'Развернуть шапку')
-    els.expand.type = 'button'
-    els.expand.hidden = true
-    els.expand.title = 'Шапка ЛП лежит в свёрнутой панели — Material не отдаёт её содержимое'
-    els.expand.addEventListener('click', function () {
-      setStatus('раскрываю панель…')
-      expandPanelsUntilHeader(0)
-      setTimeout(function () {
-        if (state.busy) return
-        refreshLp()
-        if (state.lp && !state.lp.headerHidden) setStatus('нажмите «Собрать состав»')
-      }, 2400)
-    })
-    actions.appendChild(els.expand)
     body.appendChild(actions)
 
     els.stats = el('div', 'sew-inv-stats')
@@ -476,8 +422,8 @@
   // --- Сбор состава -------------------------------------------------------
 
   function refreshLp() {
-    state.lp = readLpOrExplain()
-    state.rows = state.lp && !state.lp.headerHidden ? readRows() : []
+    state.lp = readLp()
+    state.rows = state.lp ? readRows() : []
     state.lpKey = lpKeyOf(state.lp)
     renderLpLine()
   }
@@ -485,17 +431,11 @@
   /** Строка шапки панели: номер, зона, позиции, посчитано. */
   function renderLpLine() {
     if (!state.lp) {
-      els.lp.textContent = 'ЛП не найден — откройте лист подсчёта'
-      els.expand.hidden = true
+      els.lp.textContent = isInventoryScreen()
+        ? 'это экран инвентаризации, а не лист подсчёта'
+        : 'ЛП не найден — откройте лист подсчёта'
       return
     }
-    if (state.lp.headerHidden) {
-      els.lp.textContent = 'Шапка ЛП свёрнута'
-      els.expand.hidden = false
-      setStatus('разверни панель с общей информацией или нажми кнопку')
-      return
-    }
-    els.expand.hidden = true
     var counted = 0
     for (var i = 0; i < state.rows.length; i++) counted += state.rows[i].counted
     els.lp.textContent =
@@ -510,11 +450,9 @@
     // «позиций 0» при полностью заполненной таблице.
     refreshLp()
     if (!state.lp) {
-      setStatus('ЛП не найден — открой лист подсчёта')
-      return
-    }
-    if (state.lp.headerHidden) {
-      setStatus('шапка ЛП свёрнута — нажми «Развернуть шапку»')
+      setStatus(isInventoryScreen()
+        ? 'это экран инвентаризации — открой лист подсчёта'
+        : 'ЛП не найден — открой лист подсчёта')
       return
     }
     if (!state.lp.zone) {
@@ -923,30 +861,30 @@ function diagnose() {
 // --- Запуск -------------------------------------------------------------
 
   /**
- * Похоже на экран подсчёта. Таблица позиций — хороший признак, но после F5 её
- * может не быть в DOM (она внутри свёрнутой панели), а распознавать по ней
- * значит не раскрывать панель, в которой она и лежит. Поэтому основной признак —
- * маршрут SEW вида /v2/stocktaking/…/results, он не зависит от состояния панелей.
+ * Экран инвентаризации (список подсчётов / результаты), а не лист подсчёта:
+ * маршрут /v2/stocktaking/inventory/<номер>/results, в шапке нет «Зоны ЛП» и
+ * таблицы позиций нет вовсе. На нём плагину нечего собирать — говорим прямо.
  */
+function isInventoryScreen() {
+  return /\/stocktaking\/inventory\/[^/]+\/results/.test(String(location.pathname || ''))
+}
+
+/** Похоже на экран подсчёта: есть таблица позиций ЛП. */
 function looksLikeLpPage() {
-  var path = String(location.pathname || '')
-  return path.indexOf('/stocktaking/') !== -1 || document.querySelector('td.cdk-column-materialName') !== null
+  return document.querySelector('td.cdk-column-materialName') !== null || readRows().length > 0
 }
 
 function init() {
   if (document.getElementById('sew-inventory-panel')) return
   buildPanel()
   try {
-    // После F5 содержимое панели ЛП ещё не отрисовано — раскрываем сами, иначе
-    // первый клик по «Собрать состав» упирается в пустую шапку. На страницах,
-    // где панелей нет (readLpOrExplain вернул null), .headerHidden не читаем:
-    // раньше тут был TypeError, который ронял весь init — панель замирала с
-    // надписью «ЛП не найден» даже после перехода на ЛП.
-    var guess = readLpOrExplain()
-    if (guess && guess.headerHidden && looksLikeLpPage()) expandPanelsUntilHeader(0)
+    // Панели НЕ раскрываем: содержимое свёрнутого mat-expansion-panel в разметке
+    // SEW тоже присутствует (проверено диагностикой), клики по чужим панелям
+    // только мешали бы на посторонних экранах.
     refreshLp()
-    if (!state.lp) setStatus('открой лист подсчёта')
-    else if (state.lp.headerHidden) setStatus('шапка ЛП свёрнута — раскрываем…')
+    if (!state.lp) setStatus(isInventoryScreen()
+      ? 'это экран инвентаризации — открой лист подсчёта (кнопка ручного ввода ШК есть там же)'
+      : 'открой лист подсчёта')
     else setStatus('нажмите «Собрать состав»')
   } catch (err) {
     console.warn('[sew-inventory] init failed:', err)
@@ -958,12 +896,11 @@ function init() {
   setInterval(function () {
     if (state.busy) return
     try {
-      var key = lpKeyOf(readLpOrExplain())
+      var key = lpKeyOf(readLp())
       // Пока таблица пустая, продолжаем пробовать: плагин инжектится раньше,
       // чем SPA её нарисует. Дальше перечитываем только при смене ЛП.
       if (key === state.lpKey && state.rows.length > 0) return
       refreshLp()
-      if (state.lp && state.lp.headerHidden) return
       if (state.rows.length === 0) {
         if (state.lp) setStatus('ждём таблицу ЛП…')
         return
