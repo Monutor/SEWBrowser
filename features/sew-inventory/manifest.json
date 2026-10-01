@@ -1,0 +1,7 @@
+{
+  "name": "sew-inventory",
+  "version": "0.1.0",
+  "description": "Автоподсчёт ЛП SEW: читает состав листа подсчёта из DOM, берёт остатки зоны из выгрузки SEW через мост оболочки (inventory:stock) и показывает сводку «совпало / нет в остатках / лишние». Селекторы — из docs/dom-sew-inventory.md.",
+  "renderer": ["./main.js"],
+  "styles": "./styles.css"
+}

@@ -247,6 +247,35 @@ interface StockDownloadResult {
   error?: string
 }
 
+/** Позиция остатков, собранная из выгрузки для плагина `sew-inventory` */
+interface StockInventoryRow {
+  sku: string
+  name: string
+  /** Сумма по всем ячейкам зоны */
+  qty: number
+  barcode: string
+  zone: string
+  cell: string
+  cellBarcode: string
+  /** Сколько строк (ячеек) сложилось в позицию */
+  cells: number
+}
+
+interface StockInventoryResult {
+  ok: boolean
+  /** Имя файла выгрузки — только при ok */
+  name?: string
+  /** Строк данных в файле, без шапки */
+  totalRows?: number
+  /** Строк, прошедших фильтр по зоне и SKU */
+  matchedRows?: number
+  /** Зоны файла */
+  zones?: string[]
+  /** Позиции по SKU, в порядке файла */
+  rows?: StockInventoryRow[]
+  error?: string
+}
+
 interface StorageUsage {
   cacheBytes: number
   cookieCount: number
@@ -445,6 +474,9 @@ interface ShellApi {
   downloadStock(objectId?: string): Promise<StockDownloadResult>
   /** Выбор папки для отчёта об остатках; null — отмена */
   pickStockDir(): Promise<string | null>
+  /** Остатки для плагина `sew-inventory`: файл скачивается тем же кодом, что и
+   *  кнопка «Остатки», и разбирается в main по зоне ЛП и её SKU */
+  readStockForZone(zone: string, skus: string[]): Promise<StockInventoryResult>
   /** Принтеры системы (список одинаков для всех webContents) */
   listPrinters(): Promise<ShellPrinter[]>
   /** ПКМ по странице → «Печать…»: main шлёт 'shell:open-print' */

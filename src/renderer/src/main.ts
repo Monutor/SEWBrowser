@@ -27,7 +27,7 @@ import { openAccounts, closeAccounts, wireAccounts, checkLoginForm, accountsOver
 import { wireDownloads, closeDownloads, downloadsOverlayEl } from './downloads-overlay'
 import { wireStockReport } from './stock-report'
 import { initSettings, wireSettings, closeSettings, settingsOverlayEl } from './settings-overlay'
-import { initBridges, startScansBridge, startSewHelperBridge, startTasksNotifyBridge } from './bridges'
+import { initBridges, startInventoryBridge, startScansBridge, startSewHelperBridge, startTasksNotifyBridge } from './bridges'
 import { initTabEvents, startLinkIntake, wireTabEvents } from './tab-events'
 import { initPrintBridge, openPrintDialog, wirePrintDialog } from './print-bridge'
 import { wireToolbar } from './toolbar'
@@ -349,6 +349,7 @@ async function init(): Promise<void> {
   startSewHelperBridge()
   startScansBridge()
   startTasksNotifyBridge()
+  startInventoryBridge()
 
   // Данные плагинов меняются из оверлеев оболочки — перепушиваем снапшот в страницу
   window.shell.onPluginDataChanged(() => void pushPluginStores())

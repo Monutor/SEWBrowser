@@ -1,0 +1,142 @@
+/* Панель «Автоподсчёт ЛП». Правый нижний угол, поверх страницы SEW.
+   Размеры — компактные, но заметные: панель открывают пальцем/мышью в
+   перерыве между подсчётом, а не в первый раз. */
+
+.sew-inv-panel {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483000;
+  width: 320px;
+  font-family: Roboto, "Segoe UI", Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.35;
+  color: #1f2430;
+  background: #ffffff;
+  border: 1px solid #c8cede;
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(20, 30, 60, 0.24);
+}
+
+.sew-inv-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #2b3a55;
+  color: #ffffff;
+  border-radius: 9px 9px 0 0;
+}
+
+.sew-inv-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.sew-inv-body {
+  padding: 10px;
+}
+
+.sew-inv-collapsed .sew-inv-body {
+  display: none;
+}
+
+.sew-inv-collapsed {
+  width: 220px;
+}
+
+.sew-inv-lp {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.sew-inv-status {
+  min-height: 17px;
+  margin-bottom: 8px;
+  color: #4a5568;
+  font-size: 12px;
+  word-break: break-word;
+}
+
+.sew-inv-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.sew-inv-btn {
+  flex: 1;
+  padding: 7px 10px;
+  font: inherit;
+  color: #2b3a55;
+  background: #eef1f7;
+  border: 1px solid #c8cede;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.sew-inv-btn:hover:not(:disabled) {
+  background: #e2e7f2;
+}
+
+.sew-inv-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.sew-inv-primary {
+  color: #ffffff;
+  background: #2f6fd0;
+  border-color: #2a5fae;
+}
+
+.sew-inv-primary:hover:not(:disabled) {
+  background: #2a63bb;
+}
+
+.sew-inv-collapse {
+  flex: 0 0 auto;
+  width: 28px;
+  padding: 3px 0;
+  color: #ffffff;
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.sew-inv-stats:empty {
+  display: none;
+}
+
+.sew-inv-stat {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+  border-bottom: 1px dashed #e3e7ef;
+}
+
+.sew-inv-stat-label {
+  color: #4a5568;
+}
+
+.sew-inv-stat-value {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.sew-inv-stat-warn .sew-inv-stat-value {
+  color: #c0392b;
+}
+
+.sew-inv-note,
+.sew-inv-details {
+  margin-top: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: #4a5568;
+  background: #f5f7fb;
+  border-radius: 6px;
+  white-space: pre-line;
+  word-break: break-word;
+}

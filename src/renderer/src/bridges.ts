@@ -278,6 +278,114 @@ export async function pumpScansBridge(): Promise<boolean> {
   }
 }
 
+/**
+ * Мост остатков для плагина `sew-inventory`: гость (страница ЛП) кладёт запрос
+ * в window.__sewInventoryReq, оболочка забирает его (splice — атомарно) и зовёт
+ * window.shell.readStockForZone: в main файл скачивается тем же кодом, что и
+ * кнопка «Остатки», и разбирается там же. Ответ кладём в
+ * window.__sewInventoryRes[id] строкой (structured clone падает на объектах,
+ * ловушка 17). IIFE ОБЯЗАТЕЛЬНО заканчивается `()()`.
+ */
+let inventoryBridgeStarted = false
+let inventoryTakeDiagged = false
+let inventoryDelay = 500
+let inventoryBusy = false
+export function startInventoryBridge(): void {
+  if (inventoryBridgeStarted) return
+  inventoryBridgeStarted = true
+  const tick = (): void => {
+    if (document.hidden) {
+      inventoryDelay = 2000
+      setTimeout(tick, inventoryDelay)
+      return
+    }
+    if (!inventoryBusy) {
+      inventoryBusy = true
+      void pumpInventoryBridge()
+        .then((hadWork) => {
+          inventoryDelay = hadWork ? 500 : Math.min(2000, inventoryDelay + 250)
+        })
+        .catch(() => {
+          inventoryDelay = Math.min(2000, inventoryDelay + 250)
+        })
+        .finally(() => {
+          inventoryBusy = false
+        })
+    }
+    setTimeout(tick, inventoryDelay)
+  }
+  setTimeout(tick, 500)
+}
+
+export async function pumpInventoryBridge(): Promise<boolean> {
+  try {
+    if (!deps.plugins().some((p) => p.name === 'sew-inventory')) return false
+    let hadWork = false
+    for (const tab of listTabs()) {
+      if (!tab.loaded) continue
+      let rawTake: string
+      try {
+        rawTake = await guestJS<string>(
+          tab,
+          'inventory-take',
+          '(function(){try{var q=window.__sewInventoryReq;if(!Array.isArray(q))return "[]";' +
+            'try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})()',
+        )
+      } catch (err) {
+        if (!inventoryTakeDiagged) {
+          inventoryTakeDiagged = true
+          try {
+            console.warn(
+              `[guestjs:inventory-take] guest state: url=${tab.view.getURL()} loading=${tab.view.isLoading()} crashed=${tab.view.isCrashed()}`,
+            )
+          } catch {
+            // ignore
+          }
+        }
+        continue
+      }
+      let reqs: Array<{ id: string; zone?: string; skus?: string[] }> = []
+      try {
+        const parsed: unknown = JSON.parse(typeof rawTake === 'string' ? rawTake : '[]')
+        if (Array.isArray(parsed)) reqs = parsed as typeof reqs
+      } catch {
+        reqs = []
+      }
+      for (const req of reqs) {
+        if (!req || typeof req.id !== 'string') continue
+        hadWork = true
+        let result: unknown
+        try {
+          result = await window.shell.readStockForZone(
+            typeof req.zone === 'string' ? req.zone : '',
+            Array.isArray(req.skus) ? req.skus.filter((s): s is string => typeof s === 'string') : [],
+          )
+        } catch (err) {
+          console.warn('[inventory-bridge] readStockForZone failed:', err)
+          result = { ok: false, error: String((err as Error)?.message ?? err) }
+        }
+        try {
+          await guestJS<boolean>(
+            tab,
+            'inventory-write',
+            '(function(id,payload){try{(window.__sewInventoryRes = window.__sewInventoryRes || {})[id]=payload;return true}catch(e){return false}})' +
+              '(' +
+              JSON.stringify(req.id) +
+              ',' +
+              JSON.stringify(result ?? null) +
+              ')',
+          )
+        } catch {
+          // вкладка могла закрыться между опросом и ответом — гость повторит запрос сам
+        }
+      }
+    }
+    return hadWork
+  } catch {
+    return false
+  }
+}
+
 let tasksNotifyStarted = false
 let tasksNotifyDiagged = false
 let tasksNotifyDelay = 5000
