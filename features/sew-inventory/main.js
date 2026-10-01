@@ -416,8 +416,12 @@
     // состав читаем ЗДЕСЬ, а не берём снимок из init(): иначе в панели
     // «позиций 0» при полностью заполненной таблице.
     refreshLp()
-    if (!state.lp || state.lp.headerHidden) {
-      setStatus('сначала откройте лист подсчёта')
+    if (!state.lp) {
+      setStatus('ЛП не найден — открой лист подсчёта')
+      return
+    }
+    if (state.lp.headerHidden) {
+      setStatus('шапка ЛП свёрнута — нажми «Развернуть шапку»')
       return
     }
     if (!state.lp.zone) {
@@ -478,8 +482,13 @@
   function init() {
     if (document.getElementById('sew-inventory-panel')) return
     buildPanel()
+    // После F9/F5 содержимое панели ЛП ещё не отрисовано — раскрываем сами,
+    // иначе первый клик по «Собрать состав» упирается в пустую шапку.
+    if (readLpOrExplain().headerHidden) expandPanelsUntilHeader(0)
     refreshLp()
-    setStatus('нажмите «Собрать состав»')
+    if (!state.lp) setStatus('открой лист подсчёта')
+    else if (state.lp.headerHidden) setStatus('шапка ЛП свёрнута — раскрываем…')
+    else setStatus('нажмите «Собрать состав»')
     // Страница SEW — SPA: тот же ЛП может дорисоваться после входа, а при
     // переходе на другой ЛП шапка меняется. Поэтому дешёвый опрос шапки, а не
     // одноразовое чтение. Перечитываем таблицу только когда ЛП реально сменился.
