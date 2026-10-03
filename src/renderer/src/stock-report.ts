@@ -1,5 +1,4 @@
 import { setStatus } from './status-ui'
-import { playTnSound } from './bridges'
 
 // Кнопка «Скачать остатки» в тулбаре и её настройки (папка + код магазина)
 // в оверлее «Загрузки». Само скачивание делает main: renderer только зовёт
@@ -72,7 +71,11 @@ async function saveStockObjectId(value: string): Promise<void> {
 /**
  * Скачивание остатков. main шлёт свои события 'started'/'progress'/'done',
  * поэтому прогресс виден в оверлее «Загрузки» и в истории; тут только
- * итог: звук на успех, текст ошибки — в статус.
+ * итог в статус-баре.
+ *
+ * Звука намеренно нет: слот 'rel' — это «звук перемещения», и скачивание
+ * остатков звучало неотличимо от уведомления о новом задании (проверено:
+ * playTnSound зовут только tasks-notify и предпрослушивание в настройках).
  */
 async function downloadStockReport(): Promise<void> {
   const btn = document.getElementById('btn-stock') as HTMLButtonElement | null
@@ -82,7 +85,6 @@ async function downloadStockReport(): Promise<void> {
     const result = await window.shell.downloadStock()
     if (result.ok) {
       setStatus(`остатки сохранены: ${result.name ?? result.path ?? 'файл'}`)
-      await playTnSound('rel')
     } else {
       setStatus(`остатки не скачались: ${result.error ?? 'неизвестная ошибка'}`)
     }
