@@ -186,6 +186,17 @@ body {
   color: var(--text-2);
 }
 
+/* Тумблеры включены: панель «Автоподсчёт ЛП» открыта на активной вкладке */
+#toolbar button.panel-on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+#toolbar button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 #btn-barcode svg {
   margin-top: 8px !important;
 }

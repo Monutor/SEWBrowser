@@ -66,6 +66,12 @@
   transform: translate(calc(100% - 30px), -50%);
 }
 
+/* Блок скрыт кнопкой «Сканы» в тулбаре (window.__sewScans.setVisible(false)).
+   Прячем и ярлык-стрелку: на странице не остаётся ничего. */
+.scans-block-root.scans-block-hidden {
+  display: none;
+}
+
 .scans-block-root.scans-block-collapsed .scans-block-panel {
   visibility: hidden;
   opacity: 0;

@@ -34,6 +34,18 @@
   font-size: 13px;
 }
 
+/* Кнопки в шапке: «свернуть» и «закрыть» рядом, у правого края. */
+.sew-inv-head-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+/* Панель скрыта: по умолчанию и по кнопке в тулбаре оболочки. */
+.sew-inv-hidden {
+  display: none;
+}
+
 .sew-inv-body {
   padding: 10px;
 }
@@ -102,6 +114,49 @@
   color: #ffffff;
   background: transparent;
   border-color: rgba(255, 255, 255, 0.35);
+}
+
+/* Ряд с полем при эмуляции включённой строки «Темп», а блок настроек наоборот
+   показывается. Агентский [hidden]{display:none} слабее авторского display, поэтому
+   переопределяем явно — иначе строка «Темп» осталась бы видимой. */
+.sew-inv-zonerow[hidden],
+.sew-inv-emu[hidden] {
+  display: none;
+}
+
+/* Галочка «Эмуляция человека»: вся строка кликабельна. */
+.sew-inv-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: #2b3a55;
+  cursor: pointer;
+  user-select: none;
+}
+
+.sew-inv-check-box {
+  margin: 0;
+  cursor: pointer;
+}
+
+/* Доп. настройки эмуляции: диапазон темпа и частота расхождений. */
+.sew-inv-emu {
+  margin-bottom: 8px;
+  padding: 8px;
+  background: #f5f7fb;
+  border-radius: 6px;
+}
+
+.sew-inv-emu .sew-inv-zonerow {
+  margin-bottom: 6px;
+}
+
+.sew-inv-emu .sew-inv-note {
+  margin-top: 0;
+  background: transparent;
+  padding: 2px 0 0;
 }
 
 .sew-inv-stats:empty {

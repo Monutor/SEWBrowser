@@ -1,5 +1,4 @@
 import { activeTab, activeView, canTabGoBack, canTabGoForward, focusOrOpenTab, noteTabHistory } from './tabs'
-import { guestJS } from './guest'
 
 /** Элементы тулбара, которые нужны для навигации по странице. */
 export interface ToolbarElements {
@@ -70,15 +69,8 @@ export function wireToolbar(elements: ToolbarElements, deps: ToolbarDeps): void 
   document.getElementById('btn-max')?.addEventListener('click', () => window.shell.windowMax())
   document.getElementById('btn-close')?.addEventListener('click', () => window.shell.windowClose())
 
-  document.getElementById('btn-scans')?.addEventListener('click', async () => {
-    const tab = activeTab()
-    if (!tab) return
-    try {
-      await guestJS<void>(tab, 'scans-open', '(function(){try{window.dispatchEvent(new CustomEvent("scans-block:open"))}catch(e){}})()')
-    } catch (err) {
-      console.warn('[shell] failed to open scans block:', err)
-    }
-  })
+  // NB: btn-scans подписывается в wireScansToggle() — он стал тумблером блока
+  // «Сканы» (открывает/закрывает), здесь он раньше только открывал панель.
 
   // DevTools webview — только в debug-режиме
   window.addEventListener('keydown', (event: KeyboardEvent) => {

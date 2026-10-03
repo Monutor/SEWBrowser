@@ -98,6 +98,7 @@
       </svg></button>
     <button id="btn-products" title="База товаров">&#128230;</button>
     <button id="btn-stock" title="Скачать остатки товаров (xlsx)">&#128202;</button>
+    <button id="btn-inventory" title="Показать панель «Автоподсчёт ЛП»" aria-pressed="false">&#128203;</button>
     <button id="btn-reload" title="Перезагрузить" aria-label="Перезагрузить"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"
         stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="23 4 23 10 17 10"></polyline>
@@ -115,8 +116,48 @@
     </div>
     <button id="btn-accounts" title="Аккаунты SEW (Ctrl+Shift+L)">&#128273;</button>
     <button id="btn-downloads" title="Загрузки">&#128229;</button>
-    <button id="btn-screenshot" title="Снимок вкладки (Ctrl+Shift+S)">&#128247;</button>
-    <button id="btn-scans" title="Сканы (папка HP-софта)">&#128194;</button>
+    <!-- Иконка: resources/camera-icon.svg (SVG Repo Mixer Tools), встроена инлайном,
+         как у соседних svg-кнопок. Цвета в иконке свои, currentColor не используется. -->
+    <button id="btn-screenshot" title="Снимок вкладки (Ctrl+Shift+S)" aria-pressed="false"><svg width="20"
+        height="20" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M845 166l-49-13 49-13 13-48 13 48 48 13-48 13-13 49-13-49zM892 219l-18-4 18-5 5-19 4 19 19 5-19 4-4 19-5-19z"
+          fill="#FDCD60" />
+        <path d="M79 711l-20-5 20-5 5-20 5 20 21 5-21 5-5 21-5-21zM148 862l-33-8 33-7 7-33 8 33 33 7-33 8-8 33-7-33z"
+          fill="#FDCD60" />
+        <path d="M143 169m-9 0a9 9 0 1 0 18 0 9 9 0 1 0-18 0Z" fill="#5546CB" />
+        <path d="M889 854a25 25 0 1 1 25-25 25 25 0 0 1-25 25z m0-36a10 10 0 1 0 10 10 10 10 0 0 0-10-10z" fill="#5546CB" />
+        <path
+          d="M166 400v347a31 31 0 0 0 31 31h629a31 31 0 0 0 31-31V400z m362 358c-92 0-168-75-168-168s75-168 168-168 168 75 168 168-76 168-168 168zM858 380v-63a31 31 0 0 0-31-31H198a31 31 0 0 0-31 31v63z m-140-58h71v20h-71z"
+          fill="#FDCD60" />
+        <path
+          d="M826 266h-40l-15-59H653l-15 59H198a51 51 0 0 0-51 51v430a51 51 0 0 0 51 51h628a51 51 0 0 0 51-51V317a51 51 0 0 0-51-51z m-157-39h86l10 37H660z m-471 59h628a31 31 0 0 1 31 31v63H166v-63a31 31 0 0 1 32-31z m628 492H198a31 31 0 0 1-31-31V400h691v347a31 31 0 0 1-32 31z"
+          fill="#5546CB" />
+        <path d="M528 443c-81 0-148 66-148 148s66 148 148 148 148-66 148-148-67-148-148-148z m0 264a116 116 0 1 1 116-117 116 116 0 0 1-116 116z"
+          fill="#FFFFFF" />
+        <path d="M528 423c-92 0-168 75-168 168s75 168 168 168 168-75 168-168-76-168-168-168z m0 315c-81 0-148-66-148-148s66-148 148-148 148 66 148 148-67 148-148 148z"
+          fill="#5546CB" />
+        <path d="M528 494a96 96 0 1 0 96 96 96 96 0 0 0-96-96z m43 81a18 18 0 1 1 18-18 18 18 0 0 1-18 18z" fill="#FF8859" />
+        <path d="M528 474a116 116 0 1 0 116 116 116 116 0 0 0-116-116z m0 212a96 96 0 1 1 96-96 96 96 0 0 1-96 96z"
+          fill="#5546CB" />
+        <path d="M571 558m-18 0a18 18 0 1 0 36 0 18 18 0 1 0-36 0Z" fill="#FFFFFF" />
+        <path d="M755 227h-86l-9 37h105l-10-37z" fill="#AFBCF3" />
+        <path d="M718 322h71v20h-71z" fill="#5546CB" />
+      </svg></button>
+    <!-- Иконка сканера: resources/scanner-icon.svg (SVG Repo Mixer Tools), встроена инлайном,
+         как у соседних svg-кнопок. Цвета в иконке свои, currentColor не используется. -->
+    <button id="btn-scans" title="Показать блок «Сканы»" aria-pressed="false"><svg width="20" height="20"
+        viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path style="fill:#444;stroke:#111" d="m 3,76 0,6 c 0,0 0,2 2,3 4.6,2 26,7 49,10 4,1 7,-2 7,-2 L 97,58 97,51 59,88 z" />
+        <path style="fill:#666;stroke:#555" d="M 97,52 60,88 c 0,0 -6,4 -20,4 C 26,92 17,92 2,81 2,80 1,76 1,76 c 0,0 -0.17,0 2,2 12,10 27,11 39,11 12,0 19,-6 19,-6 L 97,50 z" />
+        <path style="fill:#999;stroke:#ddd" d="M 97,50 84,48 81,50 55,45 58,43 51,42 3,73 c 0,0 -2,1 -2,3 3,4 7.2,6 14,9 10,4 23,4 29,4 12,0 19,-8 19,-8 z" />
+        <path style="fill:#444;stroke:#111" d="m 15,74 c 8,3 11,1 20,4 5,2 12,3 12,3 0,0 -3,1 -3,6 0,0 -13,1 -22,-2 -9,-3 -10,-5 -10,-5 0,0 -1,-3 3,-6 z" />
+        <path style="fill:#A9DCFF;stroke:#555" d="M 47,48 18,67 c 0,0 -5,3 -1,4 5,1 33,7 36,8 6,1 8,-2 8,-2 L 83,58 c 0,0 6,-4 1,-5 -6,-1 -28,-5 -31,-6 -4,-1 -6,1 -6,1 z" />
+        <circle cx="27" cy="81" r="3" fill="#20C738" stroke="#003B00" />
+        <path style="fill:#aaa;stroke:#666" d="M 93,47 94,45 74,11 C 74,11 71,7 67,7 63,7 57,5.4 52,4 45,2 37,2 30,2 23,2 19,1 19,3 l 0,1 c 12,1 39,4 46,5 3,0.4 6,2 8,5 2,3 20,33 20,33 z" />
+        <path style="fill:#666;stroke:#888" d="m 93,47 -9,-1 -2,-3 -25,-4 1,2 -6,-1 c 0,0 -5,0 -8,-4 C 41,32 19,7 19,7 c 0,0 -3,-3 0,-3 3,0 46,5 46,5 0,0 5,0 10,8 2,3 18,30 18,30 l 0,0" />
+        <path style="fill:#3C5E77;stroke:#999" d="M 23,7 65,11 85,42 48,36 z" />
+        <path style="fill:#222" d="m 55,45 3,-2 0,-2 -1,-2 25,4 2,3 0,2 -3,2 z" />
+      </svg></button>
     <button id="btn-templates" title="Шаблоны SEW (Ctrl+Shift+T)">&#128196;</button>
     <button id="btn-help" title="Справочник (F1)" aria-label="Справочник">?</button>
   <button id="btn-settings" title="Настройки">&#9881;</button>

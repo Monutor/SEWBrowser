@@ -216,6 +216,13 @@
   try {
     collapsed = localStorage.getItem('scans-block:collapsed') !== '0'
   } catch (e) {}
+  // Блок целиком скрыт (вместе с ярлыком-стрелкой) — по умолчанию. Вход и выход
+  // только через кнопку «Сканы» в тулбаре оболочки (window.__sewScans) либо
+  // крестик «✕» в шапке. Прячется в localStorage, как и collapsed/top.
+  var hidden = true
+  try {
+    hidden = localStorage.getItem('scans-block:hidden') !== '0'
+  } catch (e) {}
   // Последний отрендеренный список — чтобы смена сортировки перерисовывала
   // его локально, без захода в мост (иначе список мигал и ждал диск).
   var lastList = null
@@ -723,6 +730,32 @@
     syncTab()
   }
 
+  // --- показать/скрыть весь блок -------------------------------------------
+  // Кнопка «Сканы» в тулбаре оболочки зовёт window.__sewScans.toggle() через
+  // executeJavaScript. Отличие от collapsed: прячется не только панель, но и
+  // ярлык-стрелка — на странице не остаётся ничего.
+  function isVisible() {
+    return !hidden
+  }
+  function setVisible(on) {
+    hidden = !on
+    try { localStorage.setItem('scans-block:hidden', hidden ? '1' : '0') } catch (e) {}
+    if (rootEl) {
+      if (hidden) {
+        rootEl.classList.add('scans-block-hidden')
+      } else {
+        rootEl.classList.remove('scans-block-hidden')
+        // Показывать блок «стрелкой» бессмысленно — с неё и кликают, чтобы
+        // открыть панель: показываем сразу развёрнутым.
+        if (collapsed) toggleCollapsed()
+      }
+    }
+    return !hidden
+  }
+  function toggle() {
+    return setVisible(hidden)
+  }
+
   // --- вертикальная позиция шторки ----------------------------------------
   // Стрелка таскается вверх/вниз, top = центр дока. Храним долю от высоты
   // вьюпорта (0.05..0.95), чтобы позиция переживала ресайз и перезагрузку.
@@ -777,6 +810,7 @@
     if (rootEl) return
     rootEl = el('div', 'scans-block-root')
     if (collapsed) rootEl.classList.add('scans-block-collapsed')
+    if (hidden) rootEl.classList.add('scans-block-hidden')
 
     var panel = el('div', 'scans-block-panel')
     panelEl = panel
@@ -788,8 +822,8 @@
 
     var closeBtn = el('button', 'scans-block-head-btn')
     closeBtn.textContent = '✕'
-    closeBtn.title = 'Свернуть'
-    closeBtn.addEventListener('click', toggleCollapsed)
+    closeBtn.title = 'Закрыть блок «Сканы»'
+    closeBtn.addEventListener('click', function () { setVisible(false) })
     head.appendChild(closeBtn)
 
     panel.appendChild(head)
@@ -1014,9 +1048,18 @@
   // Открытие блока извне — кнопка «Сканы» в тулбаре оболочки шлёт это событие
   // через webview.executeJavaScript в гостевую страницу.
   window.addEventListener('scans-block:open', function () {
-    if (collapsed) toggleCollapsed()
+    if (hidden || collapsed) setVisible(true)
     else doList()
   })
+
+  // Отладочный доступ для оболочки: тумблер в тулбаре зовёт isVisible/toggle
+  // (см. renderer/src/scans-panel.ts). Публичный API — как у sew-inventory.
+  window.__sewScans = {
+    isVisible: isVisible,
+    setVisible: setVisible,
+    toggle: toggle,
+    isCollapsed: function () { return collapsed },
+  }
 
   // Живые обновления от вотчера main (через renderer-форвард 'scans-push'):
   // свежий список файлов — перерисовываем без лишнего bridgeSend('list').

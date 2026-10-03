@@ -26,6 +26,8 @@ import {
 import { openAccounts, closeAccounts, wireAccounts, checkLoginForm, accountsOverlayEl, setLoginPrompted } from './accounts-overlay'
 import { wireDownloads, closeDownloads, downloadsOverlayEl } from './downloads-overlay'
 import { wireStockReport } from './stock-report'
+import { dropInventoryToggle, refreshInventoryToggle, resetInventoryToggle, wireInventoryToggle } from './inventory-panel'
+import { refreshScansToggle, resetScansToggle, wireScansToggle } from './scans-panel'
 import { initSettings, wireSettings, closeSettings, settingsOverlayEl } from './settings-overlay'
 import { initBridges, startInventoryBridge, startScansBridge, startSewHelperBridge, startTasksNotifyBridge } from './bridges'
 import { initTabEvents, startLinkIntake, wireTabEvents } from './tab-events'
@@ -209,7 +211,9 @@ async function init(): Promise<void> {
     updateAddressBar,
     updateNavButtons,
     applyZoomForCurrentPage,
-    updateActiveTab
+    updateActiveTab,
+    resetInventoryToggle,
+    resetScansToggle
   })
   startLinkIntake()
   wireToolbar(
@@ -252,6 +256,8 @@ async function init(): Promise<void> {
   wireAccounts()
   wireDownloads()
   wireStockReport()
+  wireInventoryToggle()
+  wireScansToggle()
   wireHelp()
   wireTemplates({ plugins: () => plugins })
   initTabsOverlay({
@@ -322,6 +328,12 @@ async function init(): Promise<void> {
         // при возврате фокуса проверяем её (checkLoginForm сам гасит повтор
         // через loginPrompted/accountsOpen).
         void checkLoginForm(false)
+        // У каждой вкладки своё состояние панели «Автоподсчёт ЛП» — кнопка в
+        // тулбаре показывает то, что открыто именно здесь.
+        void refreshInventoryToggle()
+        // Состояние блока «Сканы» общее для всех вкладок SEW (localStorage
+        // гостя), но гость перечитывает его на каждой странице — уточняем.
+        void refreshScansToggle()
       },
       onClosed: (tab) => {
         // Ключи гостевых вызовов не чистятся сами — снимаем префикс вкладки,
@@ -329,6 +341,7 @@ async function init(): Promise<void> {
         for (const key of Object.keys(lastGuestErr)) {
           if (key.startsWith(`${tab.id}:`)) delete lastGuestErr[key]
         }
+        dropInventoryToggle(tab.id)
       },
       onPrimaryChanged: (tab) => {
         // Вкладку переставили, опросная сменилась — гасим опрос в прежней.

@@ -33,6 +33,10 @@ export interface TabEventsDeps {
   updateNavButtons(): void
   applyZoomForCurrentPage(): void
   updateActiveTab(): void
+  /** Гость загрузился заново: состояние панели «Автоподсчёт ЛП» сброшено */
+  resetInventoryToggle(tab: ShellTab): void
+  /** Гость загрузился заново: кнопке «Сканы» возвращён кэш состояния */
+  resetScansToggle(): void
 }
 
 let deps!: TabEventsDeps
@@ -220,6 +224,13 @@ export function wireTabEvents(tab: ShellTab): void {
   })
   view.addEventListener('did-finish-load', () => {
     void injectPlugins(tab, deps.plugins())
+    // Панель плагина в новом документе создаётся заново и стартует скрытой —
+    // состояние, запомненное оболочкой до перезагрузки, протухло.
+    deps.resetInventoryToggle(tab)
+    // Блок «Сканы» пересоздаётся в новом документе, но его состояние лежит в
+    // localStorage гостя и не меняется — просто возвращаем кнопке кэш (заново
+    // читать нельзя: плагин ещё не инъецирован).
+    deps.resetScansToggle()
     // Готовность хука — только ПОСЛЕ успешной инъекции: до подтверждения
     // pumpLinkIntake в гостя не ходит. Упала инъекция — не подтверждаем,
     // опрос просто не пойдёт (ретраи и таймауты не нужны).

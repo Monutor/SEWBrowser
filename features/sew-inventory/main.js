@@ -47,6 +47,15 @@ var CONFIRM_MIN_MS = 300
     summary: null,
     /** Секунд на единицу автовноса; настраивается в панели */
     tempoSec: TEMPO_DEFAULT_SEC,
+    /** Эмуляция человека: разброс темпа и намеренные отклонения в подсчёте.
+     *  Расчёты — в core.js (склеивается перед этим файлом), границы и дефолты
+     *  оттуда же: EMU_TEMPO_MIN_SEC, EMU_TEMPO_MAX_SEC, EMU_ERROR_DEFAULT_PCT. */
+    human: {
+      on: false,
+      minSec: EMU_TEMPO_MIN_SEC,
+      maxSec: EMU_TEMPO_MAX_SEC,
+      errorPct: EMU_ERROR_DEFAULT_PCT
+    },
     /** Зона по номеру ЛП: { '924147': 'Торговый зал' }. После старта ЛП шапка с
      *  «Зоной ЛП» скрывается, а ЛП может длиться часами — запоминаем. */
     zoneByLp: {}
@@ -68,12 +77,15 @@ var CONFIRM_MIN_MS = 300
   /** Темп живёт в plugin-data: одна цифра, общий для всех ЛП. */
   async function loadSettings() {
     try {
-      var data = await chrome.storage.local.get(['zoneByLp', 'tempoSec'])
+      var data = await chrome.storage.local.get(['zoneByLp', 'tempoSec', 'humanEmu'])
       if (data && data.zoneByLp && typeof data.zoneByLp === 'object') state.zoneByLp = data.zoneByLp
       if (data && data.tempoSec !== undefined) applyTempo(Number(data.tempoSec))
+      if (data && data.humanEmu) applyHuman(data.humanEmu)
     } catch (e) {
       /* дефолты уже выставлены */
     }
+    // Настройки могли прийти после buildPanel — показываем их в панели.
+    renderHumanUi()
   }
 
   function saveTempo(seconds) {
@@ -82,6 +94,67 @@ var CONFIRM_MIN_MS = 300
     } catch (e) {
       /* не страшно */
     }
+  }
+
+  /** Настройки эмуляции из формы или из plugin-data, с зажимом границ. */
+  function applyHuman(raw) {
+    var src = raw && typeof raw === 'object' ? raw : {}
+    state.human.on = src.on === true
+    state.human.minSec = clampSpeed(src.minSec, EMU_TEMPO_MIN_SEC)
+    state.human.maxSec = clampSpeed(src.maxSec, EMU_TEMPO_MAX_SEC)
+    if (state.human.minSec > state.human.maxSec) {
+      var swap = state.human.minSec
+      state.human.minSec = state.human.maxSec
+      state.human.maxSec = swap
+    }
+    var pct = parseFloat(String(src.errorPct === undefined ? '' : src.errorPct).replace(',', '.'))
+    state.human.errorPct = isFinite(pct) ? Math.min(100, Math.max(0, pct)) : EMU_ERROR_DEFAULT_PCT
+    return state.human
+  }
+
+  function clampSpeed(value, fallback) {
+    var parsed = parseFloat(String(value === undefined || value === null ? '' : value).replace(',', '.'))
+    if (!isFinite(parsed)) return fallback
+    return Math.min(EMU_SPEED_CEIL_SEC, Math.max(EMU_SPEED_FLOOR_SEC, parsed))
+  }
+
+  function saveHuman() {
+    try {
+      chrome.storage.local.set({
+        humanEmu: {
+          on: state.human.on,
+          minSec: state.human.minSec,
+          maxSec: state.human.maxSec,
+          errorPct: state.human.errorPct
+        }
+      })
+    } catch (e) {
+      /* не страшно */
+    }
+  }
+
+  /** Показать/спрятать блок доп. настроек и подставить актуальные значения. */
+  function renderHumanUi() {
+    if (els.humanOn) els.humanOn.checked = state.human.on
+    // При эмуляции темп задаётся диапазоном — одиночное поле прячем, но его
+    // значение сохраняем: после выключения вернётся прежнее.
+    if (els.tempoRow) els.tempoRow.hidden = state.human.on
+    if (els.emuBox) els.emuBox.hidden = !state.human.on
+    if (els.emuMin) els.emuMin.value = String(state.human.minSec)
+    if (els.emuMax) els.emuMax.value = String(state.human.maxSec)
+    if (els.emuErr) els.emuErr.value = String(state.human.errorPct)
+  }
+
+  /** Переписать настройки эмуляции из полей (change) и запомнить. */
+  function readHumanInputs() {
+    applyHuman({
+      on: state.human.on,
+      minSec: els.emuMin ? els.emuMin.value : state.human.minSec,
+      maxSec: els.emuMax ? els.emuMax.value : state.human.maxSec,
+      errorPct: els.emuErr ? els.emuErr.value : state.human.errorPct
+    })
+    saveHuman()
+    renderHumanUi()
   }
 
   /** Номер ЛП для памяти о зоне: из шапки или из маршрута. */
@@ -470,12 +543,54 @@ function shelfBarcodeOf(row) {
     return node
   }
 
+  /**
+   * Строка «подпись + number» для доп. настроек эмуляции. Возвращает и ряд, и
+   * само поле: поле кладём в els, по нему renderHumanUi/readHumanInputs.
+   */
+  function emuNumberRow(label, min, max, step, title) {
+    var row = el('div', 'sew-inv-zonerow')
+    row.appendChild(el('span', 'sew-inv-zonelabel', label))
+    var input = el('input', 'sew-inv-zone')
+    input.type = 'number'
+    input.min = String(min)
+    input.max = String(max)
+    input.step = step
+    input.title = title
+    input.addEventListener('change', readHumanInputs)
+    row.appendChild(input)
+    return { row: row, input: input }
+  }
+
+  /** Видна ли панель. Оболочка спрашивает это при смене вкладки — по этому
+   *  зажигается кнопка «Автоподсчёт ЛП» в тулбаре. */
+  function isVisible() {
+    return !!panel && !panel.classList.contains('sew-inv-hidden')
+  }
+
+  /** Показать или спрятать панель целиком; возвращает итоговую видимость. */
+  function setVisible(on) {
+    if (!panel) return false
+    if (on) panel.classList.remove('sew-inv-hidden')
+    else panel.classList.add('sew-inv-hidden')
+    return isVisible()
+  }
+
+  /** Переключить видимость (тумблер в тулбаре) и вернуть новое состояние. */
+  function toggle() {
+    return setVisible(!isVisible())
+  }
+
   function buildPanel() {
     panel = el('div', 'sew-inv-panel')
     panel.id = 'sew-inventory-panel'
+    // Стартует скрытой: показывает панель кнопка «Автоподсчёт ЛП» в тулбаре
+    // оболочки (window.__sewInventory.setVisible). Раньше блок висел на всех
+    // страницах SEW, и на посторонних экранах мешал надписью «ЛП не найден».
+    panel.classList.add('sew-inv-hidden')
 
     var head = el('div', 'sew-inv-head')
     head.appendChild(el('span', 'sew-inv-title', 'Автоподсчёт ЛП'))
+    var headActions = el('div', 'sew-inv-head-actions')
     var collapse = el('button', 'sew-inv-btn sew-inv-collapse', '—')
     collapse.type = 'button'
     collapse.title = 'Свернуть'
@@ -483,7 +598,16 @@ function shelfBarcodeOf(row) {
       panel.classList.toggle('sew-inv-collapsed')
       collapse.textContent = panel.classList.contains('sew-inv-collapsed') ? '+' : '—'
     })
-    head.appendChild(collapse)
+    headActions.appendChild(collapse)
+    // Закрыть панель целиком — запасной путь наравне с кнопкой в тулбаре.
+    var close = el('button', 'sew-inv-btn sew-inv-collapse', '×')
+    close.type = 'button'
+    close.title = 'Закрыть панель'
+    close.addEventListener('click', function () {
+      setVisible(false)
+    })
+    headActions.appendChild(close)
+    head.appendChild(headActions)
     panel.appendChild(head)
 
     var body = el('div', 'sew-inv-body')
@@ -528,7 +652,37 @@ function shelfBarcodeOf(row) {
     })
     tempoRow.appendChild(els.tempoInput)
     tempoRow.appendChild(el('span', 'sew-inv-zonelabel', 'сек/шт'))
+    els.tempoRow = tempoRow
     body.appendChild(tempoRow)
+
+    // Эмуляция человека: темп берётся случайно из диапазона, иногда человек
+    // «зависает», а изредка позиция считается с расхождением. Значение полей
+    // живёт в state.human и переживает перезапуск страницы.
+    var checkRow = el('label', 'sew-inv-check')
+    els.humanOn = el('input', 'sew-inv-check-box')
+    els.humanOn.type = 'checkbox'
+    els.humanOn.title = 'Случайный темп и редкие расхождения вместо идеального подсчёта'
+    els.humanOn.addEventListener('change', function () {
+      state.human.on = els.humanOn.checked
+      renderHumanUi()
+      saveHuman()
+    })
+    checkRow.appendChild(els.humanOn)
+    checkRow.appendChild(el('span', 'sew-inv-check-label', 'Эмуляция человека'))
+    body.appendChild(checkRow)
+
+    els.emuBox = el('div', 'sew-inv-emu')
+    var emuMin = emuNumberRow('темп от', EMU_SPEED_FLOOR_SEC, EMU_SPEED_CEIL_SEC, '0.1', 'Минимальная пауза между единицами, сек')
+    els.emuMin = emuMin.input
+    els.emuBox.appendChild(emuMin.row)
+    var emuMax = emuNumberRow('темп до', EMU_SPEED_FLOOR_SEC, EMU_SPEED_CEIL_SEC, '0.1', 'Максимальная пауза между единицами, сек')
+    els.emuMax = emuMax.input
+    els.emuBox.appendChild(emuMax.row)
+    var emuErr = emuNumberRow('ошибок, %', 0, 100, '1', 'Доля позиций, посчитанных с расхождением: пропуск, недостача, излишек')
+    els.emuErr = emuErr.input
+    els.emuBox.appendChild(emuErr.row)
+    els.emuBox.appendChild(el('div', 'sew-inv-note', 'периодически «зависает», изредка пропускает позицию или ошибается на 1–3 шт'))
+    body.appendChild(els.emuBox)
 
     var actions = el('div', 'sew-inv-actions')
     els.collect = el('button', 'sew-inv-btn sew-inv-primary', 'Собрать состав')
@@ -579,6 +733,9 @@ function shelfBarcodeOf(row) {
 
     els.progress = el('div', 'sew-inv-progress', '')
     body.appendChild(els.progress)
+
+    // Галочка и блок доп. настроек — из уже загруженного state.human.
+    renderHumanUi()
 
     panel.appendChild(body)
     document.body.appendChild(panel)
@@ -877,23 +1034,35 @@ function shelfBarcodeOf(row) {
     return { ok: false, shelf: shelf }
   }
 
-  /**
- * Паузы одной единицы из выбранного темпа. Всё, что не уходит на
- * подтверждение, тратится на ожидание закрытия диалога — там SEW и так
- * открывает его заново на каждый ШК.
+/**
+ * Паузы одной единицы. При выключенной эмуляции — ровно прежнее поведение
+ * (фиксированный state.tempoSec). При включённой темп берётся случайно из
+ * [мин, макс], и изредка единица «зависает» — пауза в 2–3 раза длиннее.
+ * Всё, что не уходит на подтверждение, тратится на ожидание закрытия диалога —
+ * там SEW и так открывает его заново на каждый ШК.
  */
-function stepWaits() {
-  var total = Math.round(state.tempoSec * 1000)
-  var confirm = Math.max(CONFIRM_MIN_MS, Math.round(total * 0.25))
-  var open = Math.max(120, total - confirm)
-  return { open: open, confirm: confirm }
-}
+  function stepWaits() {
+    var total = Math.round(state.human.on
+      ? emuRandSec(state.human.minSec, state.human.maxSec) * 1000 * emuStallFactor(EMU_STALL_PCT)
+      : state.tempoSec * 1000)
+    var confirm = Math.max(CONFIRM_MIN_MS, Math.round(total * 0.25))
+    var open = Math.max(120, total - confirm)
+    return { open: open, confirm: confirm }
+  }
 
-/** Очередь: по каждой позиции остаток минус уже посчитанное в ЛП. */
+/**
+   * Очередь: по каждой позиции остаток минус уже посчитанное в ЛП.
+   * При включённой эмуляции на позицию бросается один кубик — так читается
+   * «частота ошибок»: плагин вносит чуть меньше или чуть больше остатка,
+   * а изредка не вносит ничего (как человек, который пропустил товар).
+   * target — сколько единиц плагин реально внесёт по позиции.
+   */
   function buildQueue(summary) {
     var items = []
     var skipped = []
     var total = 0
+    var deviations = { skip: 0, short: 0, over: 0 }
+    var emu = state.human.on
     for (var i = 0; i < summary.matched.length; i++) {
       var item = summary.matched[i]
       var remaining = Math.max(0, item.qty - item.counted)
@@ -902,6 +1071,9 @@ function stepWaits() {
         skipped.push({ sku: item.sku, reason: 'нет ШК' })
         continue
       }
+      var dev = emu ? emuRoll(state.human.errorPct) : null
+      var target = emuTarget(remaining, dev)
+      if (dev) deviations[dev]++
       items.push({
         sku: item.sku,
         name: item.name,
@@ -909,11 +1081,13 @@ function stepWaits() {
         cell: item.cell,
         cellBarcode: shelfBarcodeOf(item),
         remaining: remaining,
+        dev: dev,
+        target: target,
         entered: 0
       })
-      total += remaining
+      total += target
     }
-    return { items: items, skipped: skipped, total: total }
+    return { items: items, skipped: skipped, total: total, deviations: deviations }
   }
 
   /**
@@ -1001,7 +1175,8 @@ function stepWaits() {
         }
         shelfEntered = true
       }
-      while (item.remaining > 0) {
+      // По эмуляции вносим ровно item.target: он уже с учётом расхождения.
+      while (item.entered < item.target) {
         if (run.stopped) break
         if (run.paused) {
           await sleep(300)
@@ -1015,7 +1190,6 @@ function stepWaits() {
           setStatus('ШК не принят на ' + item.sku + ' — очередь остановлена')
           break
         }
-        item.remaining--
         item.entered++
         run.entered++
         updateProgress()
@@ -1027,10 +1201,17 @@ function stepWaits() {
     els.stop.hidden = true
     els.start.disabled = false
     var done = run.failed.length === 0
+    // Итоги эмуляции: сколько позиций пропущено / посчитано с недостачей или
+    // излишком. Без них результат выглядит «слишком правильным».
+    var emuNote = ''
+    if (state.human.on) {
+      var described = emuDescribe(run.deviations)
+      if (described) emuNote = ', эмуляция: ' + described
+    }
     setStatus(done
       ? 'подсчёт внесён полностью: ' + run.entered + ' шт за ' + formatEta((Date.now() - run.startedAt) / 1000) +
-        (zoneDone.shelf ? ', зона-источник «' + zoneDone.shelf + '»' : '')
-      : 'остановлено: внесено ' + run.entered + ' из ' + run.total)
+        (zoneDone.shelf ? ', зона-источник «' + zoneDone.shelf + '»' : '') + emuNote
+      : 'остановлено: внесено ' + run.entered + ' из ' + run.total + emuNote)
     saveProgress(zone, run)
   }
 
@@ -1059,7 +1240,9 @@ function stepWaits() {
     if (state.busy || !state.summary) return
     var queue = buildQueue(state.summary)
     if (queue.total === 0) {
-      setStatus('вносить нечего: всё уже посчитано или нет ШК')
+      setStatus(queue.deviations.skip
+        ? 'эмуляция пропустила все позиции — вносить нечего'
+        : 'вносить нечего: всё уже посчитано или нет ШК')
       return
     }
     if (queue.skipped.length) {
@@ -1076,10 +1259,14 @@ function stepWaits() {
       paused: false,
       stopped: false,
       failed: [],
+      deviations: queue.deviations,
       startedAt: Date.now()
     }
     updateProgress()
-    setStatus('подсчёт идёт, ~' + formatEta(queue.total * state.tempoSec) + '. Диалог откроет плагин.')
+    // При эмуляции темп случайный, поэтому оценка берётся по середине диапазона.
+    var perUnit = state.human.on ? (state.human.minSec + state.human.maxSec) / 2 : state.tempoSec
+    var skipNote = queue.deviations.skip ? ', эмуляция пропустит ' + queue.deviations.skip + ' позиций' : ''
+    setStatus('подсчёт идёт, ~' + formatEta(queue.total * perUnit) + '. Диалог откроет плагин.' + skipNote)
     try {
       await runQueue(queue)
     } catch (err) {
@@ -1245,6 +1432,11 @@ function init() {
     collect: collect,
     startRun: startRun,
     diagnose: diagnose,
-    state: state
+    state: state,
+    // Видимость панели — ею управляет кнопка «Автоподсчёт ЛП» в тулбаре
+    // оболочки (см. src/renderer/src/inventory-panel.ts).
+    isVisible: isVisible,
+    setVisible: setVisible,
+    toggle: toggle
   }
 })()
