@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { slotFilesToRemove } from './store-core.ts'
 
 const MIME_BY_EXT: Record<string, string> = {
   mp3: 'audio/mpeg',
@@ -38,11 +39,8 @@ function findSlotFile(dir: string, slot: 'rel' | 'ho'): string | null {
 /** Сохранить звук слота (старый файл слота и legacy затираются) */
 export function saveSoundFile(bytes: Buffer, ext: string, slot: 'rel' | 'ho'): string {
   const dir = soundsDir()
-  for (const f of readdirSync(dir)) {
-    if (f.startsWith(slotPrefix(slot)) || (slot === 'rel' && f.startsWith('custom.'))) {
-      if (f.startsWith('custom-ho.')) continue
-      rmSync(join(dir, f), { force: true })
-    }
+  for (const f of slotFilesToRemove(readdirSync(dir), slot)) {
+    rmSync(join(dir, f), { force: true })
   }
   const file = `custom-${slot}.${ext}`
   writeFileSync(join(dir, file), bytes)
