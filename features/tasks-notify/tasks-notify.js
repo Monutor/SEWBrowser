@@ -160,9 +160,10 @@ function __tnTick() {
           if (!Object.prototype.hasOwnProperty.call(seenHo, id)) {
             seenHo[id] = now;
             if (!baselineHo) {
-              var desc = (it.type && (it.type.description || it.type.code)) || 'выдача';
               var ord = it.orderNumber || ('#' + id);
-              fresh.push({ id: id, kind: 'handover', title: 'Новая выдача: ' + desc + ' №' + ord, body: '#' + id + ' · ' + (it.status || ''), url: '/v2/handover-v2/tasks', sound: st.sound !== false });
+              // Название типа выдачи не показываем: сервер присылает «Самовывоз»,
+              // который сбивает с толку — в уведомлении оставляем «Новая выдача».
+              fresh.push({ id: id, kind: 'handover', title: 'Новая выдача №' + ord, body: '#' + id + ' · ' + (it.status || ''), url: '/v2/handover-v2/tasks', sound: st.sound !== false });
             }
           }
         });
