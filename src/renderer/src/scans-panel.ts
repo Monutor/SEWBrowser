@@ -3,6 +3,7 @@ import { guestJS } from './guest'
 import { setStatus } from './status-ui'
 import { parseGuestFlag } from './inventory-core'
 import { scansToggleTitle } from './scans-core'
+import { isGuestReady } from './tab-events'
 
 /**
  * Кнопка-тумблер «Сканы» в тулбаре: показывает и прячет плавающий блок плагина
@@ -80,6 +81,14 @@ export async function refreshScansToggle(): Promise<void> {
   // или клике, кнопка остаётся кликабельной (клик скажет «загружается»).
   if (!tab.loaded) {
     paint(false, false)
+    return
+  }
+  // Гость ещё не прошёл dom-ready (вкладка только что открыта, переключились на
+  // грузящуюся или восстановили выгруженную) — executeJavaScript бросил бы
+  // «The WebView must be attached to the DOM…». Состояние уточним при следующей
+  // активации или после перезагрузки гостя.
+  if (!isGuestReady(tab.view)) {
+    paint(lastVisible, false)
     return
   }
   try {

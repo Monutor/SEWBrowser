@@ -2,6 +2,7 @@ import { activeTab, type ShellTab } from './tabs'
 import { guestJS } from './guest'
 import { setStatus } from './status-ui'
 import { parseGuestFlag, toggleTitle } from './inventory-core'
+import { isGuestReady } from './tab-events'
 
 /**
  * Кнопка-тумблер «Автоподсчёт ЛП» в тулбаре: показывает и прячет плавающую
@@ -78,6 +79,14 @@ export async function refreshInventoryToggle(): Promise<void> {
   // или клике, кнопка остаётся кликабельной (клик скажет «загружается»).
   if (!tab.loaded) {
     paint(false, false)
+    return
+  }
+  // Гость ещё не прошёл dom-ready (вкладка только что открыта, переключились на
+  // грузящуюся или восстановили выгруженную) — executeJavaScript бросил бы
+  // «The WebView must be attached to the DOM…». Состояние уточним при следующей
+  // активации или после перезагрузки гостя.
+  if (!isGuestReady(tab.view)) {
+    paint(cached, false)
     return
   }
   try {
