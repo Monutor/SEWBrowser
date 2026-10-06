@@ -90,6 +90,12 @@ export interface SewConfig {
   scanFolders: ScanFolder[];
   /** Устаревшее одиночное поле (миграция со старых конфигов). Не используется как источник истины. */
   scanFolder?: string;
+  /**
+   * Сколько гостей (процессов Chromium) держать живыми одновременно. Дальние по
+   * LRU фоновые вкладки выгружаются: webview разрывается, память освобождается,
+   * при возврате вкладка грузится заново. 0 или отсутствие поля — не выгружать.
+   */
+  maxLiveTabs?: number;
 }
 
 const DEFAULTS: SewConfig = {
@@ -112,6 +118,7 @@ const DEFAULTS: SewConfig = {
   folderPasswordRememberMinutes: 5,
   stockObjectId: DEFAULT_OBJECT_ID,
     scanFolders: [],
+  maxLiveTabs: 4,
 }
 
 function configFile(): string {
@@ -267,7 +274,16 @@ function sanitizeConfig(user: Partial<SewConfig>): SewConfig {
       DEFAULTS.folderPasswordRememberMinutes,
     ),
     scanFolders: pickScanFolders(user.scanFolders),
+    maxLiveTabs: pickMaxLiveTabs(user.maxLiveTabs),
   }
+}
+
+/** Бюджет живых гостей: целое >= 1. 0 и мусор — дефолт (выгрузка не выключается
+ *  битым значением из файла, иначе пользователь молча потеряет экономию памяти). */
+function pickMaxLiveTabs(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULTS.maxLiveTabs ?? 4
+  const whole = Math.floor(value)
+  return whole >= 1 ? whole : DEFAULTS.maxLiveTabs ?? 4
 }
 
 /** Частичное обновление пользовательского конфига с сохранением на диск */

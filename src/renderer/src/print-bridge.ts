@@ -149,6 +149,7 @@ export async function openPrintDialog(tab: ShellTab | null): Promise<void> {
  *  цели печати, иначе Ctrl+Tab переименовал бы сохраняемый файл */
 export function titleForPrint(): string {
   try {
+    if (printTargetView && !printTargetView.isConnected) printTargetView = null
     return (printTargetView ?? activeView())?.getTitle() ?? ''
   } catch {
     return ''
@@ -160,7 +161,12 @@ export function wirePrintDialog(): void {
   if (!elements) return
   // Цель, снятая при открытии диалога; activeView() — запасной путь, если
   // openPrintDialog цели не зафиксировал (например, гость не дал view)
-  const view = (): SewWebViewElement | null => printTargetView ?? activeView()
+  const view = (): SewWebViewElement | null => {
+    // Разорванный webview (выгрузка по бюджету) печатать уже нельзя: у guest
+    // за ним больше нет процесса. Откатываемся на активную вкладку.
+    if (printTargetView && !printTargetView.isConnected) printTargetView = null
+    return printTargetView ?? activeView()
+  }
 
   // Строка «Принтер» в разметке пустая: контроллер умеет только скрывать её,
   // содержимое собираем здесь через DOM API (без innerHTML — текст небезопасен)

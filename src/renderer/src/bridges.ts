@@ -1,13 +1,25 @@
-import { focusOrOpenTab, listTabs, primaryTab } from './tabs'
+import { focusOrOpenTab, listTabs, primaryTab, type ShellTab } from './tabs'
 import { guestJS } from './guest'
 import { formatTaskAlertText, getTaskAlertUrls, type TaskAlertController } from './task-alert'
 import { setStatus } from './status-ui'
 import { hostOf, normalizeUrl } from './util'
+import {
+  asBffReqs,
+  asInvReqs,
+  asScansReqs,
+  anyRequest,
+  BRIDGE_CHANNELS,
+  BRIDGE_PLUGIN,
+  buildTakeScript,
+  nextPollDelay,
+  parseTakeResult,
+  type BridgeChannel,
+  type ScansRequest,
+} from './bridges-core.ts'
 
 /**
- * Мосты гостевой страницы: BFF sew-helper, сканы HP и tasks-notify.
- * Все три опрашивают страницу адаптивным интервалом и пишут результат
- * в UI оболочки через deps.
+ * Мосты гостевой страницы: BFF sew-helper, сканы HP, остатки и tasks-notify.
+ * Первые три делят один опрос и один адаптивный таймер (см. startPollBridge).
  */
 export interface BridgesDeps {
   config(): ShellConfig | null
@@ -25,379 +37,211 @@ export function initBridges(next: BridgesDeps): void {
 }
 
 /**
+ * Общий опрос гостя: одним executeJavaScript забираем сразу BFF-запросы, «Сканы»
+ * и «Остатки», отвечаем по каждому каналу. Раньше на канал был свой таймер, то
+ * есть на каждую вкладку уходило до трёх вызовов executeJavaScript за тик —
+ * основной фоновый поток IPC оболочки. Теперь вызов один, а простой растянут
+ * до 4 секунд (таймауты гостя — 30–120 секунд, запас большой).
+ *
+ * tasks-notify сюда НЕ входит: он работает только с опросным хостом (первой
+ * вкладкой) и с ��акими интервалами 5–15 секунд.
+ */
+let pollBridgeStarted = false
+let takeDiagged = false
+let pollDelay = 500
+let pollBusy = false
+/** Интервалы общего опроса: работа / потолок простоя / шаг разгона */
+const POLL_DELAY_OPTS = { work: 500, idleMax: 4000, step: 250 }
+
+export function startPollBridge(): void {
+  if (pollBridgeStarted) return
+  pollBridgeStarted = true
+  const tick = (): void => {
+    if (document.hidden) {
+      pollDelay = POLL_DELAY_OPTS.idleMax
+      setTimeout(tick, pollDelay)
+      return
+    }
+    if (!pollBusy) {
+      pollBusy = true
+      void pumpPollBridge()
+        .then((hadWork) => {
+          pollDelay = nextPollDelay(pollDelay, hadWork, POLL_DELAY_OPTS)
+        })
+        .catch(() => {
+          pollDelay = nextPollDelay(pollDelay, false, POLL_DELAY_OPTS)
+        })
+        .finally(() => {
+          pollBusy = false
+        })
+    }
+    setTimeout(tick, pollDelay)
+  }
+  setTimeout(tick, POLL_DELAY_OPTS.work)
+}
+
+/** Каналы, чей плагин включён в настройках и чью очередь есть смысла опрашивать. */
+function enabledChannels(): BridgeChannel[] {
+  const names = deps.plugins().map((p) => p.name)
+  return BRIDGE_CHANNELS.filter((channel) => names.includes(BRIDGE_PLUGIN[channel]))
+}
+
+/**
+ * Один обход вкладок и один take на вкладку. Возвращает, была ли хоть где-нибудь
+ * работа: по этому адаптивный таймер держит быстрый интервал.
+ */
+export async function pumpPollBridge(): Promise<boolean> {
+  const channels = enabledChannels()
+  if (channels.length === 0) return false
+  let hadWork = false
+  const takeScript = buildTakeScript(channels)
+  for (const tab of listTabs()) {
+    // Ленивая (ещё не загруженная) вкладка гостя не имеет — опрашивать некого.
+    if (!tab.loaded) continue
+    let rawTake: string
+    try {
+      rawTake = await guestJS<string>(tab, 'poll-take', takeScript)
+    } catch {
+      // Фиксируем состояние ГЕСТА (синхронные хост-вызовы, без клона), чтобы
+      // понять, в какой момент падает invoke. Однократно.
+      if (!takeDiagged) {
+        takeDiagged = true
+        try {
+          console.warn(
+            `[guestjs:poll-take] guest state: url=${tab.view.getURL()} loading=${tab.view.isLoading()} crashed=${tab.view.isCrashed()}`,
+          )
+        } catch {
+          // ignore
+        }
+      }
+      continue
+    }
+    const queues = parseTakeResult(rawTake)
+    if (!anyRequest(queues)) continue
+    hadWork = true
+    for (const req of asBffReqs(queues.bff)) await answerBff(tab, req)
+    for (const req of asScansReqs(queues.scans)) await answerScans(tab, req)
+    for (const req of asInvReqs(queues.inv)) await answerInventory(tab, req)
+  }
+  return hadWork
+}
+
+/**
  * BFF-мост для sew-helper: гость складывает запросы в window.__sewHelperBffReq,
- * оболочка забирает их (splice — атомарно), ходит в main через netFetch
- * (net.fetch: без CORS, куки общие с webview через default session) и кладёт
- * ответы в window.__sewHelperBffRes[id]. Опрос каждые 500 мс, только если
- * плагин загружен.
+ * оболочка ходит в main через netFetch (net.fetch: без CORS, куки общие с webview
+ * через default session) и кладёт ответ в window.__sewHelperBffRes[id].
  */
-let sewHelperBridgeStarted = false
-let bffTakeDiagged = false
-/** Адаптивный опрос: 500мс при работе, до 2000мс в простое + пауза когда окно скрыто */
-let bffDelay = 500
-let bffBusy = false
-export function startSewHelperBridge(): void {
-  if (sewHelperBridgeStarted) return
-  sewHelperBridgeStarted = true
-  const tick = (): void => {
-    if (document.hidden) {
-      bffDelay = 2000
-      setTimeout(tick, bffDelay)
-      return
-    }
-    if (!bffBusy) {
-      bffBusy = true
-      void pumpSewHelperBff()
-        .then((hadWork) => {
-          bffDelay = hadWork ? 500 : Math.min(2000, bffDelay + 250)
-        })
-        .catch(() => {
-          bffDelay = Math.min(2000, bffDelay + 250)
-        })
-        .finally(() => {
-          bffBusy = false
-        })
-    }
-    setTimeout(tick, bffDelay)
-  }
-  setTimeout(tick, 500)
-}
-
-export async function pumpSewHelperBff(): Promise<boolean> {
+async function answerBff(tab: ShellTab, req: { id: string; url: string }): Promise<void> {
+  let res: { ok: boolean; status: number; data: unknown }
   try {
-    if (!deps.plugins().some((p) => p.name === 'sew-helper')) return false
-    // Обходим ВСЕ вкладки: BFF-запрос может прийти из любой, а в госте у него
-    // 30-секундный таймаут ожидания ответа — не опросим вкладку, она зависнет.
-    // hadWork: был ли хоть один запрос — по нему адаптивный таймер держит 500мс.
-    let hadWork = false
-    for (const tab of listTabs()) {
-      // Ленивая (ещё не загруженная) вкладка гостя не имеет — опрашивать некого.
-      if (!tab.loaded) continue
-      // Гостевая часть — полностью неубиваемая (вложенные try/catch): reject
-      // executeJavaScript Electron всегда дублирует внутренним логом
-      // "GUEST_VIEW_MANAGER_CALL: ...", поэтому гость не должен кидать
-      // в принципе.
-      // take возвращает JSON-СТРОКУ (structured clone результата падает на
-      // объектах только в экзотике, строка — всегда безопасна). КРИТИЧНО:
-      // IIFE обязана заканчиваться `()()` — голая `(function(){...})` без вызова
-      // возвращает сам объект функции, а он неклонируем:
-      // "GUEST_VIEW_MANAGER_CALL: An object could not be cloned" (ловушка 17).
-      let rawTake: string
-      try {
-        rawTake = await guestJS<string>(
-          tab,
-          'bff-take',
-          '(function(){try{var q=window.__sewHelperBffReq;if(!Array.isArray(q))return "[]";' +
-            'try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})()',
-        )
-      } catch (err) {
-        // take возвращает строку во всех ветках — клон здесь ни при чём.
-        // Фиксируем состояние ГЕСТА (синхронные хост-вызовы, без клона),
-        // чтобы понять, в какой момент падает invoke. Однократно.
-        if (!bffTakeDiagged) {
-          bffTakeDiagged = true
-          try {
-            console.warn(
-              `[guestjs:bff-take] guest state: url=${tab.view.getURL()} loading=${tab.view.isLoading()} crashed=${tab.view.isCrashed()}`,
-            )
-          } catch {
-            // ignore
-          }
-        }
-        continue
-      }
-      let reqs: Array<{ id: string; url: string }> = []
-      try {
-        const parsed: unknown = JSON.parse(typeof rawTake === 'string' ? rawTake : '[]')
-        if (Array.isArray(parsed)) reqs = parsed as Array<{ id: string; url: string }>
-      } catch {
-        reqs = []
-      }
-      for (const req of reqs) {
-        if (!req || typeof req.id !== 'string' || typeof req.url !== 'string') continue
-        hadWork = true
-        let res: { ok: boolean; status: number; data: unknown }
-        try {
-          res = await window.shell.netFetch(req.url)
-        } catch {
-          res = { ok: false, status: 0, data: null }
-        }
-        try {
-          await guestJS<boolean>(
-            tab,
-            'bff-write',
-            '(function(id,payload){try{(window.__sewHelperBffRes = window.__sewHelperBffRes || {})[id]=payload;return true}catch(e){return false}})' +
-              '(' +
-              JSON.stringify(req.id) +
-              ',' +
-              JSON.stringify(res ?? { ok: false, status: 0, data: null }) +
-              ')',
-          )
-        } catch {
-          // вкладка могла закрыться между опросом и ответом — гость повторит запрос сам (retry)
-        }
-      }
-    }
-    return hadWork
+    res = await window.shell.netFetch(req.url)
   } catch {
-    // webview не готов — молча ждём следующего тика
-    return false
+    res = { ok: false, status: 0, data: null }
+  }
+  try {
+    await guestJS<boolean>(
+      tab,
+      'bff-write',
+      '(function(id,payload){try{(window.__sewHelperBffRes = window.__sewHelperBffRes || {})[id]=payload;return true}catch(e){return false}})' +
+        '(' +
+        JSON.stringify(req.id) +
+        ',' +
+        JSON.stringify(res ?? { ok: false, status: 0, data: null }) +
+        ')',
+    )
+  } catch {
+    // вкладка могла закрыться между опросом и ответом — гость повторит запрос сам (retry)
   }
 }
 
 /**
- * Мост для в-page блока «Сканы»: гость складывает запросы в
- * window.__sewScansReq, оболочка забирает их (splice — атомарно) и ходит в main
- * через window.shell.* (у гостя нет window.shell, поэтому мост — в renderer).
- * Ответи кладём в window.__sewScansRes[id] как JSON-СТРОКУ (structured clone
- * падает на объектах; строка безопасна). IIFE ОБЯЗАТНО заканчивается `()()`
- * (ловушка 17: голая `(function(){...})` без вызова не клонируется → GUEST_VIEW_MANAGER_CALL).
+ * Мост для in-page блока «Сканы»: у гостя нет window.shell, поэтому ходим через
+ * window.shell.* отсюда. Ответ кладём в window.__sewScansRes[id].
  */
-let scansBridgeStarted = false
-let scansTakeDiagged = false
-/** Тот же адаптивный опрос, что у BFF-моста: быстро при работе, медленно в простое */
-let scansDelay = 500
-let scansBusy = false
-export function startScansBridge(): void {
-  if (scansBridgeStarted) return
-  scansBridgeStarted = true
-  const tick = (): void => {
-    if (document.hidden) {
-      scansDelay = 2000
-      setTimeout(tick, scansDelay)
-      return
-    }
-    if (!scansBusy) {
-      scansBusy = true
-      void pumpScansBridge()
-        .then((hadWork) => {
-          scansDelay = hadWork ? 500 : Math.min(2000, scansDelay + 250)
-        })
-        .catch(() => {
-          scansDelay = Math.min(2000, scansDelay + 250)
-        })
-        .finally(() => {
-          scansBusy = false
-        })
-    }
-    setTimeout(tick, scansDelay)
-  }
-  setTimeout(tick, 500)
-}
-
-export async function pumpScansBridge(): Promise<boolean> {
+async function answerScans(tab: ShellTab, req: ScansRequest): Promise<void> {
+  let result: unknown
   try {
-    if (!deps.plugins().some((p) => p.name === 'scans-block')) return false
-    // Как и BFF-мост: запрос «Сканы» может прийти из любой вкладки, а ответ
-    // ждёт в госте с таймаутом — обходим все вкладки подряд.
-    let hadWork = false
-    for (const tab of listTabs()) {
-      if (!tab.loaded) continue
-      let rawTake: string
-      try {
-        rawTake = await guestJS<string>(
-          tab,
-          'scans-take',
-          '(function(){try{var q=window.__sewScansReq;if(!Array.isArray(q))return "[]";' +
-            'try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})()',
-        )
-      } catch (err) {
-        if (!scansTakeDiagged) {
-          scansTakeDiagged = true
-          try {
-            console.warn(
-              `[guestjs:scans-take] guest state: url=${tab.view.getURL()} loading=${tab.view.isLoading()} crashed=${tab.view.isCrashed()}`,
-            )
-          } catch {
-            // ignore
-          }
-        }
-        continue
-      }
-      let reqs: Array<{ id: string; type: string; payload?: unknown }> = []
-      try {
-        const parsed: unknown = JSON.parse(typeof rawTake === 'string' ? rawTake : '[]')
-        if (Array.isArray(parsed)) reqs = parsed as Array<{ id: string; type: string; payload?: unknown }>
-      } catch {
-        reqs = []
-      }
-      for (const req of reqs) {
-        if (!req || typeof req.id !== 'string' || typeof req.type !== 'string') continue
-        hadWork = true
-        let result: unknown
-        try {
-          switch (req.type) {
-            case 'list':
-              result = await window.shell.listScans()
-              break
-            case 'read':
-              result = typeof req.payload === 'string' ? await window.shell.readScanFile(req.payload) : null
-              break
-            case 'launch':
-              result = await window.shell.launchScannerApp()
-              break
-            case 'pick':
-              result = await window.shell.pickScanFile()
-              break
-            case 'open':
-              result = typeof req.payload === 'string' ? await window.shell.openScanFile(req.payload) : false
-              break
-            case 'show':
-              result = typeof req.payload === 'string' ? await window.shell.showScanInFolder(req.payload) : false
-              break
-            case 'delete':
-              result = typeof req.payload === 'string' ? await window.shell.deleteScan(req.payload) : []
-              break
-            default:
-              result = { ok: false, error: 'unknown type' }
-          }
-        } catch (err) {
-          console.warn(`[scans-bridge] ${req.type} failed:`, err)
-          result = { ok: false, error: String((err as Error)?.message ?? err) }
-        }
-        try {
-          await guestJS<boolean>(
-            tab,
-            'scans-write',
-            '(function(id,payload){try{(window.__sewScansRes = window.__sewScansRes || {})[id]=payload;return true}catch(e){return false}})' +
-              '(' +
-              JSON.stringify(req.id) +
-              ',' +
-              JSON.stringify(result ?? null) +
-              ')',
-          )
-        } catch {
-          // вкладка могла закрыться между опросом и ответом — гость повторит запрос сам
-        }
-      }
+    switch (req.type) {
+      case 'list':
+        result = await window.shell.listScans()
+        break
+      case 'read':
+        result = typeof req.payload === 'string' ? await window.shell.readScanFile(req.payload) : null
+        break
+      case 'launch':
+        result = await window.shell.launchScannerApp()
+        break
+      case 'pick':
+        result = await window.shell.pickScanFile()
+        break
+      case 'open':
+        result = typeof req.payload === 'string' ? await window.shell.openScanFile(req.payload) : false
+        break
+      case 'show':
+        result = typeof req.payload === 'string' ? await window.shell.showScanInFolder(req.payload) : false
+        break
+      case 'delete':
+        result = typeof req.payload === 'string' ? await window.shell.deleteScan(req.payload) : []
+        break
+      default:
+        result = { ok: false, error: 'unknown type' }
     }
-    return hadWork
+  } catch (err) {
+    console.warn(`[scans-bridge] ${req.type} failed:`, err)
+    result = { ok: false, error: String((err as Error)?.message ?? err) }
+  }
+  try {
+    await guestJS<boolean>(
+      tab,
+      'scans-write',
+      '(function(id,payload){try{(window.__sewScansRes = window.__sewScansRes || {})[id]=payload;return true}catch(e){return false}})' +
+        '(' +
+        JSON.stringify(req.id) +
+        ',' +
+        JSON.stringify(result ?? null) +
+        ')',
+    )
   } catch {
-    // webview не готов — молча ждём следующего тика
-    return false
+    // вкладка могла закрыться между опросом и ответом — гость повторит запрос сам
   }
 }
 
 /**
- * Мост остатков для плагина `sew-inventory`: гость (страница ЛП) кладёт запрос
- * в window.__sewInventoryReq, оболочка забирает его (splice — атомарно) и зовёт
- * window.shell.readStockForZone: в main файл скачивается тем же кодом, что и
- * кнопка «Остатки», и разбирается там же. Ответ кладём в
- * window.__sewInventoryRes[id] ОБЪЕКТОМ, как в BFF-мосте: JSON.stringify без
- * кавычек в коде гостя даёт литерал, поэтому «строковый» ответ пришлось бы
- * экранировать. IIFE ОБЯЗАТЕЛЬНО заканчивается `()()` (ловушка 17).
+ * Мост остатков для плагина `sew-inventory`: зовём window.shell.readStockForZone,
+ * в main файл скачивается тем же кодом, что и кнопка «Остатки». Ответ кладём в
+ * window.__sewInventoryRes[id].
  */
-let inventoryBridgeStarted = false
-let inventoryTakeDiagged = false
-let inventoryGatedLogged = false
-let inventoryDelay = 500
-let inventoryBusy = false
-export function startInventoryBridge(): void {
-  if (inventoryBridgeStarted) return
-  inventoryBridgeStarted = true
-  const tick = (): void => {
-    if (document.hidden) {
-      inventoryDelay = 2000
-      setTimeout(tick, inventoryDelay)
-      return
-    }
-    if (!inventoryBusy) {
-      inventoryBusy = true
-      void pumpInventoryBridge()
-        .then((hadWork) => {
-          inventoryDelay = hadWork ? 500 : Math.min(2000, inventoryDelay + 250)
-        })
-        .catch(() => {
-          inventoryDelay = Math.min(2000, inventoryDelay + 250)
-        })
-        .finally(() => {
-          inventoryBusy = false
-        })
-    }
-    setTimeout(tick, inventoryDelay)
-  }
-  setTimeout(tick, 500)
-}
-
-export async function pumpInventoryBridge(): Promise<boolean> {
+async function answerInventory(
+  tab: ShellTab,
+  req: { id: string; zone?: string; skus?: string[] },
+): Promise<void> {
+  let result: unknown
   try {
-    if (!deps.plugins().some((p) => p.name === 'sew-inventory')) {
-      if (!inventoryGatedLogged) {
-        inventoryGatedLogged = true
-        console.warn('[inventory-bridge] плагин sew-inventory выключен в настройках — мост молчит')
-      }
-      return false
-    }
-    let hadWork = false
-    for (const tab of listTabs()) {
-      if (!tab.loaded) continue
-      let rawTake: string
-      try {
-        rawTake = await guestJS<string>(
-          tab,
-          'inventory-take',
-          '(function(){try{var q=window.__sewInventoryReq;if(!Array.isArray(q))return "[]";' +
-            'try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})()',
-        )
-      } catch (err) {
-        if (!inventoryTakeDiagged) {
-          inventoryTakeDiagged = true
-          try {
-            console.warn(
-              `[guestjs:inventory-take] guest state: url=${tab.view.getURL()} loading=${tab.view.isLoading()} crashed=${tab.view.isCrashed()}`,
-            )
-          } catch {
-            // ignore
-          }
-        }
-        continue
-      }
-      let reqs: Array<{ id: string; zone?: string; skus?: string[] }> = []
-      try {
-        const parsed: unknown = JSON.parse(typeof rawTake === 'string' ? rawTake : '[]')
-        if (Array.isArray(parsed)) reqs = parsed as typeof reqs
-      } catch {
-        reqs = []
-      }
-      for (const req of reqs) {
-        if (!req || typeof req.id !== 'string') continue
-        hadWork = true
-        let result: unknown
-        try {
-          result = await window.shell.readStockForZone(
-            typeof req.zone === 'string' ? req.zone : '',
-            Array.isArray(req.skus) ? req.skus.filter((s): s is string => typeof s === 'string') : [],
-          )
-        } catch (err) {
-          console.warn('[inventory-bridge] readStockForZone failed:', err)
-          result = { ok: false, error: String((err as Error)?.message ?? err) }
-        }
-        // По одному ответу на запрос — чтобы по консоли оболочки было видно, дошёл
-        // ли запрос гостя и что вернул main.
-        const summary = (result ?? null) as { ok?: boolean; rows?: unknown[]; error?: string } | null
-        console.info(
-          '[inventory-bridge] зона «' + (req.zone || '') + '»:',
-          summary && summary.ok ? 'позиций ' + (summary.rows ? summary.rows.length : 0) : 'ошибка — ' + (summary && summary.error),
-        )
-        try {
-          await guestJS<boolean>(
-            tab,
-            'inventory-write',
-            '(function(id,payload){try{(window.__sewInventoryRes = window.__sewInventoryRes || {})[id]=payload;return true}catch(e){return false}})' +
-              '(' +
-              JSON.stringify(req.id) +
-              ',' +
-              JSON.stringify(result ?? null) +
-              ')',
-          )
-        } catch {
-          // вкладка могла закрыться между опросом и ответом — гость повторит запрос сам
-        }
-      }
-    }
-    return hadWork
+    result = await window.shell.readStockForZone(req.zone ?? '', req.skus ?? [])
+  } catch (err) {
+    console.warn('[inventory-bridge] readStockForZone failed:', err)
+    result = { ok: false, error: String((err as Error)?.message ?? err) }
+  }
+  // По одному ответу на запрос — чтобы по консоли оболочки было видно, дошёл
+  // ли запрос гостя и что вернул main.
+  const summary = (result ?? null) as { ok?: boolean; rows?: unknown[]; error?: string } | null
+  console.info(
+    '[inventory-bridge] зона «' + (req.zone || '') + '»:',
+    summary && summary.ok ? 'позиций ' + (summary.rows ? summary.rows.length : 0) : 'ошибка — ' + (summary && summary.error),
+  )
+  try {
+    await guestJS<boolean>(
+      tab,
+      'inventory-write',
+      '(function(id,payload){try{(window.__sewInventoryRes = window.__sewInventoryRes || {})[id]=payload;return true}catch(e){return false}})' +
+        '(' +
+        JSON.stringify(req.id) +
+        ',' +
+        JSON.stringify(result ?? null) +
+        ')',
+    )
   } catch {
-    return false
+    // вкладка могла закрыться между опросом и ответом — гость повторит запрос сам
   }
 }
 
@@ -484,6 +328,27 @@ export function tnSoundFile(slot: 'rel' | 'ho'): string {
 
 export function resetTnCustomAudio(slot: 'rel' | 'ho'): void {
   tnCustomAudio[slot] = { audio: null, key: '' }
+}
+
+/**
+ * Подхватывает свои звуки уведомлений при старте приложения.
+ * Иначе tnSoundFileRel/tnSoundFileHo пусты до первого открытия панели настроек
+ * (их заполняла только она), и playTnSound уходил в стандартный бип —
+ * после перезапуска/обновления звуки «слетали» на дефолтный.
+ */
+export async function initTnSounds(): Promise<void> {
+  try {
+    const data = await window.shell.pluginDataGet('tasks-notify', ['settings'])
+    const s = data.settings as { soundFile?: unknown; soundFileHo?: unknown } | undefined
+    setTnSoundFiles(
+      typeof s?.soundFile === 'string' ? s.soundFile : '',
+      typeof s?.soundFileHo === 'string' ? s.soundFileHo : '',
+    )
+    resetTnCustomAudio('rel')
+    resetTnCustomAudio('ho')
+  } catch (err) {
+    console.warn('[shell] failed to init tasks-notify sounds:', err)
+  }
 }
 
 /** Нормализация «Времени показа уведомлений»: 0 = не скрывать, пустое/мусор → дефолт */

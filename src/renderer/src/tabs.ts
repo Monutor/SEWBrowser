@@ -1,4 +1,4 @@
-import { clampTabIndex, cycleTabIndex, isOpenInWindowGesture, normalizeTabUrl, tabFavicon, tabTitle } from './tabs-core.ts'
+import { clampTabIndex, cycleTabIndex, isOpenInWindowGesture, normalizeTabUrl, tabFavicon, tabTitle, tabsToSuspend } from './tabs-core.ts'
 
 /**
  * Менеджер вкладок: по одному живому <webview> на вкладку, все работают одновременно.
@@ -31,10 +31,15 @@ export interface ShellTab {
    * Вкладка загружена: webview создан, src установлен, гость живёт.
    * Фоновые вкладки создаются лениво (см. ensureTabLoaded) — пока флаг снят,
    * webview даже не вставлен в DOM, и гостя за вкладкой просто нет.
+   * Живой гость снят и по бюджету (см. unloadTab) — тогда loaded тоже false.
    */
   loaded: boolean
   /** id гостевого webContents (0, пока вкладка не загружена) — нужен main для троттлинга. */
   guestId: number
+  /** Заглушка «восстанавливаем вкладку», пока гостя нет. Живёт в DOM всегда. */
+  skeleton: HTMLDivElement
+  /** Порядковый номер последнего взятия вкладки: чем больше, тем недавнее. */
+  lastUsed: number
 }
 
 export interface TabsHooks {
@@ -48,6 +53,12 @@ export interface TabsHooks {
    * просто исчезает вместе с ней, поэтому хук зовется только от moveTab.
    */
   onPrimaryChanged?: (tab: ShellTab) => void
+  /**
+   * Гость фоновой вкладки выгружен по бюджету: webview разорван, при возврате
+   * страница грузится заново. Оболочка должна сбросить состояние, привязанное к
+   * гостю (панели плагинов, кэш ошибок executeJavaScript).
+   */
+  onSuspended?: (tab: ShellTab) => void
 }
 
 export interface TabsOptions {
@@ -60,12 +71,19 @@ export interface TabsOptions {
   isAllowed?: (url: string) => boolean
   /** Отказ по allowlist: вкладка не создана, оболочка должна объяснить пользователю. */
   onBlocked?: (url: string) => void
+  /** Сколько гостей держать живыми; 0 или меньше — фоновые не выгружаются. */
+  maxLiveTabs?: number
 }
+
+/** Дефолтный бюджет живых гостей, если конфиг ничего не сказал. */
+const DEFAULT_MAX_LIVE_TABS = 4
 
 let options: TabsOptions | null = null
 let tabs: ShellTab[] = []
 let activeId = 0
 let nextId = 1
+/** Счётчик последнего взятия вкладки — основа LRU-отбора при выгрузке. */
+let useSeq = 0
 /** Вкладка, для которой открыто контекстное меню (ПКМ не активирует вкладку). */
 let menuTabId = 0
 /** Разделённое окно: две вкладки пополам. null — обычное окно. */
@@ -87,6 +105,7 @@ export function initTabs(opts: TabsOptions): void {
   tabs = []
   activeId = 0
   nextId = 1
+  useSeq = 0
   menuTabId = 0
   split = null
   focusPane = 'left'
@@ -221,6 +240,7 @@ export function openTab(rawUrl: string, opts?: { activate?: boolean }): ShellTab
       o.hooks.onClosed(old)
       try {
         old.view.remove()
+        old.skeleton.remove()
       } catch {
         /* webview уже мог быть уничтожен — не критично */
       }
@@ -238,6 +258,8 @@ export function openTab(rawUrl: string, opts?: { activate?: boolean }): ShellTab
       faviconData: '',
       loaded: false,
       guestId: 0,
+      skeleton: createSkeleton(),
+      lastUsed: ++useSeq,
     }
     if (pane === 'left') {
       split.leftId = fresh.id
@@ -269,6 +291,8 @@ export function openTab(rawUrl: string, opts?: { activate?: boolean }): ShellTab
     faviconData: '',
     loaded: false,
     guestId: 0,
+    skeleton: createSkeleton(),
+    lastUsed: ++useSeq,
   }
   tabs.push(tab)
   // Порядок важен: сначала обработчики, потом загрузка — иначе did-navigate уйдёт в никуда
@@ -283,6 +307,7 @@ export function openTab(rawUrl: string, opts?: { activate?: boolean }): ShellTab
     activateTab(tab)
   }
   publishPollHost()
+  enforceTabBudget()
   return tab
 }
 
@@ -296,6 +321,7 @@ function ensureTabLoaded(tab: ShellTab): void {
   if (!o || tab.loaded) return
   tab.loaded = true
   o.container.appendChild(tab.view)
+  hideSkeleton(tab)
   viewLoadUrl(tab)
 }
 
@@ -324,6 +350,75 @@ export function setTabGuestId(tab: ShellTab, id: number): void {
   publishPollHost()
 }
 
+/** Заглушка на время, пока гостя за вкладкой нет: ленивая загрузка или восстановление. */
+function createSkeleton(): HTMLDivElement {
+  const skeleton = document.createElement('div')
+  skeleton.className = 'tab-skeleton'
+  skeleton.setAttribute('aria-hidden', 'true')
+  const spinner = document.createElement('span')
+  spinner.className = 'tab-skeleton-spinner'
+  const caption = document.createElement('span')
+  caption.className = 'tab-skeleton-caption'
+  caption.textContent = 'Восстанавливаем вкладку…'
+  skeleton.append(spinner, caption)
+  return skeleton
+}
+
+/**
+ * Показать скелетон вкладки. Пока госта нет, на его месте должен быть хоть какой-то
+ * элемент: иначе пользователь видит пустое окно и жмёт Esc, думая, что вкладка сломалась.
+ */
+function showSkeleton(tab: ShellTab): void {
+  if (!tab.skeleton.isConnected) options?.container.appendChild(tab.skeleton)
+  tab.skeleton.removeAttribute('data-hidden')
+}
+
+/** Скрыть скелетон: гость на месте, дальше видом занимается webview. */
+function hideSkeleton(tab: ShellTab): void {
+  tab.skeleton.setAttribute('data-hidden', '')
+}
+
+/**
+ * Выгрузить гостя фоновой вкладки: разорвать <webview>, освободив память процесса
+ * Chromium. Вкладка остаётся в полосе со своим url, заголовком и иконкой — вернёмся
+ * на неё через ensureTabLoaded и полная перезагрузка. Состояние страницы при этом
+ * теряется — это осознанная цена экономии памяти.
+ */
+function unloadTab(tab: ShellTab): void {
+  if (!tab.loaded) return
+  tab.loaded = false
+  tab.guestId = 0
+  // История гостя уничтожена вместе с ним: счётчики Depth обнуляем, чтобы кнопки
+  // «назад/вперёд» не обещали переходы, которых после перезагрузки не будет.
+  tab.navCount = 0
+  tab.maxNav = 0
+  tab.pendingHistory = 0
+  tab.view.remove()
+  // Выгружается только фоновая вкладка (активную и опросного хоста tabsToSuspend
+  // бережёт), поэтому заглушка на её месте не нужна — её место заберёт webview,
+  // когда вкладку снова возьмут.
+  tab.skeleton.remove()
+  options?.hooks.onSuspended?.(tab)
+}
+
+/**
+ * Держать число живых гостей в пределах бюджета: выгрузить самые давно взятые
+ * фоновые вкладки. Активная и опросный хост неприкосновенны (см. tabsToSuspend).
+ * Зовём после каждого изменения состава или активной вкладки.
+ */
+function enforceTabBudget(): void {
+  const o = options
+  if (!o || o.maxLiveTabs === undefined || o.maxLiveTabs <= 0) return
+  const budget = o.maxLiveTabs || DEFAULT_MAX_LIVE_TABS
+  const ids = tabsToSuspend(tabs, { budget, activeId, isSplit: split !== null })
+  if (ids.length === 0) return
+  for (const id of ids) {
+    const tab = tabs.find((entry) => entry.id === id)
+    if (tab) unloadTab(tab)
+  }
+  renderTabBar()
+}
+
 export function closeTab(id: number): void {
   const o = options
   const index = tabs.findIndex((tab) => tab.id === id)
@@ -337,6 +432,7 @@ export function closeTab(id: number): void {
   o.hooks.onClosed(tab)
   try {
     tab.view.remove()
+    tab.skeleton.remove()
   } catch {
     /* webview уже мог быть уничтожен — не критично */
   }
@@ -358,13 +454,16 @@ export function closeTab(id: number): void {
   if (activeId === id) {
     const next = tabs[index] ?? tabs[tabs.length - 1]
     activeId = next.id
+    next.lastUsed = ++useSeq
     ensureTabLoaded(next)
     applyVisibility()
     renderTabBar()
     o.hooks.onActivated(next)
+    enforceTabBudget()
     return
   }
   renderTabBar()
+  enforceTabBudget()
 }
 
 /**
@@ -405,10 +504,14 @@ export function activateTab(tab: ShellTab): void {
     }
   }
   activeId = tab.id
+  // Взятие вкладки — событие LRU: сначала метка времени, потом отбор на выгрузку,
+  // иначе восстановленная вкладка успеет вылететь тем же вызовом.
+  tab.lastUsed = ++useSeq
   ensureTabLoaded(tab)
   applyVisibility()
   renderTabBar()
   options.hooks.onActivated(tab)
+  enforceTabBudget()
 }
 
 export function cycleTab(delta: number): void {
@@ -515,20 +618,34 @@ function applyVisibility(): void {
       const pane = splitPaneOf(tab)
       if (!pane) {
         tab.view.setAttribute('data-hidden', '')
+        hideSkeleton(tab)
         continue
       }
       tab.view.removeAttribute('data-hidden')
       // Раскладку панелей задаём прямо на webview: контейнер остаётся без
       // промежуточных узлов, CSS рисует разделитель по первому потомку.
       tab.view.setAttribute('style', pane === 'left' ? 'left:0;width:50%' : 'left:50%;width:50%')
+      if (tab.loaded) hideSkeleton(tab)
+      else {
+        // Скелетон встаёт на место отсутствующего webview — и по раскладке панели,
+        // иначе он перекрыл бы соседнюю половину окна.
+        tab.skeleton.setAttribute('style', pane === 'left' ? 'left:0;width:50%' : 'left:50%;width:50%')
+        tab.skeleton.setAttribute('data-pane', pane)
+        showSkeleton(tab)
+      }
     }
     return
   }
   o.container.removeAttribute('data-split')
   for (const tab of tabs) {
     tab.view.removeAttribute('style')
+    tab.skeleton.removeAttribute('style')
     if (tab.id === activeId) tab.view.removeAttribute('data-hidden')
     else tab.view.setAttribute('data-hidden', '')
+    // Заглушка нужна ровно там, где нет гостя: активная вкладка грузится
+    // (лениво или после выгрузки), всё остальное скрыто вместе со своим webview.
+    if (!tab.loaded && tab.id === activeId) showSkeleton(tab)
+    else hideSkeleton(tab)
   }
 }
 

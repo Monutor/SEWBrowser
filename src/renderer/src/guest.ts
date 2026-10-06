@@ -2,6 +2,12 @@
 // Ссылки на DOM берутся лениво (внутри функций), а не на верхнем уровне.
 
 import { listTabs, type ShellTab } from './tabs'
+import {
+  buildInjectScript,
+  parseInjectResult,
+  selectInjectable,
+  type InjectablePlugin,
+} from './guest-core.ts'
 
 
 
@@ -46,75 +52,64 @@ export const LINK_HOOK = `(function(){
 // результат executeJavaScript обязан быть structured-cloneable.
 export const LINK_TAKE = '(function(){try{var q=window.__shellNewTabReq;if(!Array.isArray(q))return "[]";try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})()'
 
+/**
+ * Инжект всех плагинов в гостевую страницу ОДНИМ executeJavaScript.
+ *
+ * Раньше на каждую загрузку вкладки уходило ~26 последовательных вызовов
+ * (снапшот, poll-host, и на каждый плагин — шим, код, чтение ошибки), и шим
+ * инжектился по разу на каждый плагин. Теперь всё склеено в один IIFE:
+ * снапшот данных → флаг опросного хоста → шим (один раз) → код плагинов (у
+ * каждого свой IIFE с гостевым try/catch и личным `chrome`) → init → сброс
+ * имени. Ошибки возвращаются одной JSON-строкой и печатаются в консоль
+ * оболочки поимённо — иначе Electron пишет лишь безликое
+ * "GUEST_VIEW_MANAGER_CALL: Script failed to execute".
+ *
+ * Плагин с битым синтаксисом выпадает ДО сборки скрипта: executeJavaScript
+ * парсит его целиком, и гостевой try/catch SyntaxError не спасает — упал бы
+ * весь батч. Раньше каждый плагин шёл отдельным вызовом и падал сам по себе.
+ */
 export async function injectPlugins(tab: ShellTab, plugins: PluginInfo[]): Promise<void> {
-  // Снапшот данных плагинов в страницу (читает шим вместо IPC — см. комментарий
-  // к CHROME_SHIM). Пушим до кода плагинов, чтобы первые чтения видели данные.
-  await pushPluginStores()
-  // Хост опроса: только первая вкладка забирает очередь заданий (tasks-notify),
-  // иначе при N вкладках придёт N одинаковых уведомлений. Ставим ДО кода
-  // плагинов — tasks-notify читает флаг на старте (__tnInit).
-  try {
-    await guestJS<void>(tab, 'poll-host', `window.__shellPollHost = ${tab.isPrimary ? 'true' : 'false'};`)
-  } catch (err) {
-    console.warn('[plugins] poll host flag failed:', err)
+  const { ok, problems } = selectInjectable(plugins as InjectablePlugin[])
+  for (const problem of problems) {
+    console.warn(`[plugins:${problem.name}] синтаксическая ошибка, плагин пропущен:`, problem.error)
   }
-  for (const plugin of plugins) {
+  if (ok.length === 0) return
+
+  // Стили — до кода плагинов, в порядке плагинов (иначе каскад поменяется).
+  for (const plugin of ok) {
+    if (!plugin.styles) continue
     try {
-      if (plugin.styles) {
-        try {
-          await tab.view.insertCSS(plugin.styles)
-        } catch (err) {
-          console.warn(`[plugins:${plugin.name}] insertCSS failed:`, err)
-        }
-      }
-      // chrome-шим страницы (один на документ) + имя плагина для его хранилища
-      await guestJS<void>(tab, 'shim', CHROME_SHIM)
-      if (!plugin.code) continue
-      const key = JSON.stringify(plugin.name)
-      // Код плагина выполняется в гостевом try/catch: синхронный throw складываем
-      // в window.__shellPluginError[name] и читаем обратно в консоль оболочки.
-      // Иначе Electron пишет лишь безликое "GUEST_VIEW_MANAGER_CALL: Script
-      // failed to execute" без имени плагина и текста ошибки.
-      await guestJS<void>(
-        tab,
-        `inject:${plugin.name}`,
-        `window.__shellPluginName = ${key};` +
-          `window.__shellPlugins = window.__shellPlugins || {};` +
-          `window.__shellPluginError = window.__shellPluginError || {};` +
-          `if (!window.__shellPlugins[${key}]) {` +
-          // Код выполняется в IIFE с собственным `chrome`, привязанным к стору
-          // этого плагина: отложенные вызовы (наблюдатели, обработчики) видят
-          // свои данные, а не 'default' (имя в __shellPluginName уже сброшено).
-          `window.__shellPlugins[${key}] = 1;\n(() => {\nconst chrome = window.__shellChromeFor(${key});\ntry {\n${plugin.code}\n} catch (e) {\nwindow.__shellPluginError[${key}] = String((e && e.stack) || e);\nconsole.error('[shell-plugin:' + ${key} + ']', e);\n}\n})();}`,
-      )
-      try {
-        const pluginErr = (await guestJS<unknown>(
-          tab,
-          `plugin-error:${plugin.name}`,
-          `(window.__shellPluginError || {})[${key}] ?? null`,
-        )) as unknown
-        if (typeof pluginErr === 'string' && pluginErr) {
-          console.warn(`[plugins:${plugin.name}] guest error:`, pluginErr)
-        }
-      } catch {
-        // страница ушла между инжектом и чтением — нечего читать
-      }
-      if (plugin.init) {
-        try {
-          await guestJS<unknown>(tab, `init:${plugin.name}`, plugin.init)
-        } catch (err) {
-          console.warn(`[plugins:${plugin.name}] init failed:`, err)
-        }
-      }
+      await tab.view.insertCSS(plugin.styles)
     } catch (err) {
-      console.warn(`[plugins:${plugin.name}] injection failed:`, err)
+      console.warn(`[plugins:${plugin.name}] insertCSS failed:`, err)
     }
   }
-  // Сбрасываем имя плагина, чтобы чужой код не писал в чужое хранилище
+
+  // Снапшот данных плагинов нужен только этой вкладке: остальные получили
+  // свой при первой загрузке и обновляются через onPluginDataChanged.
+  // Читает шим вместо IPC — см. комментарий к CHROME_SHIM.
+  let stores: Record<string, Record<string, unknown>> = {}
   try {
-    await guestJS<void>(tab, 'name-reset', 'window.__shellPluginName = null;')
-  } catch {
-    // страница могла уже уйти — игнорируем
+    stores = await window.shell.getAllPluginData()
+  } catch (err) {
+    console.warn('[shell] getAllPluginData failed:', err)
+  }
+
+  const script = buildInjectScript({
+    stores,
+    // Хост опроса: только первая вкладка забирает очередь заданий
+    // (tasks-notify), иначе при N вкладках придёт N одинаковых уведомлений.
+    pollHost: tab.isPrimary,
+    shim: CHROME_SHIM,
+    plugins: ok,
+  })
+  try {
+    const errors = parseInjectResult(await guestJS<string>(tab, 'inject-all', script))
+    for (const [name, message] of Object.entries(errors)) {
+      console.warn(`[plugins:${name}] guest error:`, message)
+    }
+  } catch (err) {
+    console.warn('[plugins] injection failed:', err)
   }
 }
 
@@ -147,6 +142,10 @@ export const lastGuestErr: Record<string, string> = {}
  *  Повторы с тем же текстом глушим (дедуп по ключу `${'$'}{tab.id}:{label}`),
  *  исключение пробрасываем. */
 export async function guestJS<T>(tab: ShellTab, label: string, code: string): Promise<T> {
+  // Выгрузка по бюджету разорвала webview: гостя за вкладкой физически нет, и
+  // executeJavaScript упал бы с GUEST_VIEW_MANAGER_CALL. Это штатное состояние,
+  // а не ошибка, — отдаём пустой результат, чтобы фоновый опрос молчал.
+  if (!tab.loaded) return null as T
   const key = `${tab.id}:${label}`
   try {
     return (await tab.view.executeJavaScript(code)) as T

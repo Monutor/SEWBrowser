@@ -294,6 +294,15 @@ export function isGuestReady(view: SewWebViewElement): boolean {
   return guestReady.has(view)
 }
 
+/**
+ * Забыть, что webview когда-то был готов: вызывается при выгрузке гостя по
+ * бюджету. Новый гость получит те же флаги заново на dom-ready/did-finish-load.
+ */
+export function resetViewFlags(view: SewWebViewElement): void {
+  linkHookReady.delete(view)
+  guestReady.delete(view)
+}
+
 /** Передать зависимости оболочки. Обязательно до wireTabEvents/startLinkIntake. */
 export function initTabEvents(next: TabEventsDeps): void {
   deps = next

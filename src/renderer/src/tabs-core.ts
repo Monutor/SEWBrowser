@@ -93,6 +93,48 @@ export function extractNewTabUrls(raw: unknown): string[] {
 }
 
 /**
+ * Заготовка вкладки для планировщика выгрузки. Отдельный тип вместо ShellTab:
+ * функция должна проверяться в node без DOM и без <webview>.
+ */
+export interface SuspendCandidate {
+  id: number
+  /** Гость жив: webview в DOM, src установлен. */
+  loaded: boolean
+  /** Первая вкладка — опросный хост tasks-notify, её выгружать нельзя. */
+  isPrimary: boolean
+  /** Монотонный счётчик последнего взятия вкладки: чем больше, тем свежее. */
+  lastUsed: number
+}
+
+export interface SuspendPlanOptions {
+  /** Сколько гостей держим живыми; 0 или меньше — выгрузка выключена. */
+  budget: number
+  activeId: number
+  isSplit: boolean
+}
+
+/**
+ * Кого выгрузить (разорвать <webview>), чтобы живых гостей осталось не больше budget.
+ *
+ * Неприкосновенны активная вкладка и опросный хост (isPrimary) — из-за них план
+ * может превысить бюджет: лучше лишний гость, чем молчащие задачи или пустой экран.
+ * Из остальных загруженных остаются самые свежие по lastUsed, выгружаются самые
+ * давние. Возвращает id в порядке от самой старой к самой свежей.
+ */
+export function tabsToSuspend(tabs: SuspendCandidate[], opts: SuspendPlanOptions): number[] {
+  if (opts.isSplit) return []
+  if (opts.budget <= 0) return []
+  const protectedLoaded = tabs.filter(
+    (tab) => tab.loaded && (tab.id === opts.activeId || tab.isPrimary),
+  ).length
+  const keep = Math.max(0, opts.budget - protectedLoaded)
+  const candidates = tabs
+    .filter((tab) => tab.loaded && tab.id !== opts.activeId && !tab.isPrimary)
+    .sort((a, b) => a.lastUsed - b.lastUsed || a.id - b.id)
+  return candidates.slice(0, Math.max(0, candidates.length - keep)).map((tab) => tab.id)
+}
+
+/**
  * Жест «открыть вкладку в новом окне»: Ctrl+ЛКМ (на macOS — Cmd+ЛКМ).
  * Средняя кнопка в полосе вкладок занята закрытием, поэтому button должен быть 0.
  */

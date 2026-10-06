@@ -29,8 +29,8 @@ import { wireStockReport } from './stock-report'
 import { dropInventoryToggle, refreshInventoryToggle, resetInventoryToggle, wireInventoryToggle } from './inventory-panel'
 import { refreshScansToggle, resetScansToggle, wireScansToggle } from './scans-panel'
 import { initSettings, wireSettings, closeSettings, settingsOverlayEl } from './settings-overlay'
-import { initBridges, startInventoryBridge, startScansBridge, startSewHelperBridge, startTasksNotifyBridge } from './bridges'
-import { initTabEvents, startLinkIntake, wireTabEvents } from './tab-events'
+import { initBridges, initTnSounds, startPollBridge, startTasksNotifyBridge } from './bridges'
+import { initTabEvents, resetViewFlags, startLinkIntake, wireTabEvents } from './tab-events'
 import { initPrintBridge, openPrintDialog, wirePrintDialog } from './print-bridge'
 import { wireToolbar } from './toolbar'
 import { initAddressBar, updateAddressBar, updateTitlebarTitle, updateNavButtons, navigate, applyZoomForCurrentPage, changeZoom } from './address-bar'
@@ -300,6 +300,7 @@ async function init(): Promise<void> {
     strip: document.getElementById('tabbar-strip') as HTMLElement,
     newTabButton: document.getElementById('tabbar-new') as HTMLButtonElement,
     startUrl: config.startUrl,
+    maxLiveTabs: config.maxLiveTabs,
     // Allowlist-инвариант в одном месте: openTab не создаёт вкладку для
     // запрещённого хоста, статус тот же, что у navigate.
     isAllowed: (url) => isAllowed(url),
@@ -347,6 +348,15 @@ async function init(): Promise<void> {
         // Вкладку переставили, опросная сменилась — гасим опрос в прежней.
         // Новый хост поднимет его сам при первом взятии очереди (tasks-take).
         void guestJS<void>(tab, 'poll-host-off', 'window.__shellPollHost = false;').catch(() => {})
+      },
+      onSuspended: (tab) => {
+        // Гость разорван по бюджету — его флаги готовности и ошибки вызовов
+        // больше не про этот webview. Новый гость получит их заново.
+        resetViewFlags(tab.view)
+        for (const key of Object.keys(lastGuestErr)) {
+          if (key.startsWith(`${tab.id}:`)) delete lastGuestErr[key]
+        }
+        dropInventoryToggle(tab.id)
       }
     }
   })
@@ -359,10 +369,10 @@ async function init(): Promise<void> {
     tasksUrl,
     isAllowed
   })
-  startSewHelperBridge()
-  startScansBridge()
+  startPollBridge()
+  // Свои звуки уведомлений (ЗНП/выдача) — до первого открытия настроек
+  void initTnSounds()
   startTasksNotifyBridge()
-  startInventoryBridge()
 
   // Данные плагинов меняются из оверлеев оболочки — перепушиваем снапшот в страницу
   window.shell.onPluginDataChanged(() => void pushPluginStores())

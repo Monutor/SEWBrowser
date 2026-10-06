@@ -7,6 +7,8 @@ import {
   isOpenInWindowGesture,
   normalizeTabUrl,
   tabTitle,
+  tabsToSuspend,
+  type SuspendCandidate,
 } from './tabs-core.ts'
 
 describe('normalizeTabUrl', () => {
@@ -201,5 +203,104 @@ describe('normalizeFaviconUrl', () => {
     // new URL требует валидный base, поэтому даже абсолютный href без него не резолвится
     assert.equal(normalizeFaviconUrl('/favicon.ico', 'не-url'), '')
     assert.equal(normalizeFaviconUrl('https://site.ru/i.png', 'не-url'), '')
+  })
+})
+
+/** Заготовка вкладки для планировщика выгрузки: важны только id и признаки. */
+function tab(
+  id: number,
+  opts: { loaded?: boolean; isPrimary?: boolean; lastUsed?: number } = {},
+): SuspendCandidate {
+  return {
+    id,
+    loaded: opts.loaded ?? true,
+    isPrimary: opts.isPrimary ?? false,
+    lastUsed: opts.lastUsed ?? id,
+  }
+}
+
+describe('tabsToSuspend', () => {
+  it('в разделении не выгружает ничего: обе панели на виду', () => {
+    const ids = tabsToSuspend([tab(1), tab(2), tab(3), tab(4), tab(5)], {
+      budget: 2,
+      activeId: 5,
+      isSplit: true,
+    })
+    assert.deepEqual(ids, [])
+  })
+
+  it('не выгружает ничего, пока живых вкладок не больше бюджета', () => {
+    const ids = tabsToSuspend([tab(1, { isPrimary: true }), tab(2), tab(3)], {
+      budget: 3,
+      activeId: 3,
+      isSplit: false,
+    })
+    assert.deepEqual(ids, [])
+  })
+
+  it('выгружает самую давно использованную, когда вкладок больше бюджета', () => {
+    const ids = tabsToSuspend(
+      [tab(1, { isPrimary: true, lastUsed: 1 }), tab(2, { lastUsed: 2 }), tab(3, { lastUsed: 3 })],
+      { budget: 2, activeId: 3, isSplit: false },
+    )
+    assert.deepEqual(ids, [2])
+  })
+
+  it('первая вкладка (опросный хост) не выгружается, даже когда она самая старая', () => {
+    const ids = tabsToSuspend(
+      [tab(1, { isPrimary: true, lastUsed: 1 }), tab(2, { lastUsed: 5 }), tab(3, { lastUsed: 4 })],
+      { budget: 2, activeId: 3, isSplit: false },
+    )
+    assert.deepEqual(ids, [2])
+  })
+
+  it('активная вкладка не выгружается, даже когда она самая старая', () => {
+    const ids = tabsToSuspend([tab(1, { isPrimary: true, lastUsed: 9 }), tab(2, { lastUsed: 1 })], {
+      budget: 1,
+      activeId: 2,
+      isSplit: false,
+    })
+    assert.deepEqual(ids, [])
+  })
+
+  it('бюджет меньше числа защищённых вкладок — выгружает всех остальных', () => {
+    // Активная и опросная вместе уже съедают бюджет 1: они неприкосновенны,
+    // поэтому план превышает бюджет — это лучше, чем убить опросный хост.
+    const ids = tabsToSuspend(
+      [tab(1, { isPrimary: true, lastUsed: 9 }), tab(2, { lastUsed: 8 }), tab(3, { lastUsed: 7 })],
+      { budget: 1, activeId: 1, isSplit: false },
+    )
+    // lastUsed: 8 у второй, 7 у третьей → выгружается третья (старее) первой.
+    assert.deepEqual(ids, [3, 2])
+  })
+
+  it('выгружает от самой старой к самой свежей', () => {
+    const ids = tabsToSuspend(
+      [tab(1, { isPrimary: true, lastUsed: 5 }), tab(2, { lastUsed: 4 }), tab(3, { lastUsed: 9 }), tab(4, { lastUsed: 2 }), tab(5, { lastUsed: 8 })],
+      { budget: 3, activeId: 5, isSplit: false },
+    )
+    // Защищены 1 (опросный хост) и 5 (активная), остаётся место 3 только на одну.
+    assert.deepEqual(ids, [4, 2])
+  })
+
+  it('уже выгруженные вкладки в план не попадают', () => {
+    const ids = tabsToSuspend(
+      [tab(1, { isPrimary: true, lastUsed: 1 }), tab(2, { lastUsed: 2 }), tab(3, { lastUsed: 3, loaded: false })],
+      { budget: 1, activeId: 1, isSplit: false },
+    )
+    assert.deepEqual(ids, [2])
+  })
+
+  it('бюджет 0 или отрицательный — выгружать нечего (панель управления спасена)', () => {
+    const ids = tabsToSuspend([tab(1, { isPrimary: true }), tab(2)], {
+      budget: 0,
+      activeId: 2,
+      isSplit: false,
+    })
+    assert.deepEqual(ids, [])
+  })
+
+  it('пустой список вкладок даёт пустой план', () => {
+    assert.deepEqual(tabsToSuspend([], { budget: 4, activeId: 0, isSplit: false }), [])
   })
 })

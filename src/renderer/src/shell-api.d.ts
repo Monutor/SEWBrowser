@@ -181,6 +181,8 @@ interface ShellConfig {
   /** Сколько минут не спрашивать пароль папки после галки «запомнить» (1..1440) */
   folderPasswordRememberMinutes: number
   scanFolders: ScanFolder[]
+  /** Сколько гостей держать живыми; дальние фоновые вкладки выгружаются по LRU */
+  maxLiveTabs?: number
 }
 
 /** Папка со сканами из настроек оболочки */
