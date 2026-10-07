@@ -3,6 +3,9 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { normalizeRememberMinutes } from './credentials/folderUnlock'
 import { DEFAULT_OBJECT_ID, isValidObjectId } from './downloads/stockReport'
+// Валидаторы фичи «Ценники» живут в shared, чтобы их же мог проверять renderer
+// и юнит-тесты; конфиг берёт их оттуда, а не дублирует правила у себя.
+import { isValidCopies, isValidPaperColorId, isValidTemplateId } from '../shared/pricetags-core'
 
 export interface NavTab {
   id: string;
@@ -75,6 +78,15 @@ export interface SewConfig {
   stockDir?: string;
   /** Код магазина для отчёта об остатках (objectId в запросе) */
   stockObjectId: string;
+  /** Код магазина для ценников (напр. S187) — по умолчанию тот же, что у остатков:
+   *  отдельный ключ нужен, чтобы печать ценников не ломалась у другого магазина. */
+  pricetagObjectId: string;
+  /** id шаблона печати ценника (89 = А6 ПРОМО, 96 = ШТРИХ-КОД 24, …) */
+  pricetagTemplateId: number;
+  /** 1 — белая, 2 — жёлтая, 3 — розовая */
+  pricetagPaperColorId: number;
+  /** Сколько копий каждого ценника */
+  pricetagCopies: number;
    /** Автоочистка при выходе: 'none' | 'cache' (только HTTP-кэш) | 'all' (кэш + все хранилища) */
   clearOnExit: 'none' | 'cache' | 'all';
    tabs: NavTab[];
@@ -117,6 +129,10 @@ const DEFAULTS: SewConfig = {
   scannerAppArgs: '',
   folderPasswordRememberMinutes: 5,
   stockObjectId: DEFAULT_OBJECT_ID,
+  pricetagObjectId: DEFAULT_OBJECT_ID,
+  pricetagTemplateId: 89,
+  pricetagPaperColorId: 1,
+  pricetagCopies: 1,
     scanFolders: [],
   maxLiveTabs: 4,
 }
@@ -264,6 +280,12 @@ function sanitizeConfig(user: Partial<SewConfig>): SewConfig {
     downloadsDir: pickString(user.downloadsDir, ''),
     stockDir: pickString(user.stockDir, ''),
     stockObjectId: isValidObjectId(user.stockObjectId) ? user.stockObjectId : DEFAULT_OBJECT_ID,
+    // Ценники: битое значение из config.json -> дефолт, иначе запрос уйдёт
+    // в SEW с несуществующим шаблоном/цветом бумаги и вернёт 500.
+    pricetagObjectId: isValidObjectId(user.pricetagObjectId) ? user.pricetagObjectId : DEFAULT_OBJECT_ID,
+    pricetagTemplateId: isValidTemplateId(user.pricetagTemplateId) ? user.pricetagTemplateId : DEFAULTS.pricetagTemplateId,
+    pricetagPaperColorId: isValidPaperColorId(user.pricetagPaperColorId) ? user.pricetagPaperColorId : DEFAULTS.pricetagPaperColorId,
+    pricetagCopies: isValidCopies(user.pricetagCopies) ? user.pricetagCopies : DEFAULTS.pricetagCopies,
     clearOnExit: user.clearOnExit === 'cache' || user.clearOnExit === 'all' ? user.clearOnExit : 'none',
     folders,
     tabs,
@@ -311,6 +333,21 @@ export function saveConfig(partial: Partial<SewConfig>): SewConfig {
   }
   if ('stockObjectId' in validPartial && !isValidObjectId(validPartial.stockObjectId)) {
     delete validPartial.stockObjectId
+  }
+  // Ценники: патч из renderer может прийти с битым типом (например, шаблон
+  // приехал строкой из <input>) — такие ключи выкидываем, чтобы не затереть
+  // хорошее значение в файле (как для остальных полей выше).
+  if ('pricetagObjectId' in validPartial && !isValidObjectId(validPartial.pricetagObjectId)) {
+    delete validPartial.pricetagObjectId
+  }
+  if ('pricetagTemplateId' in validPartial && !isValidTemplateId(validPartial.pricetagTemplateId)) {
+    delete validPartial.pricetagTemplateId
+  }
+  if ('pricetagPaperColorId' in validPartial && !isValidPaperColorId(validPartial.pricetagPaperColorId)) {
+    delete validPartial.pricetagPaperColorId
+  }
+  if ('pricetagCopies' in validPartial && !isValidCopies(validPartial.pricetagCopies)) {
+    delete validPartial.pricetagCopies
   }
   const merged: Partial<SewConfig> = {
     ...current,
