@@ -89,6 +89,49 @@ interface StockInventoryResult {
   error?: string
 }
 
+interface PricetagStoresResult {
+  ok: boolean
+  stores: { id: string; name: string }[]
+  current?: string
+  error?: string
+}
+
+interface PricetagPrepareResult {
+  ok: boolean
+  result?: {
+    items: { sku: string; name: string; price: number }[]
+    missing: string[]
+    templates: { id: number; name: string; width?: number; height?: number }[]
+    warning?: string
+  }
+  error?: string
+}
+
+interface PricetagBuildInput {
+  objectId: string
+  items: { sku: string; name: string; price: number }[]
+  templateId: number
+  paperColorId: number
+  copies: number
+}
+
+interface PricetagBuildResult {
+  ok: boolean
+  pdfName?: string
+  error?: string
+}
+
+interface PricetagSaveResult {
+  ok: boolean
+  path?: string
+  error?: string
+}
+
+interface PricetagPrintResult {
+  ok: boolean
+  error?: string
+}
+
 interface DownloadEventLike {
   id: number
   name: string
@@ -381,6 +424,18 @@ const api = {
   /** Скачать отчёт об остатках по коду магазина; objectId — код из настроек */
   downloadStock: (objectId?: string): Promise<StockDownloadResult> =>
     ipcRenderer.invoke('stock:download', objectId),
+  /** Список магазинов сотрудника SEW (профиль) */
+  pricetagsStores: (): Promise<PricetagStoresResult> => ipcRenderer.invoke('pricetags:stores'),
+  /** Позиции и шаблоны ценников по списку SKU */
+  pricetagsPrepare: (objectId: string, skus: string[]): Promise<PricetagPrepareResult> =>
+    ipcRenderer.invoke('pricetags:prepare', objectId, skus),
+  /** Собрать PDF ценников и показать в просмотрщике */
+  pricetagsBuild: (input: PricetagBuildInput): Promise<PricetagBuildResult> =>
+    ipcRenderer.invoke('pricetags:build', input),
+  /** Сохранить последний PDF на диск */
+  pricetagsSave: (): Promise<PricetagSaveResult> => ipcRenderer.invoke('pricetags:save'),
+  /** Напечатать последний PDF */
+  pricetagsPrint: (): Promise<PricetagPrintResult> => ipcRenderer.invoke('pricetags:print'),
   /** Выбор папки для отчёта об остатках; null — отмена */
   pickStockDir: (): Promise<string | null> => ipcRenderer.invoke('stock:pick-dir'),
   /** Остатки для плагина sew-inventory: файл скачивается тем же кодом, что и

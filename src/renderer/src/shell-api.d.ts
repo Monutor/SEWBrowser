@@ -173,6 +173,15 @@ interface ShellConfig {
   downloadsDir?: string
   stockDir?: string
   stockObjectId: string
+  /** Код магазина для ценников (напр. S187) — по умолчанию тот же, что у остатков:
+   *  отдельный ключ нужен, чтобы печать ценников не ломалась у другого магазина. */
+  pricetagObjectId: string
+  /** id шаблона печати ценника (89 = А6 ПРОМО, 96 = ШТРИХ-КОД 24, …) */
+  pricetagTemplateId: number
+  /** 1 — белая, 2 — жёлтая, 3 — розовая */
+  pricetagPaperColorId: number
+  /** Сколько копий каждого ценника */
+  pricetagCopies: number
   clearOnExit: 'none' | 'cache' | 'all'
   tabs: NavTab[]
   folders: NavFolder[]
@@ -246,6 +255,44 @@ interface StockDownloadResult {
   ok: boolean
   path?: string
   name?: string
+  error?: string
+}
+
+interface PricetagStoresResult {
+  ok: boolean
+  stores: { id: string; name: string }[]
+  current?: string
+  error?: string
+}
+interface PricetagPrepareResult {
+  ok: boolean
+  result?: {
+    items: { sku: string; name: string; price: number }[]
+    missing: string[]
+    templates: { id: number; name: string; width?: number; height?: number }[]
+    warning?: string
+  }
+  error?: string
+}
+interface PricetagBuildInput {
+  objectId: string
+  items: { sku: string; name: string; price: number }[]
+  templateId: number
+  paperColorId: number
+  copies: number
+}
+interface PricetagBuildResult {
+  ok: boolean
+  pdfName?: string
+  error?: string
+}
+interface PricetagSaveResult {
+  ok: boolean
+  path?: string
+  error?: string
+}
+interface PricetagPrintResult {
+  ok: boolean
   error?: string
 }
 
@@ -474,6 +521,16 @@ interface ShellApi {
   pickDownloadsDir(): Promise<string | null>
   /** Скачать отчёт об остатках SEW (xlsx) в папку остатков; objectId — код магазина */
   downloadStock(objectId?: string): Promise<StockDownloadResult>
+  /** Список магазинов сотрудника SEW (для выпадающего списка) */
+  pricetagsStores(): Promise<PricetagStoresResult>
+  /** Позиции и шаблоны ценников по списку SKU */
+  pricetagsPrepare(objectId: string, skus: string[]): Promise<PricetagPrepareResult>
+  /** Собрать PDF ценников и открыть просмотрщик */
+  pricetagsBuild(input: PricetagBuildInput): Promise<PricetagBuildResult>
+  /** Сохранить последний собранный PDF на диск */
+  pricetagsSave(): Promise<PricetagSaveResult>
+  /** Напечатать последний собранный PDF на системном принтере */
+  pricetagsPrint(): Promise<PricetagPrintResult>
   /** Выбор папки для отчёта об остатках; null — отмена */
   pickStockDir(): Promise<string | null>
   /** Остатки для плагина `sew-inventory`: файл скачивается тем же кодом, что и
