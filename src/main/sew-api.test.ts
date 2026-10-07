@@ -157,6 +157,48 @@ test('createSewApi: fetchBearer — гости по очереди, мусор �
   assert.equal(await none.fetchBearer(), null)
 })
 
+test('createSewApi: post() не разбирает тело — пустой ответ SEW не ошибка', async () => {
+  const seen: Array<{ url: string; init: unknown }> = []
+  const api = createSewApi({
+    guestIds: () => [7],
+    fetchImpl: (url, init) => {
+      seen.push({ url, init })
+      // Закрытие задания печати ценников SEW отвечает 200 с content-length: 0:
+      // res.json() такое тело отклоняет, и раньше это роняло всю сборку PDF.
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.reject(new SyntaxError('Unexpected end of JSON input')),
+        text: () => Promise.resolve(''),
+      })
+    },
+    guestEval: mockGuest(),
+  })
+  assert.equal(await api.post('/api/pricetags-print-tasks/sew/print-task/finish/20804168', {}), undefined)
+  assert.equal(seen.length, 1)
+  assert.equal(seen[0].url, `${SEW_ORIGIN}/api/pricetags-print-tasks/sew/print-task/finish/20804168`)
+  const init = seen[0].init as { method: string; headers: Record<string, string>; body: string }
+  assert.equal(init.method, 'POST')
+  assert.equal(init.headers.Authorization, 'Bearer tok')
+  assert.equal(init.headers['Content-Type'], 'application/json')
+  assert.equal(init.body, '{}')
+})
+
+test('createSewApi: post() по-прежнему прокидывает status не-2xx', async () => {
+  const api = createSewApi({
+    guestIds: () => [7],
+    fetchImpl: () =>
+      Promise.resolve({
+        ok: false,
+        status: 401,
+        json: () => Promise.reject(new SyntaxError('Unexpected end of JSON input')),
+        text: () => Promise.resolve(''),
+      }),
+    guestEval: mockGuest(),
+  })
+  await assert.rejects(() => api.post('/api/pricetags-print-tasks/sew/print-task/cancel/1', {}), (err: Error & { status?: number }) => err.status === 401)
+})
+
 test('createSewApi: text() отдаёт строку как есть, без разбора JSON', async () => {
   const seen: Array<{ url: string; init: unknown }> = []
   const api = createSewApi({

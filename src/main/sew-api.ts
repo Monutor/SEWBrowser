@@ -112,6 +112,10 @@ export interface SewApi {
   fetchBearer(): Promise<string | null>
   json(path: string, init?: SewHttpInit): Promise<unknown>
   text(path: string): Promise<string>
+  /** POST, тело ответа не читается. Нужно там, где SEW отвечает 200 с пустым
+   *  телом (content-length: 0) — закрытие задания печати ценников: res.json()
+   *  такое тело отклоняет, и вызывающий получал бы ошибку вместо успеха. */
+  post(path: string, body: unknown): Promise<void>
 }
 
 /** Ошибка HTTP-ответа SEW: `status` нужен вызывающему, чтобы отличить
@@ -143,7 +147,7 @@ export function createSewApi(deps: SewApiDeps): SewApi {
     return null
   }
 
-  async function request(path: string, init: SewHttpInit | undefined, as: 'json' | 'text'): Promise<unknown> {
+  async function request(path: string, init: SewHttpInit | undefined, as: 'json' | 'text' | 'none'): Promise<unknown> {
     const url = sewUrl(path)
     if (!url) throw new Error(`недопустимый путь SEW-API: ${path}`)
     const auth = await fetchBearer()
@@ -161,6 +165,7 @@ export function createSewApi(deps: SewApiDeps): SewApi {
       err.status = res.status
       throw err
     }
+    if (as === 'none') return undefined
     return as === 'text' ? res.text() : res.json()
   }
 
@@ -168,5 +173,6 @@ export function createSewApi(deps: SewApiDeps): SewApi {
     fetchBearer,
     json: (path, init) => request(path, init, 'json') as Promise<unknown>,
     text: (path) => request(path, undefined, 'text') as Promise<string>,
+    post: (path, body) => request(path, { method: 'POST', body }, 'none') as Promise<void>,
   }
 }

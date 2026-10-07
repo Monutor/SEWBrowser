@@ -122,6 +122,11 @@ export function createPricetags(deps: PricetagsDeps): PricetagsService {
    *  оверлея, поэтому он не привязан к окну просмотрщика. */
   let lastPdf: { path: string; title: string } | null = null
 
+  /** Магазин, под который последний раз искали позиции. Цена в PrepareItem
+   *  зафиксирована на момент поиска, поэтому «Собрать PDF» обязано печатать их
+   *  в том же магазине — иначе ценники магазина A ушли бы в печать под B. */
+  let preparedShop = ''
+
   function disposePdf(): void {
     if (!lastPdf) return
     try {
@@ -166,6 +171,10 @@ export function createPricetags(deps: PricetagsDeps): PricetagsService {
       if (result.items.length === 0) {
         return { ok: false, error: result.warning ?? `ни один артикул не найден в магазине ${shop}` }
       }
+      // Привязываем позиции к магазину только на успехе: после неудачного поиска
+      // в оверлее остаются прежние позиции, и они остаются привязаны к прежнему
+      // магазину — build() не должен рубить сборку.
+      preparedShop = shop
       return { ok: true, result }
     } catch (err) {
       return { ok: false, error: describeError(err, 'ценники') }
@@ -175,9 +184,19 @@ export function createPricetags(deps: PricetagsDeps): PricetagsService {
   /** Отменяет задание: при сбое или таймауте «напечатано» засчитывать нельзя. */
   async function cancelTask(printTaskId: string): Promise<void> {
     try {
-      await deps.api.json(`${TASK_PATH}/cancel/${printTaskId}`, { method: 'POST' })
+      await deps.api.post(`${TASK_PATH}/cancel/${printTaskId}`, {})
     } catch {
       // задание могло закрыться само — исход не меняет
+    }
+  }
+
+  /** Закрывает задание как «напечатано». Отказ не фатален: PDF к этому моменту
+   *  уже у пользователя, а задание без finish просто остаётся открытым в SEW. */
+  async function finishTask(printTaskId: string): Promise<void> {
+    try {
+      await deps.api.post(`${FINISH_PATH}/${printTaskId}`, {})
+    } catch (err) {
+      console.warn('[pricetags] SEW не принял закрытие задания печати:', err)
     }
   }
 
@@ -192,7 +211,12 @@ export function createPricetags(deps: PricetagsDeps): PricetagsService {
       attempt += 1
       try {
         html = await deps.api.text(`${CONTENT_PATH}/${printTaskId}?type=`)
-      } catch {
+      } catch (err) {
+        // 401/403 посреди опроса — протухшая сессия или нет прав, а не «рендер не
+        // готов»: молчаливый retry довёл бы опрос до 60 с и отдал бы
+        // пользователю неверный текст вместо русского объяснения.
+        const status = statusOf(err)
+        if (status === 401 || status === 403) throw err
         html = ''
       }
       if (html.includes('price-tag')) return html
@@ -208,25 +232,40 @@ export function createPricetags(deps: PricetagsDeps): PricetagsService {
     copies: number
   }): Promise<PricetagBuildResult> {
     const shop = pickObjectId(raw.objectId)
+    // Позиции и их цены принадлежат магазину, под которым их искали. Молча
+    // подставлять конфиг здесь нельзя: смена магазина в оверлее между «Найти» и
+    // «Собрать PDF» напечатала бы цены чужого магазина.
+    if (preparedShop && preparedShop !== shop) {
+      return { ok: false, error: 'позиции найдены для другого магазина — нажмите «Найти» ещё раз' }
+    }
     const items = (Array.isArray(raw.items) ? raw.items : []).filter(
       (item): item is PrepareItem => isRecord(item) && typeof item.sku === 'string' && item.sku.length > 0,
     )
     if (items.length === 0) return { ok: false, error: 'нет позиций для печати — нажмите «Найти»' }
     if (!isValidTemplateId(raw.templateId)) return { ok: false, error: 'выберите шаблон печати' }
     if (!isValidPaperColorId(raw.paperColorId)) return { ok: false, error: 'выберите цвет бумаги' }
+    // Копии вне диапазона — явная ошибка, а не тихая подстановка единицы:
+    // пользователь, попросивший 1000 копий, получил бы один ценник и ok:true.
+    if (!isValidCopies(raw.copies)) return { ok: false, error: 'сколько копий — от 1 до 999' }
 
     const input: BuildInput = {
       objectId: shop,
       items,
       templateId: raw.templateId,
       paperColorId: raw.paperColorId,
-      copies: isValidCopies(raw.copies) ? raw.copies : 1,
+      copies: raw.copies,
     }
 
     let printTaskId: string | null = null
     try {
       const created = await deps.api.json(TASK_PATH, { method: 'POST', body: buildPrintTaskBody(input) })
-      const taskId = isRecord(created) ? created.printTaskId : undefined
+      // Номер задания лежит в конверте SEW (`responseBody`), а не на верхнем
+      // уровне: без разворачивания конверта build() всегда падал бы с «не вернул
+      // номер», а созданное задание оставалось бы висеть в очереди — отменять
+      // его нечем. Верхний уровень оставлен запасным путём на случай смены
+      // контракта.
+      const createdBody = isRecord(created) && isRecord(created.responseBody) ? created.responseBody : created
+      const taskId = isRecord(createdBody) ? createdBody.printTaskId : undefined
       if (typeof taskId !== 'number' && typeof taskId !== 'string') {
         // Номера нет — отменять нечем, задание SEW зависнет в своей очереди.
         return { ok: false, error: 'SEW не вернул номер задания печати' }
@@ -243,11 +282,6 @@ export function createPricetags(deps: PricetagsDeps): PricetagsService {
       const pdf = await htmlToPdf(html)
       const name = pricetagFileName(shop, new Date())
       const path = join(tempWorkDir(), name)
-      // Задание закрываем как «напечатано» (решение из спеки): пользователь
-      // получил PDF и печатает его у себя.
-      await deps.api.json(`${FINISH_PATH}/${printTaskId}`, { method: 'POST', body: {} })
-      printTaskId = null
-
       // Старый PDF сносим до записи нового: имя у него точностью до минуты,
       // и повторная сборка в ту же минуту получила бы тот же путь — unlink
       // после записи удалил бы только что созданный файл, и «Сохранить»/«Печать»
@@ -257,6 +291,12 @@ export function createPricetags(deps: PricetagsDeps): PricetagsService {
       const title = `Ценники ${shop}`
       lastPdf = { path, title }
       deps.openPdfViewer(pdf, title)
+      // Задание закрываем последним шагом: PDF у пользователя уже на экране, и
+      // неудача finish не должна ни отбирать результат сборки, ни уводить нас в
+      // catch с отменой уже показанного PDF. finishTask не бросает, а номер
+      // обнуляется сразу после неё — двойного закрытия не выйдет.
+      await finishTask(printTaskId)
+      printTaskId = null
       return { ok: true, pdfName: basename(path) }
     } catch (err) {
       if (printTaskId) await cancelTask(printTaskId)
