@@ -14,7 +14,8 @@ import { getPluginData, removePluginData, setPluginData } from './plugins/store'
 import { clearFolderPassword, isFolderPasswordEncryptionAvailable, isFolderUnlocked, lockFolder, saveFolderPassword, unlockFolder, verifyFolderPassword } from './credentials/folderPasswords'
 import { getAccountSecrets, getLastUsedAccountId, listAccounts, removeAccount, saveAccount, setLastUsedAccountId } from './credentials/store'
 import { appendDownloadRecord, clearDownloadHistory, loadDownloadHistory, removeDownloadRecord } from './downloads/history'
-import { bearerHeader, isValidObjectId, parseStockReport, stockFileName, stockReportUrl } from './downloads/stockReport'
+import { isValidObjectId, parseStockReport, stockFileName, stockReportUrl } from './downloads/stockReport'
+import { createSewApi } from './sew-api'
 import { readStockBalance } from './inventory/xlsx-core'
 import { screenshotFileName } from './screenshot'
 import { clearSoundFile, mimeForSoundExt, readSoundFile, saveSoundFile } from './sounds/store'
@@ -966,6 +967,17 @@ function createWindow(): void {
   // shell-UI их не видит — перехватываем через before-input-event
   // и пересылаем в renderer, где живёт единый обработчик.
   const attachedGuests = new Set<number>()
+  // Общий клиент SEW: net и работа с гостями приходят из main (в самом
+  // клиенте electron нет, иначе его не проверить через node --test).
+  const sewApi = createSewApi({
+    guestIds: () => attachedGuests,
+    fetchImpl: (url, init) => net.fetch(url, init as never) as never,
+    guestEval: (id, code) => {
+      const wc = webContents.fromId(id)
+      if (!wc || wc.isDestroyed()) throw new Error('гость недоступен')
+      return wc.executeJavaScript(code, true)
+    },
+  })
   /**
    * Гость опросного хоста (первая вкладка оболочки) — единственный, чьи таймеры
    * не троттлим: на нём висит tasks-notify, и Chromium ужимает setInterval в
@@ -1382,69 +1394,14 @@ function createWindow(): void {
     void win.loadURL(pathToFileURL(htmlPath).toString())
   }
 
-  /**
-   * Bearer SEW из живой гостевой страницы. API отдаёт 401 на запрос без него:
-   * куки гостя (общая default session) не заменяют заголовок. Источник —
-   * перехват заголовков SPA в features/sew-auth; запасной путь — токены
-   * Keycloak в sessionStorage/localStorage. Токен живёт только в этой функции
-   * и в заголовке запроса: ни в лог, ни в историю загрузок, ни в renderer.
-   * Если ни одна вкладка SEW не открыта или страница ещё не слала запросы —
-   * null, вызывающий покажет понятный текст.
-   */
-  const SEW_BEARER_JS = `(function () {
-    try {
-      if (typeof window.__sewAuthBearer === 'string' && window.__sewAuthBearer) {
-        return window.__sewAuthBearer
-      }
-      var stores = []
-      try { stores.push(window.sessionStorage) } catch (e) {}
-      try { stores.push(window.localStorage) } catch (e) {}
-      for (var i = 0; i < stores.length; i++) {
-        var raw = stores[i].getItem('keycloak.token')
-        if (!raw) continue
-        var parsed = null
-        try { parsed = JSON.parse(raw) } catch (e) {}
-        var tok = parsed && (parsed.token || parsed.idToken || parsed.accessToken)
-        if (typeof tok === 'string' && tok) return 'Bearer ' + tok
-      }
-    } catch (e) {}
-    return null
-  })()`
-
-  async function fetchSewBearer(): Promise<string | null> {
-    for (const id of attachedGuests) {
-      const guest = webContents.fromId(id)
-      if (!guest || guest.isDestroyed()) continue
-      const url = guest.getURL()
-      if (!/(^|\.)mvideoeldorado\.ru$/i.test(safeHost(url))) continue
-      let raw: unknown = null
-      try {
-        raw = await guest.executeJavaScript(SEW_BEARER_JS)
-      } catch {
-        continue
-      }
-      const header = bearerHeader(raw)
-      if (header) return header
-    }
-    return null
-  }
-
-  /** Хост URL без учёта регистра и мусора; '' на не-строке/битом URL. */
-  function safeHost(url: string): string {
-    try {
-      return new URL(url).hostname
-    } catch {
-      return ''
-    }
-  }
-
   // Отчёт об остатках по кнопке тулбара. Ответ SEW — не файл, а JSON-конверт
   // с base64 внутри, поэтому качаем JSON целиком и распаковываем в Node: одна
   // распаковка вместо base64 через executeJavaScript и без лимита на размер.
-  // net.fetch идёт в default session, куки гостя общие — SSO работает без
-  // перелогина; но API требует ещё и Bearer (см. fetchSewBearer), поэтому
-  // заголовок берём из живой вкладки SEW. Повторный клик в тот же день
-  // перезаписывает файл: на день и магазин держим один свежий отчёт.
+  // Запрос идёт через общий клиент sewApi: net.fetch там же идёт в default
+  // session (куки гостя общие, SSO работает без перелогина), но API требует
+  // ещё и Bearer, который клиент берёт из живой вкладки SEW.
+  // Повторный клик в тот же день перезаписывает файл: на день и магазин
+  // держим один свежий отчёт.
   // Функция, а не только обработчик: тем же кодом пользуется плагин
   // sew-inventory (inventory:stock) — второй скачиватель не нужен.
   async function runStockDownload(objectId?: unknown): Promise<{ ok: true; path: string; name: string } | { ok: false; error: string }> {
@@ -1474,13 +1431,16 @@ function createWindow(): void {
     }
     sendDownloadEvent(seq, 'отчёт об остатках', { type: 'started' })
     try {
-      const auth = await fetchSewBearer()
-      if (!auth) throw new Error('Bearer SEW не найден: откройте страницу SEW и повторите')
-      const res = await net.fetch(stockReportUrl(shop), { headers: { Accept: 'application/json', Authorization: auth } })
-      if (res.status === 401) throw new Error('сессия SEW протухла — обновите страницу SEW')
-      if (res.status === 403) throw new Error('нет прав на остатки по магазину ' + shop)
-      if (!res.ok) throw new Error('HTTP ' + res.status)
-      const report = parseStockReport(await res.json())
+      let data: unknown
+      try {
+        data = await sewApi.json(stockReportUrl(shop))
+      } catch (err) {
+        const status = typeof (err as { status?: unknown }).status === 'number' ? (err as { status: number }).status : 0
+        if (status === 401) throw new Error('сессия SEW протухла — обновите страницу SEW')
+        if (status === 403) throw new Error('нет прав на остатки по магазину ' + shop)
+        throw err
+      }
+      const report = parseStockReport(data)
       const name = stockFileName(shop, report.responseDate, report.ext)
       const filePath = join(dir, name)
       writeFileSync(filePath, report.data)
