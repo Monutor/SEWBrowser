@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { dropInvalidPricetags, pickPricetagConfig } from './config-core.ts'
+import { PRICETAG_KEYS, VALIDATORS, dropInvalidPricetags, pickPricetagConfig } from './config-core.ts'
 
 /**
  * Дефолты фичи «Ценники» — те же значения, что в DEFAULTS (config.ts).
@@ -119,6 +119,32 @@ describe('dropInvalidPricetags — патч config:set', () => {
     for (const value of ['S.187', 'S 187', 'A'.repeat(17)]) {
       assert.deepEqual(pickPricetagConfig({ pricetagObjectId: value }, DEFAULTS).pricetagObjectId, 'S187')
       assert.equal('pricetagObjectId' in dropInvalidPricetags({ pricetagObjectId: value }), false)
+    }
+  })
+})
+
+describe('ключи патч-пути и валидаторы не разъезжаются', () => {
+  it('патч-путь обходит ровно те ключи, для которых заведён валидатор', () => {
+    // Пока список ключей можно было написать руками, добавление пятого ключа
+    // ценников (задачи 6/9) могло забыться именно в нём: typecheck проходил бы
+    // (Record исчерпывающе типизирован, а массив строк — нет), патч-путь
+    // config:set молча потерял бы санитайз, и битое значение доехало бы до
+    // config.json. Сортировка — сравниваем множества, порядок тут не значит.
+    assert.deepEqual([...PRICETAG_KEYS].sort(), Object.keys(VALIDATORS).sort())
+  })
+
+  it('невалидное значение выбрасывается из патча для каждого ключа из VALIDATORS', () => {
+    // null невалиден сразу для всех четырёх проверок: код магазина ждёт строку,
+    // остальные три — число, а null не то и не другое. Ключи берём из
+    // VALIDATORS, поэтому новый ключ ценников попадает в проверку сам.
+    for (const key of Object.keys(VALIDATORS)) {
+      assert.deepEqual(dropInvalidPricetags({ [key]: null }), {}, `ключ ${key} должен выбрасываться из патча`)
+    }
+  })
+
+  it('merge-путь уводит невалидное значение каждого ключа из VALIDATORS на дефолт', () => {
+    for (const key of Object.keys(VALIDATORS)) {
+      assert.deepEqual(pickPricetagConfig({ [key]: null }, DEFAULTS), DEFAULTS, `ключ ${key} должен уходить на дефолт`)
     }
   })
 })

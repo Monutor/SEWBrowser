@@ -44,20 +44,30 @@ type PricetagKey = keyof PricetagConfig
  */
 type RawPricetags = Partial<Record<PricetagKey, unknown>>
 
-const PRICETAG_KEYS: readonly PricetagKey[] = [
-  'pricetagObjectId',
-  'pricetagTemplateId',
-  'pricetagPaperColorId',
-  'pricetagCopies',
-]
-
-/** Ключ конфига → валидатор его значения (единственный источник правил). */
-const VALIDATORS: Record<PricetagKey, (value: unknown) => boolean> = {
+/**
+ * Ключ конфига → валидатор его значения. Единственный источник и правил, и
+ * списка ключей: PRICETAG_KEYS выводится отсюда.
+ *
+ * Тип `Record<PricetagKey, …>` исчерпывающий — забытый ключ ценников роняет
+ * typecheck. Список ключей, написанный руками, такой защиты не давал: при
+ * добавлении пятого ключа (задачи 6/9) компилятор промолчал бы, патч-путь
+ * `config:set` молча потерял бы санитайз, и битое значение доехало бы до
+ * config.json.
+ */
+export const VALIDATORS: Record<PricetagKey, (value: unknown) => boolean> = {
   pricetagObjectId: isValidObjectId,
   pricetagTemplateId: isValidTemplateId,
   pricetagPaperColorId: isValidPaperColorId,
   pricetagCopies: isValidCopies,
 }
+
+/**
+ * Ключи, которые обходятся в патч-пути, — производная от VALIDATORS, а не
+ * рукопись. Каст нужен потому, что Object.keys() типизирован как string[]:
+ * ложью он быть не может, ведь литерал выше задаёт ровно четыре свойства, и
+ * любое другое содержимое объекта уронил бы typecheck на месте.
+ */
+export const PRICETAG_KEYS: readonly PricetagKey[] = Object.keys(VALIDATORS) as PricetagKey[]
 
 /**
  * Путь «прочитал config.json»: битое значение любого из четырёх ключей ->
