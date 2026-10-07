@@ -98,6 +98,7 @@
       </svg></button>
     <button id="btn-products" title="База товаров">&#128230;</button>
     <button id="btn-stock" title="Скачать остатки товаров (xlsx)">&#128202;</button>
+    <button id="btn-pricetags" title="Ценники: вбить артикулы и собрать PDF (Ctrl+Shift+P)">🏷️</button>
     <button id="btn-inventory" title="Показать панель «Автоподсчёт ЛП»" aria-pressed="false">&#128203;</button>
     <button id="btn-reload" title="Перезагрузить" aria-label="Перезагрузить"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"
         stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -671,6 +672,53 @@
       </div>
     </div>
   </div>
+    <!-- Оверлей «Ценники»: список SKU → позиции → один многостраничный PDF -->
+    <div id="pricetags-overlay" class="overlay" hidden>
+      <div class="settings-card pricetags-card">
+        <div class="settings-title">Ценники</div>
+
+        <div class="settings-row">
+          <label for="pricetags-store">Магазин</label>
+          <select id="pricetags-store"></select>
+        </div>
+        <div class="settings-row">
+          <label for="pricetags-template">Шаблон</label>
+          <select id="pricetags-template"></select>
+        </div>
+        <div class="settings-row">
+          <label for="pricetags-paper">Бумага</label>
+          <select id="pricetags-paper">
+            <option value="1">Белая</option>
+            <option value="2">Жёлтая</option>
+            <option value="3">Розовая</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <label for="pricetags-copies">Копий каждого</label>
+          <input id="pricetags-copies" type="number" min="1" max="999" value="1" />
+        </div>
+
+        <div class="settings-row pricetags-sku-row">
+          <label for="pricetags-sku">Артикулы (Enter — добавить, можно вставить список из буфера)</label>
+          <input id="pricetags-sku" spellcheck="false" autocomplete="off" placeholder="4258653" />
+        </div>
+        <div id="pricetags-chips" class="pricetags-chips"></div>
+
+        <div class="settings-actions">
+          <button id="pricetags-find">Найти</button>
+          <button id="pricetags-build" disabled>Собрать PDF</button>
+        </div>
+
+        <div id="pricetags-rows" class="pricetags-rows"></div>
+        <div id="pricetags-missing" class="pricetags-missing" hidden></div>
+
+        <div class="settings-actions">
+          <button id="pricetags-save" disabled>Сохранить PDF</button>
+          <button id="pricetags-print" disabled>Печать…</button>
+          <button id="pricetags-close">Закрыть (Esc)</button>
+        </div>
+      </div>
+    </div>
 
   <div id="templates-overlay" hidden>
     <div class="templates-card">

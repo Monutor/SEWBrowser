@@ -3407,3 +3407,70 @@ body {
     animation: none;
   }
 }
+
+
+/* Оверлей «Ценники» */
+.pricetags-card {
+  width: min(760px, 92vw);
+  max-height: 86vh;
+  overflow: auto;
+}
+.pricetags-sku-row input {
+  flex: 1 1 auto;
+}
+.pricetags-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0 2px;
+  min-height: 22px;
+}
+.pricetags-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--chrome-2, var(--chrome));
+  font-size: 12px;
+}
+.pricetags-chip button {
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0;
+}
+.pricetags-rows {
+  margin: 8px 0;
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.pricetags-row {
+  display: grid;
+  grid-template-columns: 110px 1fr 110px;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.pricetags-row:last-child {
+  border-bottom: 0;
+}
+.pricetags-row .sku {
+  color: var(--text-2);
+}
+.pricetags-row .price {
+  text-align: right;
+  white-space: nowrap;
+}
+.pricetags-missing {
+  margin: 6px 0;
+  color: #e0a83c;
+  font-size: 12px;
+}
