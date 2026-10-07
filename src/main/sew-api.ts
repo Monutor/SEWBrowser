@@ -8,6 +8,8 @@ import { bearerHeader } from './downloads/stockReport.ts'
  *  node сам, без сборки. */
 
 export const SEW_ORIGIN = 'https://sew.mvideoeldorado.ru'
+/** Хост API — тот же, что у SEW_ORIGIN, отдельным литералом не дублируем. */
+const SEW_HOSTNAME = new URL(SEW_ORIGIN).hostname
 
 const SEW_HOST_RE = /(^|\.)mvideoeldorado\.ru$/i
 /** Мост не должен превратиться в прокси: путь строим только из литералов
@@ -15,7 +17,7 @@ const SEW_HOST_RE = /(^|\.)mvideoeldorado\.ru$/i
 const SEW_PATH_RE = /^\/(v2\/)?api\/[\w\-./]*$/
 /** Query — отдельно от пути: `stockReportUrl(shop)` отдаёт готовый URL с
  *  `?objectId=…`, и такой вызов не должен отбрасываться. Разделитель — первое
- *  вхождение `?`, остальные знаки вопроса внутри остаются частью query. */
+ *  вхождение `?`, второе не допускается: allowlist от этого не слабеет. */
 const SEW_QUERY_RE = /^\?[\w\-._~%!$&'()*+,;=:@/]*$/
 
 /** Хост URL в нижнем регистре; '' на не-строке/битом URL. */
@@ -44,7 +46,7 @@ export function sewUrl(target: string): string | null {
     } catch {
       return null
     }
-    if (parsed.hostname.toLowerCase() !== 'sew.mvideoeldorado.ru' || parsed.protocol !== 'https:') return null
+    if (parsed.hostname.toLowerCase() !== SEW_HOSTNAME || parsed.protocol !== 'https:') return null
     path = parsed.pathname + parsed.search
   }
   const queryAt = path.indexOf('?')
@@ -58,6 +60,9 @@ export function sewUrl(target: string): string | null {
 export function sewHeaders(auth: string): Record<string, string> {
   return { Accept: 'application/json', Authorization: auth }
 }
+
+/** Адрес страницы гостя — им сверяется, что вкладка именно SEW, а не SSO. */
+const GUEST_URL_JS = 'location.href'
 
 /** Bearer SEW из localStorage гостя: `window.__sewAuthBearer` (его ставит плагин
  *  `features/sew-auth`), иначе токен keycloak. Перенесено из src/main/index.ts. */
@@ -117,12 +122,16 @@ export interface SewStatusError extends Error {
 
 export function createSewApi(deps: SewApiDeps): SewApi {
   /** Заголовок Authorization из первой вкладки SEW, которая его отдала, иначе
-   *  null. Проверять URL гостя не нужно: подключённые гости и так живут на
-   *  allowlist-хостах, а лишний вызов гостя на каждого кандидата дорог. */
+   *  null. URL гостя сверяется обязательно: в allowlist есть Keycloak SSO
+   *  (kc.tech.mvideo.ru), там в storage тоже лежит `keycloak.token` — без
+   *  сверки чужой токен ушёл бы в запрос и SEW ответил бы 401, а вызывающий
+   *  показал бы «сессия протухла». */
   async function fetchBearer(): Promise<string | null> {
     for (const id of deps.guestIds()) {
       let raw: unknown = null
       try {
+        const url = String((await deps.guestEval(id, GUEST_URL_JS)) ?? '')
+        if (!isSewHost(url)) continue
         raw = await deps.guestEval(id, SEW_BEARER_JS)
       } catch {
         // гость ещё не готов (нет dom-ready) или уже выгружен — следующий
