@@ -16,6 +16,8 @@ import { getAccountSecrets, getLastUsedAccountId, listAccounts, removeAccount, s
 import { appendDownloadRecord, clearDownloadHistory, loadDownloadHistory, removeDownloadRecord } from './downloads/history'
 import { isValidObjectId, parseStockReport, stockFileName, stockReportUrl } from './downloads/stockReport'
 import { createSewApi } from './sew-api'
+import { createPricetags } from './pricetags'
+import type { PrepareItem } from '../shared/pricetags-core'
 import { readStockBalance } from './inventory/xlsx-core'
 import { screenshotFileName } from './screenshot'
 import { clearSoundFile, mimeForSoundExt, readSoundFile, saveSoundFile } from './sounds/store'
@@ -66,6 +68,7 @@ function guestShortcutName(input: Input): string | null {
   if (mod && code === 'KeyR') return 'reload'
   if (mod && input.shift && code === 'KeyL') return 'accounts'
   if (mod && input.shift && code === 'KeyT') return 'templates'
+  if (mod && input.shift && code === 'KeyP') return 'pricetags'
   if (mod && code === 'KeyL') return 'focus-address'
   if (mod && code === 'KeyF') return 'find'
   if (mod && code === 'KeyP') return 'print'
@@ -1393,6 +1396,30 @@ function createWindow(): void {
     })
     void win.loadURL(pathToFileURL(htmlPath).toString())
   }
+
+  // Сервис ценников: оркестрация фичи в main (см. pricetags.ts). Все 4
+  // зависимости доступны в scope createWindow() — sewApi, printPdfDocument,
+  // openPdfViewer и config.
+  const pricetags = createPricetags({
+    api: sewApi,
+    printPdfDocument,
+    openPdfViewer,
+    fallbackObjectId: () =>
+      isValidObjectId(config.pricetagObjectId) ? config.pricetagObjectId : config.stockObjectId,
+  })
+
+  ipcMain.handle('pricetags:stores', () => pricetags.stores())
+  ipcMain.handle('pricetags:prepare', (_e, objectId: string, skus: string[]) => pricetags.prepare(objectId, skus))
+  ipcMain.handle(
+    'pricetags:build',
+    (_e, input: { objectId: string; items: PrepareItem[]; templateId: number; paperColorId: number; copies: number }) =>
+      pricetags.build(input),
+  )
+  ipcMain.handle('pricetags:save', () => pricetags.save())
+  ipcMain.handle('pricetags:print', () => pricetags.print())
+
+  // Выход приложения: временный PDF ценника удаляем (лежит в tempWorkDir).
+  app.on('before-quit', () => pricetags.disposePdf())
 
   // Отчёт об остатках по кнопке тулбара. Ответ SEW — не файл, а JSON-конверт
   // с base64 внутри, поэтому качаем JSON целиком и распаковываем в Node: одна
