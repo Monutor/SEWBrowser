@@ -44,13 +44,27 @@ export async function htmlToPdf(html: string, timeoutMs = 45_000): Promise<Buffe
     })
     const win = created
     htmlPdfWindows.add(win)
+    // HTML ценников приходит из сети (сервер SEW), а дефолт Electron разрешает
+    // и `window.open`/`target="_blank"` (из скрытого окна вылезет видимое окно с
+    // дефолтными prefs), и самонавигацию через `location.href`/`<meta refresh>`.
+    // Без этих двух строк не-`file:` навигацию проглатывал бы guard в onLoaded,
+    // и вместо ошибки пользователь получал висок до таймаута.
+    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    win.webContents.on('will-navigate', (event) => event.preventDefault())
     const pdf = await new Promise<Buffer>((resolve, reject) => {
       const cleanup = (): void => {
+        // Геттер webContents уничтоженного окна бросает «Object has been
+        // destroyed» (ср. index.ts:1380) — сюда попадает хвостовой .catch после
+        // выигрыша таймера, когда finally уже погасил окно.
+        if (win.isDestroyed()) return
         clearTimeout(timer)
         win.webContents.removeListener('did-finish-load', onLoaded)
         win.webContents.removeListener('did-fail-load', onFailed)
       }
-      const onFailed = (_event: unknown, code: number, desc: string): void => {
+      const onFailed = (_event: unknown, code: number, desc: string, _url: string, isMainFrame: boolean): void => {
+        // Провал загрузки картинки/фрейма внутри страницы конвертацию не
+        // отменяет — отвергаем только провал главного документа.
+        if (!isMainFrame) return
         cleanup()
         reject(new Error(`страница не загрузилась: ${code} ${desc}`))
       }
@@ -84,8 +98,6 @@ export async function htmlToPdf(html: string, timeoutMs = 45_000): Promise<Buffe
       // настоящей загрузки, а не съесть единственную подписку.
       win.webContents.on('did-finish-load', onLoaded)
       win.webContents.on('did-fail-load', onFailed)
-      // will-navigate не срабатывает на наш loadURL (только клики по странице
-      // и location.*), поэтому начальная загрузка проходит не заблокированной.
       win.loadURL(pathToFileURL(file).toString()).catch((err: unknown) => {
         cleanup()
         reject(err instanceof Error ? err : new Error(String(err)))
