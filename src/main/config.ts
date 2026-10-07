@@ -3,9 +3,11 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { normalizeRememberMinutes } from './credentials/folderUnlock'
 import { DEFAULT_OBJECT_ID, isValidObjectId } from './downloads/stockReport'
-// Валидаторы фичи «Ценники» живут в shared, чтобы их же мог проверять renderer
-// и юнит-тесты; конфиг берёт их оттуда, а не дублирует правила у себя.
-import { isValidCopies, isValidPaperColorId, isValidTemplateId } from '../shared/pricetags-core'
+// Санитайз четырёх ключей фичи «Ценники» вынесен в модуль без electron: сам
+// config.ts под `node --test` не грузится, а тихих путей отказа у ключей два
+// (чтение config.json и патч config:set). Валидаторы config-core.ts берёт те
+// же, из shared/stockReport, — свои правила не дублируются.
+import { dropInvalidPricetags, pickPricetagConfig } from './config-core'
 
 export interface NavTab {
   id: string;
@@ -282,10 +284,7 @@ function sanitizeConfig(user: Partial<SewConfig>): SewConfig {
     stockObjectId: isValidObjectId(user.stockObjectId) ? user.stockObjectId : DEFAULT_OBJECT_ID,
     // Ценники: битое значение из config.json -> дефолт, иначе запрос уйдёт
     // в SEW с несуществующим шаблоном/цветом бумаги и вернёт 500.
-    pricetagObjectId: isValidObjectId(user.pricetagObjectId) ? user.pricetagObjectId : DEFAULT_OBJECT_ID,
-    pricetagTemplateId: isValidTemplateId(user.pricetagTemplateId) ? user.pricetagTemplateId : DEFAULTS.pricetagTemplateId,
-    pricetagPaperColorId: isValidPaperColorId(user.pricetagPaperColorId) ? user.pricetagPaperColorId : DEFAULTS.pricetagPaperColorId,
-    pricetagCopies: isValidCopies(user.pricetagCopies) ? user.pricetagCopies : DEFAULTS.pricetagCopies,
+    ...pickPricetagConfig(user, DEFAULTS),
     clearOnExit: user.clearOnExit === 'cache' || user.clearOnExit === 'all' ? user.clearOnExit : 'none',
     folders,
     tabs,
@@ -311,7 +310,7 @@ function pickMaxLiveTabs(value: unknown): number {
 /** Частичное обновление пользовательского конфига с сохранением на диск */
 export function saveConfig(partial: Partial<SewConfig>): SewConfig {
   const current = readUserConfig()
-  const validPartial: Partial<SewConfig> = { ...partial }
+  const validPartial: Partial<SewConfig> = dropInvalidPricetags({ ...partial })
   // Битый тип в patch не должен затирать хорошее значение в файле
   if ('plugins' in validPartial && (!validPartial.plugins || typeof validPartial.plugins !== 'object')) {
     delete validPartial.plugins
@@ -333,21 +332,6 @@ export function saveConfig(partial: Partial<SewConfig>): SewConfig {
   }
   if ('stockObjectId' in validPartial && !isValidObjectId(validPartial.stockObjectId)) {
     delete validPartial.stockObjectId
-  }
-  // Ценники: патч из renderer может прийти с битым типом (например, шаблон
-  // приехал строкой из <input>) — такие ключи выкидываем, чтобы не затереть
-  // хорошее значение в файле (как для остальных полей выше).
-  if ('pricetagObjectId' in validPartial && !isValidObjectId(validPartial.pricetagObjectId)) {
-    delete validPartial.pricetagObjectId
-  }
-  if ('pricetagTemplateId' in validPartial && !isValidTemplateId(validPartial.pricetagTemplateId)) {
-    delete validPartial.pricetagTemplateId
-  }
-  if ('pricetagPaperColorId' in validPartial && !isValidPaperColorId(validPartial.pricetagPaperColorId)) {
-    delete validPartial.pricetagPaperColorId
-  }
-  if ('pricetagCopies' in validPartial && !isValidCopies(validPartial.pricetagCopies)) {
-    delete validPartial.pricetagCopies
   }
   const merged: Partial<SewConfig> = {
     ...current,
