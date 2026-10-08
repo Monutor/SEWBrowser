@@ -23,6 +23,7 @@ export function shortcutFromEvent(event: ShortcutKeyEvent): ShortcutName | null 
   if (mod && code === 'KeyR') return 'reload'
   if (mod && event.shiftKey && code === 'KeyL') return 'accounts'
   if (mod && event.shiftKey && code === 'KeyT') return 'templates'
+  if (mod && event.shiftKey && code === 'KeyP') return 'pricetags'
   if (mod && code === 'KeyL') return 'focus-address'
   if (mod && code === 'KeyF') return 'find'
   if (mod && code === 'KeyP') return 'print'

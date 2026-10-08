@@ -399,6 +399,7 @@ type ShortcutName =
   | 'focus-address'
   | 'accounts'
   | 'templates'
+  | 'pricetags'
   | 'back'
   | 'forward'
   | 'fullscreen'

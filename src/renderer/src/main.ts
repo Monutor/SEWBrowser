@@ -26,6 +26,7 @@ import {
 import { openAccounts, closeAccounts, wireAccounts, checkLoginForm, accountsOverlayEl, setLoginPrompted } from './accounts-overlay'
 import { wireDownloads, closeDownloads, downloadsOverlayEl } from './downloads-overlay'
 import { wireStockReport } from './stock-report'
+import { pricetagsOverlayEl, closePricetags, openPricetags, wirePricetags } from './pricetags-overlay'
 import { dropInventoryToggle, refreshInventoryToggle, resetInventoryToggle, wireInventoryToggle } from './inventory-panel'
 import { refreshScansToggle, resetScansToggle, wireScansToggle } from './scans-panel'
 import { initSettings, wireSettings, closeSettings, settingsOverlayEl } from './settings-overlay'
@@ -152,6 +153,7 @@ function wireOverlayDismiss(): void {
     [settingsOverlayEl(), closeSettings],
     [accountsOverlayEl(), closeAccounts],
     [downloadsOverlayEl(), closeDownloads],
+    [pricetagsOverlayEl(), closePricetags],
     [tabsOverlayEl(), closeTabs],
     [templatesOverlayEl(), closeTemplates],
     [templatesManageOverlayEl(), closeTemplatesManage],
@@ -223,6 +225,7 @@ async function init(): Promise<void> {
       navigate,
       openAccounts,
       captureActiveTabScreenshot,
+      openPricetags: () => void openPricetags(),
       wireAddressMenu,
       wirePrintDialog,
       wireShotPreview
@@ -256,6 +259,13 @@ async function init(): Promise<void> {
   wireAccounts()
   wireDownloads()
   wireStockReport()
+  wirePricetags({
+    config: () => config,
+    savePricetagsConfig: async (patch) => {
+      config = await window.shell.setConfig(patch)
+      return config
+    },
+  })
   wireInventoryToggle()
   wireScansToggle()
   wireHelp()

@@ -12,6 +12,7 @@ export interface ToolbarDeps {
   navigate(url: string): Promise<void>
   openAccounts(force?: boolean): Promise<void>
   captureActiveTabScreenshot(): Promise<void>
+  openPricetags(): void
   wireAddressMenu(): void
   wirePrintDialog(): void
   wireShotPreview(): void
@@ -56,6 +57,7 @@ export function wireToolbar(elements: ToolbarElements, deps: ToolbarDeps): void 
   })
   document.getElementById('btn-accounts')?.addEventListener('click', () => void deps.openAccounts(true))
   document.getElementById('btn-screenshot')?.addEventListener('click', () => void deps.captureActiveTabScreenshot())
+  document.getElementById('btn-pricetags')?.addEventListener('click', () => deps.openPricetags())
   // NB: btn-templates подписывается в wireTemplates() — дубль здесь давал
   // двойной openTemplates() и задвоенный список шаблонов.
 

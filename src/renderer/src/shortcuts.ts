@@ -27,6 +27,7 @@ import {
   closeTemplatesManage,
 } from './templates-overlay'
 import { closeDownloads, isDownloadsOpen } from './downloads-overlay'
+import { closePricetags, isPricetagsOpen, openPricetags } from './pricetags-overlay'
 import { closeTabs, isTabsOpen } from './tabs-overlay'
 import { isGroupPanelOpen, closeGroupPanel } from './link-strip'
 import type { AddressMenuController } from './address-menu'
@@ -130,6 +131,9 @@ async function handleShortcut(name: string): Promise<void> {
     case 'templates':
       void openTemplates()
       break
+    case 'pricetags':
+      void openPricetags()
+      break
     case 'back': {
       const tab = activeTab()
       if (!tab || !canTabGoBack(tab)) break
@@ -200,7 +204,8 @@ async function handleShortcut(name: string): Promise<void> {
         closeGroupPanel()
         break
       }
-      if (isTemplatesManageOpen()) closeTemplatesManage()
+      if (isPricetagsOpen()) closePricetags()
+      else if (isTemplatesManageOpen()) closeTemplatesManage()
       else if (isTemplatesOpen()) closeTemplates()
       else if (isAccountsOpen()) closeAccounts()
       else if (isDownloadsOpen()) closeDownloads()
