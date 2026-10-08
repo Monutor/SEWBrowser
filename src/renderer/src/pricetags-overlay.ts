@@ -15,7 +15,11 @@ interface Item {
 let deps!: PricetagsOverlayDeps
 /** Артикулы живут только внутри сессии окна — намеренно не сохраняем. */
 let skus: string[] = []
+/** Полный результат последнего поиска: по нему мы сужаем список чипами. */
 let items: Item[] = []
+/** Предупреждение SEW из последнего поиска — оно про поиск, а не про чипы,
+ *  поэтому при сужении списка сохраняется. */
+let warning: string | undefined
 
 function el(id: string): HTMLElement | null {
   return document.getElementById(id)
@@ -47,11 +51,24 @@ export function closePricetags(): void {
   if (node) node.hidden = true
 }
 
+/** Позиции, которые сейчас видны: результат поиска, суженный набором чипов. */
+function visibleItems(): Item[] {
+  return items.filter((item) => skus.includes(item.sku))
+}
+
+/** Рисуем строки и «не найдены» по текущему набору чипов. Запрос в SEW не нужен:
+ *  данные по оставшимся артикулам уже в `items`, поэтому убранный артикул
+ *  исчезает сразу, без повторного нажатия «Найти». */
+function renderResult(): void {
+  renderRows(visibleItems(), skus.filter((sku) => !items.some((item) => item.sku === sku)), warning)
+  refreshButtons()
+}
+
 /** Кнопки живут по состоянию, а не по флажкам. */
 function refreshButtons(): void {
   const build = button('pricetags-build')
   const template = select('pricetags-template')
-  if (build) build.disabled = items.length === 0 || !template?.value
+  if (build) build.disabled = visibleItems().length === 0 || !template?.value
 }
 
 function renderChips(): void {
@@ -70,6 +87,9 @@ function renderChips(): void {
       drop.addEventListener('click', () => {
         skus = skus.filter((value) => value !== sku)
         renderChips()
+        // Список позиций сужаем сразу — раньше убранный артикул оставался
+        // видимым до следующего «Найти», и в PDF ушёл бы как лишний.
+        renderResult()
       })
       chip.append(label, drop)
       return chip
@@ -96,11 +116,11 @@ function addFromInput(input: HTMLInputElement): void {
 
 const formatPrice = (value: number): string => `${new Intl.NumberFormat('ru-RU').format(value)} ₽`
 
-function renderRows(missing: readonly string[], warning?: string): void {
+function renderRows(rows: readonly Item[], missing: readonly string[], warningText?: string): void {
   const box = el('pricetags-rows')
   if (box) {
     box.replaceChildren(
-      ...items.map((item) => {
+      ...rows.map((item) => {
         const row = document.createElement('div')
         row.className = 'pricetags-row'
         const sku = document.createElement('span')
@@ -120,7 +140,7 @@ function renderRows(missing: readonly string[], warning?: string): void {
   if (!miss) return
   const parts: string[] = []
   if (missing.length > 0) parts.push(`не найдены: ${missing.join(', ')}`)
-  if (warning) parts.push(warning)
+  if (warningText) parts.push(warningText)
   miss.textContent = parts.join(' · ')
   miss.hidden = parts.length === 0
 }
@@ -198,8 +218,9 @@ export async function openPricetags(): Promise<void> {
   node.hidden = false
   skus = []
   items = []
+  warning = undefined
   renderChips()
-  renderRows([])
+  renderResult()
   fillPaper()
   const copies = el('pricetags-copies') as HTMLInputElement | null
   if (copies) copies.value = String(deps.config()?.pricetagCopies ?? 1)
@@ -225,18 +246,19 @@ async function findItems(): Promise<void> {
     const res = await window.shell.pricetagsPrepare(select('pricetags-store')?.value ?? '', skus)
     if (!res.ok || !res.result) {
       items = []
-      renderRows([], res.error)
+      renderRows([], [], res.error)
       setStatus(res.error ?? 'SEW не ответил')
       return
     }
     items = res.result.items
+    warning = res.result.warning
     const remembered = Number(deps.config()?.pricetagTemplateId ?? 0)
     fillSelect(
       select('pricetags-template'),
       res.result.templates.map((t) => ({ value: String(t.id), label: `${t.id}: ${t.name}` })),
       String(res.result.templates.some((t) => t.id === remembered) ? remembered : (res.result.templates[0]?.id ?? '')),
     )
-    renderRows(res.result.missing, res.result.warning)
+    renderResult()
     const lost = res.result.missing.length > 0 ? `, не найдено: ${res.result.missing.length}` : ''
     setStatus(`найдено позиций: ${items.length}${lost}`)
   } finally {
@@ -251,7 +273,7 @@ async function buildPdf(): Promise<void> {
   setStatus('SEW рендерит ценники, это до минуты…')
   const res = await window.shell.pricetagsBuild({
     objectId: select('pricetags-store')?.value ?? '',
-    items,
+    items: visibleItems(),
     templateId: Number(select('pricetags-template')?.value ?? '0'),
     paperColorId: Number(select('pricetags-paper')?.value ?? '1'),
     copies: Number((el('pricetags-copies') as HTMLInputElement | null)?.value ?? '1'),
