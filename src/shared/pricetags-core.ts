@@ -180,8 +180,16 @@ export function buildPrintTaskBody(input: BuildInput): Record<string, unknown> {
   }
 }
 
-/** Тексты ошибок по образцу `runStockDownload` (src/main/index.ts:1450). */
-export function sewErrorMessage(status: number, subject: string): string {
+/** Тексты ошибок по образцу `runStockDownload` (src/main/index.ts:1450).
+ *
+ *  `body` — тело не-2xx ответа SEW, если клиент его сохранил. Причина отказа
+ *  написана только там: по коду 403 мы способны лишь догадаться («нет прав на
+ *  ценники»), а эта догадка уже дважды уводила в сторону от настоящей причины.
+ *  Поэтому свой текст SEW показываем буквально, а догадку по статусу оставляем
+ *  только на тот случай, когда распознать тело не удалось. */
+export function sewErrorMessage(status: number, subject: string, body?: string): string {
+  const fromSew = body ? sewContentError(body) : null
+  if (fromSew) return fromSew
   if (status === 401) return 'сессия SEW протухла — обновите страницу SEW'
   if (status === 403) return `нет прав на ${subject} по магазину`
   return `SEW ответил HTTP ${status} (${subject})`

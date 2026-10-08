@@ -673,7 +673,7 @@
     </div>
   </div>
     <!-- Оверлей «Ценники»: список SKU → позиции → один многостраничный PDF -->
-    <div id="pricetags-overlay" class="overlay" hidden>
+    <div id="pricetags-overlay" hidden>
       <div class="settings-card pricetags-card">
         <div class="settings-title">Ценники</div>
 
@@ -684,6 +684,10 @@
         <div class="settings-row">
           <label for="pricetags-template">Шаблон</label>
           <select id="pricetags-template"></select>
+        </div>
+        <div class="settings-row">
+          <label for="pricetags-username">Логин SEW (табельный номер)</label>
+          <input id="pricetags-username" type="text" spellcheck="false" autocomplete="off" placeholder="напр. 181165" />
         </div>
         <div class="settings-row">
           <label for="pricetags-paper">Бумага</label>
@@ -713,8 +717,6 @@
         <div id="pricetags-missing" class="pricetags-missing" hidden></div>
 
         <div class="settings-actions">
-          <button id="pricetags-save" disabled>Сохранить PDF</button>
-          <button id="pricetags-print" disabled>Печать…</button>
           <button id="pricetags-close">Закрыть (Esc)</button>
         </div>
       </div>

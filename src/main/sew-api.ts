@@ -57,8 +57,42 @@ export function sewUrl(target: string): string | null {
   return `${SEW_ORIGIN}${pathname}${query}`
 }
 
-export function sewHeaders(auth: string): Record<string, string> {
-  return { Accept: 'application/json', Authorization: auth }
+/** Логин SEW — личный табельный номер сотрудника (напр. 181165). Именно его
+ *  SPA кладёт в `x-username` на каждом запросе подсистемы `/api/pricetags-*`
+ *  (40 из 40 запросов в HAR); без него SEW не понимает, от чьего имени act, и
+ *  отвечает 403 — вплоть до пустого списка шаблонов в оверлее ценников.
+ *
+ *  Набор символов сознательно узкий: значение уходит в HTTP-заголовок, поэтому
+ *  пробел, перевод строки и не-ASCII пропускаем — иначе значение из config.json
+ *  стало бы вектором инъекции заголовка. */
+export function isValidSewUsername(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9._-]{1,64}$/.test(value)
+}
+
+/** Страница SPA, с которой SEW ждёт запросы подсистемы ценников.
+ *
+ *  Зачем: наш запрос уходит из main через `net.fetch`, а не из страницы, поэтому
+ *  браузер не проставляет за него `Referer`. В HAR у всех успешных запросов
+ *  `/api/pricetags-*` этот заголовок есть, и шлюз вполне может отвечать на его
+ *  отсутствие 403 с пустым телом — такое наблюдалось на живом SEW. */
+const PRICETAG_PAGE = `${SEW_ORIGIN}/v2/pricetags/print/search`
+
+/** Заголовки запроса к SEW: `Accept` и логин из конфига.
+ *
+ *  `Authorization: Bearer` здесь НЕ отправляется намеренно. По HAR SEW не носит
+ *  Bearer нигде — 0 из 395 запросов `/api/*` и 0 из 128 `/v2/api/*`; сессия держится
+ *  на куках, которые `net.fetch` берёт из общего хранилища. Наблюдалось: профиль
+ *  `/v2/api/…` с лишним Bearer проходил, а `/api/pricetags-print-tasks/…` отбивал
+ *  403 — шлюз один лишний заголовок терпит, другой нет. Bearer для `/v2/api/*`
+ *  добавляется на стороне `request()`: HAR этого префикса не содержит вовсе, и
+ *  осторожность стоит здесь дороже единообразия. */
+export function sewHeaders(username?: string): Record<string, string> {
+  const headers: Record<string, string> = { Accept: 'application/json' }
+  // Незаданный или битый логин не подставляем «как есть»: пустой x-username
+  // SEW трактует как анонимного пользователя, и отказ приходит оттуда же,
+  // откуда пришёл бы при его отсутствии, — но уже с чуть другой диагностикой.
+  if (isValidSewUsername(username)) headers['x-username'] = username
+  return headers
 }
 
 /** Адрес страницы гостя — им сверяется, что вкладка именно SEW, а не SSO. */
@@ -106,6 +140,10 @@ export interface SewApiDeps {
   fetchImpl: (url: string, init?: unknown) => Promise<SewResponse>
   /** Выполняет код в госте; бросает, если гостя нет или он не готов. */
   guestEval(id: number, code: string): Promise<unknown>
+  /** Логин SEW из конфига пользователя — заголовок `x-username`. Геттер, а не
+   *  значение, потому что конфиг меняется на лету (`config:set`), и закеплированный
+   *  в closure логин устарел бы до перезапуска. */
+  sewUsername?: () => string
 }
 
 export interface SewApi {
@@ -119,9 +157,23 @@ export interface SewApi {
 }
 
 /** Ошибка HTTP-ответа SEW: `status` нужен вызывающему, чтобы отличить
- *  протухшую сессию (401) от запрета (403) — тексты разные. */
+ *  протухшую сессию (401) от запрета (403) — тексты разные. `body` — тело
+ *  отказа: там SEW пишет настоящую причину, и без неё тексты выше остаются
+ *  догадкой по коду. */
 export interface SewStatusError extends Error {
   status: number
+  body?: string
+}
+
+/** Тело не-2xx ответа. Не-JSON, оборванный поток или отсутствующий метод —
+ *  пустая строка, а не исключение: разбор отказа не должен падать. */
+async function readErrorBody(res: { text?: () => Promise<string> }): Promise<string> {
+  if (typeof res.text !== 'function') return ''
+  try {
+    return (await res.text()).slice(0, 2000)
+  } catch {
+    return ''
+  }
 }
 
 export function createSewApi(deps: SewApiDeps): SewApi {
@@ -150,19 +202,35 @@ export function createSewApi(deps: SewApiDeps): SewApi {
   async function request(path: string, init: SewHttpInit | undefined, as: 'json' | 'text' | 'none'): Promise<unknown> {
     const url = sewUrl(path)
     if (!url) throw new Error(`недопустимый путь SEW-API: ${path}`)
+    // Вкладка SEW нужна как признак живой сессии и как источник Bearer: сам токен
+    // уходит в заголовки у всех сервисов. Без вкладки нет и сессии — тогда нужен
+    // внятный отказ, а не 401 от шлюза.
     const auth = await fetchBearer()
-    if (!auth) throw new Error('Bearer SEW не найден: откройте страницу SEW и повторите')
+    if (!auth) throw new Error('вкладка SEW не найдена — откройте SEW, войдите и повторите')
     const res = await deps.fetchImpl(url, {
       method: init?.method ?? 'GET',
       headers: {
-        ...sewHeaders(auth),
+        ...sewHeaders(deps.sewUsername?.()),
+        // Живой отказ вскрыл обе половины: к подсистеме ценников без Referer
+        // шлюз отвечал 403, а с Referer, но без Bearer — 401. Нужны оба
+        // заголовка сразу, поэтому шлём их везде, а не выбираем по префиксу
+        // пути (профиль /v2/api/* отвечал 200 и с Bearer, и с Referer).
+        Authorization: auth,
+        Referer: PRICETAG_PAGE,
         ...(init?.body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       body: init?.body === undefined ? undefined : JSON.stringify(init.body),
     })
     if (!res.ok) {
-      const err = new Error(`SEW ответил HTTP ${res.status}`) as SewStatusError
+      // Тело отказа — единственное место, где SEW пишет настоящую причину;
+      // по коду статуса мы умеем только догадываться. Обрезаем, чтобы HTML-дамп
+      // или капча не утекли в сообщение целиком, и читаем мягко: оборванный
+      // поток не должен ронять разбор ответа.
+      const err = new Error(
+        `SEW ответил HTTP ${res.status} на ${init?.method ?? 'GET'} ${path}`,
+      ) as SewStatusError
       err.status = res.status
+      err.body = await readErrorBody(res)
       throw err
     }
     if (as === 'none') return undefined

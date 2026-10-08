@@ -173,6 +173,9 @@ interface ShellConfig {
   downloadsDir?: string
   stockDir?: string
   stockObjectId: string
+  /** Логин SEW (личный табельный номер) — уходит в заголовок x-username.
+   *  Пусто = заголовок не отправляется. */
+  sewUsername: string
   /** Код магазина для ценников (напр. S187) — по умолчанию тот же, что у остатков:
    *  отдельный ключ нужен, чтобы печать ценников не ломалась у другого магазина. */
   pricetagObjectId: string
@@ -287,15 +290,6 @@ interface PricetagBuildInput {
 interface PricetagBuildResult {
   ok: boolean
   pdfName?: string
-  error?: string
-}
-interface PricetagSaveResult {
-  ok: boolean
-  path?: string
-  error?: string
-}
-interface PricetagPrintResult {
-  ok: boolean
   error?: string
 }
 
@@ -532,9 +526,9 @@ interface ShellApi {
   /** Собрать PDF ценников и открыть просмотрщик */
   pricetagsBuild(input: PricetagBuildInput): Promise<PricetagBuildResult>
   /** Сохранить последний собранный PDF на диск */
-  pricetagsSave(): Promise<PricetagSaveResult>
+
   /** Напечатать последний собранный PDF на системном принтере */
-  pricetagsPrint(): Promise<PricetagPrintResult>
+
   /** Выбор папки для отчёта об остатках; null — отмена */
   pickStockDir(): Promise<string | null>
   /** Остатки для плагина `sew-inventory`: файл скачивается тем же кодом, что и

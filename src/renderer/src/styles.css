@@ -3410,6 +3410,28 @@ body {
 
 
 /* Оверлей «Ценники» */
+/* Собственно контейнер-подложка. Без этого правила div остаётся обычным
+   статическим блоком в потоке документа: без position/z-index он уезжает под
+   гостевой <webview>, и оверлей «открывается», но его не видно. Все прочие
+   оверлеи (settings, accounts, downloads, templates) позиционируются так же и
+   по id — класса .overlay в этой таблице стилей не существует. */
+#pricetags-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+#pricetags-overlay[hidden] {
+  display: none;
+}
+
 .pricetags-card {
   width: min(760px, 92vw);
   max-height: 86vh;

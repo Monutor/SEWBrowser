@@ -16,8 +16,6 @@ let deps!: PricetagsOverlayDeps
 /** Артикулы живут только внутри сессии окна — намеренно не сохраняем. */
 let skus: string[] = []
 let items: Item[] = []
-/** PDF собран в этой сессии: без него «Сохранить»/«Печать» бессмысленны. */
-let hasPdf = false
 
 function el(id: string): HTMLElement | null {
   return document.getElementById(id)
@@ -54,10 +52,6 @@ function refreshButtons(): void {
   const build = button('pricetags-build')
   const template = select('pricetags-template')
   if (build) build.disabled = items.length === 0 || !template?.value
-  const save = button('pricetags-save')
-  if (save) save.disabled = !hasPdf
-  const print = button('pricetags-print')
-  if (print) print.disabled = !hasPdf
 }
 
 function renderChips(): void {
@@ -163,7 +157,11 @@ async function loadStores(): Promise<void> {
   if (!store) return
   const res = await window.shell.pricetagsStores()
   if (!res.ok) {
-    fillSelect(store, [{ value: '', label: '— магазины недоступны —' }], '')
+    // Причину дублируем в подписи селекта, а не только в статус: статус общий
+    // на весь оверлей и следующим кликом («Найти») перезаписывается ошибкой
+    // поиска — из-за этого сбой списка магазинов был не виден вовсе.
+    const why = res.error ? `: ${res.error}` : ''
+    fillSelect(store, [{ value: '', label: `— магазины недоступны${why} —` }], '')
     setStatus(res.error ?? 'не удалось получить список магазинов')
     return
   }
@@ -200,12 +198,13 @@ export async function openPricetags(): Promise<void> {
   node.hidden = false
   skus = []
   items = []
-  hasPdf = false
   renderChips()
   renderRows([])
   fillPaper()
   const copies = el('pricetags-copies') as HTMLInputElement | null
   if (copies) copies.value = String(deps.config()?.pricetagCopies ?? 1)
+  const username = el('pricetags-username') as HTMLInputElement | null
+  if (username) username.value = deps.config()?.sewUsername ?? ''
   fillSelect(select('pricetags-template'), [], '')
   refreshButtons()
   await loadStores()
@@ -226,13 +225,11 @@ async function findItems(): Promise<void> {
     const res = await window.shell.pricetagsPrepare(select('pricetags-store')?.value ?? '', skus)
     if (!res.ok || !res.result) {
       items = []
-      hasPdf = false
       renderRows([], res.error)
       setStatus(res.error ?? 'SEW не ответил')
       return
     }
     items = res.result.items
-    hasPdf = false
     const remembered = Number(deps.config()?.pricetagTemplateId ?? 0)
     fillSelect(
       select('pricetags-template'),
@@ -259,8 +256,10 @@ async function buildPdf(): Promise<void> {
     paperColorId: Number(select('pricetags-paper')?.value ?? '1'),
     copies: Number((el('pricetags-copies') as HTMLInputElement | null)?.value ?? '1'),
   })
-  hasPdf = res.ok
-  setStatus(res.ok ? `PDF готов: ${res.pdfName}` : (res.error ?? 'PDF не собран'))
+  // Собранный PDF открывается отдельным окном просмотра: сохранить его и
+// отправить на принтер можно там. Своего сообщения с именем файла в статусе
+// оставлять незачем — имя видно в заголовке окна.
+setStatus(res.ok ? 'PDF готов — он открыт в отдельном окне, там можно сохранить и напечатать' : (res.error ?? 'PDF не собран'))
   refreshButtons()
 }
 
@@ -282,18 +281,8 @@ export function wirePricetags(next: PricetagsOverlayDeps): void {
     addSkus(parseSkuInput(text))
   })
   el('pricetags-find')?.addEventListener('click', () => void findItems())
-  el('pricetags-build')?.addEventListener('click', () => void buildPdf())
-  el('pricetags-save')?.addEventListener('click', () => {
-    void window.shell.pricetagsSave().then((res) =>
-      setStatus(res.ok ? `сохранено: ${res.path}` : (res.error ?? 'не сохранено')),
-    )
-  })
-  el('pricetags-print')?.addEventListener('click', () => {
-    void window.shell.pricetagsPrint().then((res) =>
-      setStatus(res.ok ? 'отправлено на принтер' : (res.error ?? 'не напечатано')),
-    )
-  })
-  el('pricetags-close')?.addEventListener('click', closePricetags)
+el('pricetags-build')?.addEventListener('click', () => void buildPdf())
+el('pricetags-close')?.addEventListener('click', closePricetags)
   el('pricetags-store')?.addEventListener('change', (event) => {
     void persist({ pricetagObjectId: (event.target as HTMLSelectElement).value }, 'код магазина')
   })
@@ -303,7 +292,17 @@ export function wirePricetags(next: PricetagsOverlayDeps): void {
   el('pricetags-copies')?.addEventListener('change', (event) => {
     void persist({ pricetagCopies: Number((event.target as HTMLInputElement).value) }, 'число копий')
   })
-  el('pricetags-template')?.addEventListener('change', (event) => {
-    void persist({ pricetagTemplateId: Number((event.target as HTMLSelectElement).value) }, 'шаблон печати')
+el('pricetags-template')?.addEventListener('change', (event) => {
+    void persist({ pricetagTemplateId: Number((event.target as HTMLSelectElement).value) }, 'шаблон ценника')
+  })
+  // Логин сохраняем по blur, а не по каждому нажатию: он уходит в заголовок
+  // x-username, и persist() перерисовывает оверлей при отказе — на полувведённом
+  // номере это мешало бы. Пустая строка допустима («не отправлять»), поэтому
+  // чистим value, иначе пробелы превратились бы в молча отброшенный патч.
+  el('pricetags-username')?.addEventListener('blur', (event) => {
+    const input = event.target as HTMLInputElement
+    const value = input.value.trim()
+    if (input.value !== value) input.value = value
+    void persist({ sewUsername: value }, 'логин SEW')
   })
 }

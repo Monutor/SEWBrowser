@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createSewApi, isSewHost, safeHost, sewHeaders, sewUrl, SEW_ORIGIN } from './sew-api.ts'
+import { createSewApi, isSewHost, isValidSewUsername, safeHost, sewHeaders, sewUrl, SEW_ORIGIN } from './sew-api.ts'
 
 /** Мок гостя на SEW-странице: на запрос адреса отдаёт URL, на Bearer-скрипт — токен.
  *  Две ветки различать обязательно — клиент сперва сверяет, что вкладка SEW. */
@@ -33,8 +33,88 @@ test('sewUrl: абсолютный URL своего хоста принимае�
   assert.equal(sewUrl(`${SEW_ORIGIN}/etc/passwd`), null)
 })
 
-test('sewHeaders: Bearer и Accept', () => {
-  assert.deepEqual(sewHeaders('Bearer abc'), { Accept: 'application/json', Authorization: 'Bearer abc' })
+test('sewHeaders: только Accept — Authorization у SEW не используется', () => {
+  // По HAR SEW не шлёт Bearer НИГДЕ: 0 из 395 запросов /api/* и 0 из 128
+  // /v2/api/*. Сессия держится на куках сессии, которые net.fetch берёт из
+  // общего хранилища. Лишний Authorization шлюз /api/ отбивал 403.
+  assert.deepEqual(sewHeaders(), { Accept: 'application/json' })
+  assert.deepEqual(sewHeaders('181165'), { Accept: 'application/json', 'x-username': '181165' })
+  assert.equal('Authorization' in sewHeaders('181165'), false)
+})
+
+test('isValidSewUsername: табельный номер и подобное — да, мусор и инъекция — нет', () => {
+  assert.equal(isValidSewUsername('181165'), true)
+  assert.equal(isValidSewUsername('00193918'), true)
+  assert.equal(isValidSewUsername('user_name-01.a'), true)
+  assert.equal(isValidSewUsername(''), false)
+  assert.equal(isValidSewUsername(' 181165'), false)
+  assert.equal(isValidSewUsername('181 165'), false)
+  assert.equal(isValidSewUsername('181165\r\nX-Evil: 1'), false)
+  assert.equal(isValidSewUsername('ы'), false)
+  assert.equal(isValidSewUsername('a'.repeat(65)), false)
+  assert.equal(isValidSewUsername(181165), false)
+  assert.equal(isValidSewUsername(null), false)
+})
+
+test('sewHeaders: логин SEW добавляет x-username, битое значение молча игнорируется', () => {
+  assert.deepEqual(sewHeaders('181165'), {
+    Accept: 'application/json',
+    'x-username': '181165',
+  })
+  assert.deepEqual(sewHeaders('не валидный'), { Accept: 'application/json' })
+})
+
+test('createSewApi: к подсистеме ценников уходят и Bearer, и Referer', async () => {
+  const seen: Array<{ init: unknown }> = []
+  const api = createSewApi({
+    guestIds: () => [7],
+    sewUsername: () => '181165',
+    fetchImpl: (_url, init) => {
+      seen.push({ init })
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}), text: () => Promise.resolve('') })
+    },
+    guestEval: mockGuest(),
+  })
+  // Живой отказ показал обе половины: без Referer шлюз отвечал 403, с Referer,
+  // но без Bearer — 401. Значит подсистеме ценников нужны оба заголовка сразу,
+  // а не выбор одного из них. HAR этого не показывал: запросы самой SPA ходят с
+  // куками, поэтому Bearer там и не нужен, а у нашего net.fetch сессионные
+  // куки могут не долететь — на них полагаться нельзя.
+  await api.json('/api/pricetags-print-tasks/sew/pricetag/search', { method: 'POST', body: {} })
+  const init = seen[0].init as { headers: Record<string, string> }
+  assert.equal(init.headers.Authorization, 'Bearer tok')
+  assert.equal(init.headers['x-username'], '181165')
+})
+test('createSewApi: x-username берётся из конфига и уходит в запрос', async () => {
+  const seen: Array<{ init: unknown }> = []
+  const api = createSewApi({
+    guestIds: () => [7],
+    sewUsername: () => '181165',
+    fetchImpl: (_url, init) => {
+      seen.push({ init })
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}), text: () => Promise.resolve('') })
+    },
+    guestEval: mockGuest(),
+  })
+  await api.json('/api/pricetags-print-tasks/sew/pricetag/search', { method: 'POST', body: {} })
+  const init = seen[0].init as { headers: Record<string, string> }
+  assert.equal(init.headers['x-username'], '181165')
+})
+
+test('createSewApi: пустой логин в конфиге — запрос без x-username, а не с пустым', async () => {
+  const seen: Array<{ init: unknown }> = []
+  const api = createSewApi({
+    guestIds: () => [7],
+    sewUsername: () => '',
+    fetchImpl: (_url, init) => {
+      seen.push({ init })
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}), text: () => Promise.resolve('') })
+    },
+    guestEval: mockGuest(),
+  })
+  await api.json('/api/pricetags-print-tasks/sew/pricetag/search')
+  const init = seen[0].init as { headers: Record<string, string> }
+  assert.equal('x-username' in init.headers, false)
 })
 
 test('safeHost/isSewHost: хост и его поддомены', () => {
@@ -56,7 +136,7 @@ test('createSewApi: без Bearer — понятная ошибка, сеть н
     },
     guestEval: () => Promise.reject(new Error('нет гостя')),
   })
-  await assert.rejects(() => api.json('/api/x'), /Bearer SEW не найден/)
+  await assert.rejects(() => api.json('/api/x'), /вкладка SEW не найдена/)
   assert.equal(called, 0)
 })
 
@@ -215,4 +295,95 @@ test('createSewApi: text() отдаёт строку как есть, без р�
   const init = seen[0].init as { method: string; body: unknown }
   assert.equal(init.method, 'GET')
   assert.equal(init.body, undefined)
+})
+test('createSewApi: при отказе SEW тело ответа не теряется, а в тексте ошибки видно какой запрос отбили', async () => {
+  // Причина отказа объяснена только в теле: по коду 403 мы умеем лишь
+  // догадаться («нет прав»). Плюс нужен сам путь — иначе отладка идёт вслепую.
+  const api = createSewApi({
+    guestIds: () => [7],
+    sewUsername: () => '181165',
+    fetchImpl: () =>
+      Promise.resolve({
+        ok: false,
+        status: 403,
+        json: () => Promise.resolve({}),
+        text: () =>
+          Promise.resolve('{"responseHeader":{"errors":[{"message":"Нет прав на шаблон"}]}}'),
+      }),
+    guestEval: mockGuest(),
+  })
+  await assert.rejects(
+    () => api.json('/api/pricetags-print-tasks/sew/pricetag/search', { method: 'POST', body: {} }),
+    (err: unknown) => {
+      const e = err as { status?: number; body?: string; message?: string }
+      assert.equal(e.status, 403)
+      assert.match(String(e.body), /Нет прав на шаблон/)
+      assert.match(String(e.message), /403/)
+      assert.match(String(e.message), /pricetag\/search/)
+      return true
+    },
+  )
+})
+
+test('createSewApi: тело ошибки читается мягко — обрыв или не-JSON не роняют разбор ответа', async () => {
+  const api = createSewApi({
+    guestIds: () => [7],
+    fetchImpl: () =>
+      Promise.resolve({
+        ok: false,
+        status: 500,
+        json: () => Promise.resolve({}),
+        text: () => Promise.reject(new Error('поток оборвался')),
+      }),
+    guestEval: mockGuest(),
+  })
+  await assert.rejects(
+    () => api.json('/api/pricetags-print-tasks/sew/pricetag/search', { method: 'POST', body: {} }),
+    (err: unknown) => {
+      const e = err as { status?: number; body?: string }
+      assert.equal(e.status, 500)
+      assert.equal(e.body, '')
+      return true
+    },
+  )
+})
+test('createSewApi: Bearer уходит во все сервисы SEW, Referer — тоже', async () => {
+  // Разводить сервисы по Bearer не нужно: профиль /v2/api/* отвечал 200 и с
+  // ним, а подсистема ценников после появления Referer стала требовать и его
+  // (иначе 401). Отсюда правило проще — шлём оба заголовка везде.
+  const seen: Array<{ url: string; init: unknown }> = []
+  const api = createSewApi({
+    guestIds: () => [7],
+    sewUsername: () => '181165',
+    fetchImpl: (url, init) => {
+      seen.push({ url, init })
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}), text: () => Promise.resolve('') })
+    },
+    guestEval: mockGuest(),
+  })
+  await api.json('/v2/api/sew/v1/profile')
+  await api.json('/api/pricetags-print-tasks/sew/pricetag/search', { method: 'POST', body: {} })
+  const profile = seen[0].init as { headers: Record<string, string> }
+  const search = seen[1].init as { headers: Record<string, string> }
+  assert.equal(profile.headers.Authorization, 'Bearer tok')
+  assert.equal(search.headers.Authorization, 'Bearer tok')
+  assert.equal(search.headers.Referer, `${SEW_ORIGIN}/v2/pricetags/print/search`)
+})
+test('createSewApi: к подсистеме ценников идёт Referer страницы SPA — net.fetch его не ставит', async () => {
+  // По HAR у всех успешных запросов подсистемы Referer = страница SPA. Наш
+  // fetch выполняется не из страницы, поэтому заголовок не проставляется сам,
+  // а шлюз на его отсутствие вполне может отвечать 403 с пустым телом.
+  const seen: Array<{ init: unknown }> = []
+  const api = createSewApi({
+    guestIds: () => [7],
+    sewUsername: () => '181165',
+    fetchImpl: (_url, init) => {
+      seen.push({ init })
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}), text: () => Promise.resolve('') })
+    },
+    guestEval: mockGuest(),
+  })
+  await api.json('/api/pricetags-print-tasks/sew/pricetag/search', { method: 'POST', body: {} })
+  const search = seen[0].init as { headers: Record<string, string> }
+  assert.equal(search.headers.Referer, `${SEW_ORIGIN}/v2/pricetags/print/search`)
 })

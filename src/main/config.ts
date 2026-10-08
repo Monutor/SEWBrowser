@@ -8,6 +8,11 @@ import { DEFAULT_OBJECT_ID, isValidObjectId } from './downloads/stockReport'
 // (чтение config.json и патч config:set). Валидаторы config-core.ts берёт те
 // же, из shared/stockReport, — свои правила не дублируются.
 import { dropInvalidPricetags, pickPricetagConfig } from './config-core'
+// Валидатор логина SEW живёт в ./sew-api — том же electron-free модуле, где
+// сам заголовок x-username собирается. Правило проверки и правило отправки не
+// должны разъезжаться: если здесь принять строку, которую sew-api потом пошлёт
+// «как есть», в заголовок может попасть мусор из config.json.
+import { isValidSewUsername } from './sew-api'
 
 export interface NavTab {
   id: string;
@@ -78,6 +83,12 @@ export interface SewConfig {
   downloadsDir?: string;
   /** Папка для отчёта об остатках; пустая строка — та же, что downloadsDir */
   stockDir?: string;
+  /** Логин SEW — личный табельный номер сотрудника. Уходит в заголовке
+   *  `x-username` на каждый запрос подсистемы ценников: без него SEW не понимает,
+   *  от чьего имени выполняется запрос, и отвечает 403. В HAR его шлёт SPA (все
+   *  40 запросов `/api/pricetags-*`), но само значение нигде в ответах SEW не
+   *  приходит — только вход в SEW. Пустая строка = заголовок не шлём вовсе. */
+  sewUsername: string;
   /** Код магазина для отчёта об остатках (objectId в запросе) */
   stockObjectId: string;
   /** Код магазина для ценников (напр. S187) — по умолчанию тот же, что у остатков:
@@ -134,6 +145,8 @@ const DEFAULTS: SewConfig = {
   scannerAppArgs: '',
   folderPasswordRememberMinutes: 5,
   stockObjectId: DEFAULT_OBJECT_ID,
+  // Пусто = заголовок x-username не уходит вовсе (см. isValidSewUsername).
+  sewUsername: '',
   pricetagObjectId: DEFAULT_OBJECT_ID,
   pricetagTemplateId: 89,
   pricetagPaperColorId: 1,
@@ -286,6 +299,13 @@ function sanitizeConfig(user: Partial<SewConfig>): SewConfig {
     downloadsDir: pickString(user.downloadsDir, ''),
     stockDir: pickString(user.stockDir, ''),
     stockObjectId: isValidObjectId(user.stockObjectId) ? user.stockObjectId : DEFAULT_OBJECT_ID,
+    // Логин приходит из config.json -> заголовок x-username. Пустая строка
+    // ЗДЕСЬ осмысленна и хранится: это «не отправлять заголовок» (например,
+    // пользователь стёр поле, чтобы вернуться к настройке без логина).
+    // Отвергать её нельзя — тогда очистить поле было бы невозможно. Сам
+    // заголовок пустую строку всё равно не выпустит: см. sewHeaders.
+    sewUsername:
+      user.sewUsername === '' || isValidSewUsername(user.sewUsername) ? user.sewUsername : DEFAULTS.sewUsername,
     // Ценники: битое значение из config.json -> дефолт, иначе запрос уйдёт
     // в SEW с несуществующим шаблоном/цветом бумаги и вернёт 500.
     ...pickPricetagConfig(user, DEFAULTS),
@@ -336,6 +356,13 @@ export function saveConfig(partial: Partial<SewConfig>): SewConfig {
   }
   if ('stockObjectId' in validPartial && !isValidObjectId(validPartial.stockObjectId)) {
     delete validPartial.stockObjectId
+  }
+  // Критерий ровно тот же, что и в sanitizeConfig: битый логин выбрасываем из
+  // патча, а не пишем в config.json — иначе следующий запуск поднимет мусор
+  // «как есть» и он уйдёт в заголовок x-username. Пустая строка — не мусор, а
+  // осознанное «очистить поле», её пропускаем.
+  if ('sewUsername' in validPartial && validPartial.sewUsername !== '' && !isValidSewUsername(validPartial.sewUsername)) {
+    delete validPartial.sewUsername
   }
   const merged: Partial<SewConfig> = {
     ...current,

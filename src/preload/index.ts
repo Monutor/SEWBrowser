@@ -121,16 +121,6 @@ interface PricetagBuildResult {
   error?: string
 }
 
-interface PricetagSaveResult {
-  ok: boolean
-  path?: string
-  error?: string
-}
-
-interface PricetagPrintResult {
-  ok: boolean
-  error?: string
-}
 
 interface DownloadEventLike {
   id: number
@@ -433,9 +423,9 @@ const api = {
   pricetagsBuild: (input: PricetagBuildInput): Promise<PricetagBuildResult> =>
     ipcRenderer.invoke('pricetags:build', input),
   /** Сохранить последний PDF на диск */
-  pricetagsSave: (): Promise<PricetagSaveResult> => ipcRenderer.invoke('pricetags:save'),
+
   /** Напечатать последний PDF */
-  pricetagsPrint: (): Promise<PricetagPrintResult> => ipcRenderer.invoke('pricetags:print'),
+
   /** Выбор папки для отчёта об остатках; null — отмена */
   pickStockDir: (): Promise<string | null> => ipcRenderer.invoke('stock:pick-dir'),
   /** Остатки для плагина sew-inventory: файл скачивается тем же кодом, что и

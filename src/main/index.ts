@@ -974,6 +974,15 @@ function createWindow(): void {
   // клиенте electron нет, иначе его не проверить через node --test).
   const sewApi = createSewApi({
     guestIds: () => attachedGuests,
+    // Геттер, а не значение: логин SEW меняется из renderer через config:set
+    // (пользователь вписал его в оверлее ценников), и захваченная копия
+    // осталась бы пустой до перезапуска приложения.
+    // Именно getConfig(), а не локальный `config`: тот — снимок на момент
+    // создания окна, а config:set подменяет объект только в файле и в
+    // ответе IPC. Со снимком заголовок уходил бы пустым, и SEW отвечал 403
+    // (обход getConfig'ом — чтение и разбор файла на каждый запрос, но их
+    // единицы, а корректность дороже).
+    sewUsername: () => getConfig().sewUsername,
     fetchImpl: (url, init) => net.fetch(url, init as never) as never,
     guestEval: (id, code) => {
       const wc = webContents.fromId(id)
@@ -1397,12 +1406,10 @@ function createWindow(): void {
     void win.loadURL(pathToFileURL(htmlPath).toString())
   }
 
-  // Сервис ценников: оркестрация фичи в main (см. pricetags.ts). Все 4
-  // зависимости доступны в scope createWindow() — sewApi, printPdfDocument,
-  // openPdfViewer и config.
+  // Сервис ценников: оркестрация фичи в main (см. pricetags.ts). Все 3
+  // зависимости доступны в scope createWindow() — sewApi, openPdfViewer и config.
   const pricetags = createPricetags({
     api: sewApi,
-    printPdfDocument,
     openPdfViewer,
     fallbackObjectId: () =>
       isValidObjectId(config.pricetagObjectId) ? config.pricetagObjectId : config.stockObjectId,
@@ -1415,8 +1422,6 @@ function createWindow(): void {
     (_e, input: { objectId: string; items: PrepareItem[]; templateId: number; paperColorId: number; copies: number }) =>
       pricetags.build(input),
   )
-  ipcMain.handle('pricetags:save', () => pricetags.save())
-  ipcMain.handle('pricetags:print', () => pricetags.print())
 
   // Выход приложения: временный PDF ценника удаляем (лежит в tempWorkDir).
   app.on('before-quit', () => pricetags.disposePdf())

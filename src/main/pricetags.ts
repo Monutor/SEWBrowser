@@ -3,11 +3,8 @@
  *  Сеть SEW — через общий клиент sew-api, окно просмотра и печать приходят
  *  инъекцией; единственная прямая зависимость от Electron — системный диалог
  *  сохранения PDF. */
-import { dialog } from 'electron'
-import { copyFileSync, unlinkSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { unlinkSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import { htmlToPdf, tempWorkDir } from './html-pdf'
 import { isValidObjectId } from './downloads/stockReport'
 import type { SewApi } from './sew-api'
@@ -61,22 +58,8 @@ export interface PricetagBuildResult {
   error?: string
 }
 
-export interface PricetagSaveResult {
-  ok: boolean
-  path?: string
-  error?: string
-}
-
-export interface PricetagPrintResult {
-  ok: boolean
-  error?: string
-}
-
 export interface PricetagsDeps {
   api: SewApi
-  /** Сигнатура ровно как в src/main/index.ts:1292 — синхронная, печать уходит
-   *  в системный диалог и результата не ждёт. */
-  printPdfDocument(fileUrl: string, title: string): void
   openPdfViewer(pdf: Buffer, title: string): void
   fallbackObjectId(): string
 }
@@ -91,8 +74,6 @@ export interface PricetagsService {
     paperColorId: number
     copies: number
   }): Promise<PricetagBuildResult>
-  save(): Promise<PricetagSaveResult>
-  print(): PricetagPrintResult
   disposePdf(): void
 }
 
@@ -116,11 +97,13 @@ function statusOf(err: unknown): number {
 /** Текст ошибки наружу: 401/403 — по-русски из общего словаря, сеть — её текст. */
 function describeError(err: unknown, subject: string): string {
   const message = isRecord(err) && typeof err.message === 'string' ? err.message : ''
-  if (message.startsWith('Bearer SEW не найден')) return message
+  if (message.startsWith('вкладка SEW не найдена')) return message
   if (message.startsWith('рендер HTML в PDF не успел')) return 'Рендер HTML в PDF не успел'
   if (message.startsWith('страница не загрузилась')) return `Рендер ценников не удался: ${message}`
   const status = statusOf(err)
-  if (status) return sewErrorMessage(status, subject)
+  // Тело отказа, если клиент его сохранил: показываем текст SEW, а не догадку.
+  const body = isRecord(err) && typeof err.body === 'string' ? err.body : undefined
+  if (status) return sewErrorMessage(status, subject, body)
   return `SEW недоступен: ${message || String(err)}`
 }
 
@@ -319,43 +302,5 @@ export function createPricetags(deps: PricetagsDeps): PricetagsService {
     }
   }
 
-  async function save(): Promise<PricetagSaveResult> {
-    if (!lastPdf) return { ok: false, error: 'сначала соберите PDF' }
-    let filePath = ''
-    try {
-      // Диалог сам по себе может бросить (нет BrowserWindow, приложение
-      // закрывается) — иначе отказ ушёл бы в renderer исключением, а не
-      // русским текстом в error.
-      const res = await dialog.showSaveDialog({
-        defaultPath: join(homedir(), 'Downloads', lastPdf.title + '.pdf'),
-        filters: [{ name: 'PDF', extensions: ['pdf'] }],
-      })
-      filePath = res.canceled ? '' : res.filePath ?? ''
-    } catch (err) {
-      return { ok: false, error: `не удалось открыть диалог сохранения: ${err instanceof Error ? err.message : String(err)}` }
-    }
-    if (!filePath) return { ok: false, error: 'сохранение отменено' }
-    try {
-      copyFileSync(lastPdf.path, filePath)
-      return { ok: true, path: filePath }
-    } catch (err) {
-      return { ok: false, error: `не удалось сохранить: ${err instanceof Error ? err.message : String(err)}` }
-    }
-  }
-
-  function print(): PricetagPrintResult {
-    if (!lastPdf) return { ok: false, error: 'сначала соберите PDF' }
-    try {
-      // printPdfDocument ждёт file-URL (он же отсекает чужие did-finish-load по 'file:')
-      // и возвращает void: печать уходит в системный диалог, результата не ждём.
-      // Ссылку собирает pathToFileURL: в имени файла есть пробелы и кириллица,
-      // и голая склейка отдала бы loadURL строку без экранирования.
-      deps.printPdfDocument(pathToFileURL(lastPdf.path).toString(), lastPdf.title)
-      return { ok: true }
-    } catch (err) {
-      return { ok: false, error: `не удалось напечатать: ${err instanceof Error ? err.message : String(err)}` }
-    }
-  }
-
-  return { stores, prepare, build, save, print, disposePdf }
+  return { stores, prepare, build, disposePdf }
 }
