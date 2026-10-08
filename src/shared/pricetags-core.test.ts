@@ -3,12 +3,14 @@ import assert from 'node:assert/strict'
 import {
   buildPrintTaskBody,
   buildSearchBody,
+  isValidBarcodeWidth,
   isValidCopies,
   isValidPaperColorId,
   isValidTemplateId,
   normalizeSearchResponse,
   parseSkuInput,
   pricetagFileName,
+  sewContentError,
   sewErrorMessage,
 } from './pricetags-core.ts'
 
@@ -174,6 +176,14 @@ test('валидаторы конфига', () => {
   assert.equal(isValidCopies(0), false)
   assert.equal(isValidCopies(1000), false)
   assert.equal(isValidCopies(1.5), false)
+  assert.equal(isValidBarcodeWidth(100), true)
+  assert.equal(isValidBarcodeWidth(1), true)
+  assert.equal(isValidBarcodeWidth(999), true)
+  assert.equal(isValidBarcodeWidth(0), false)
+  assert.equal(isValidBarcodeWidth(1000), false)
+  assert.equal(isValidBarcodeWidth(1.5), false)
+  assert.equal(isValidBarcodeWidth('100'), false)
+  assert.equal(isValidBarcodeWidth(null), false)
 })
 
 test('pricetagFileName: магазин и дата', () => {
@@ -182,4 +192,35 @@ test('pricetagFileName: магазин и дата', () => {
     'Ценники S187 2026-10-07-1504.pdf',
   )
   assert.ok(pricetagFileName('S/187', new Date(2026, 9, 7)).endsWith('.pdf'))
+})
+
+test('sewContentError: конверт SEW с errors[].message', () => {
+  // Форма конверта та же, что у search: responseHeader.errors[].message.
+  assert.equal(
+    sewContentError('{"responseHeader":{"errors":[{"message":"Нет прав на магазин"}]}}'),
+    'Нет прав на магазин',
+  )
+  assert.equal(sewContentError('{"errors":[{"message":"отказ"}]}'), 'отказ')
+  // Конверт без текста ошибки — это не ошибка: так выглядит «задание ещё в работе».
+  assert.equal(sewContentError('{"responseHeader":{"errors":[]}}'), null)
+  assert.equal(sewContentError('{"responseHeader":{}}'), null)
+})
+
+test('sewContentError: голые поля ошибки и вложенный error.message', () => {
+  assert.equal(sewContentError('{"message":"Шаблон не найден"}'), 'Шаблон не найден')
+  assert.equal(sewContentError('{"error":"Нет шаблона"}'), 'Нет шаблона')
+  assert.equal(sewContentError('{"error":{"message":"Вложенная"}}'), 'Вложенная')
+  assert.equal(sewContentError('{"error_description":"invalid_client"}'), 'invalid_client')
+  assert.equal(sewContentError('{"detail":"нет прав"}'), 'нет прав')
+})
+
+test('sewContentError: пустое, HTML и мусор — это «ещё рендерится», а не ошибка', () => {
+  // Пустое тело при HTTP 200 — как отдаёт SEW, пока рендер идёт (проверено по HAR).
+  assert.equal(sewContentError(''), null)
+  assert.equal(sewContentError('   \n '), null)
+  // Частично отрисованный HTML JSON не разбирается — продолжаем опрос.
+  assert.equal(sewContentError('<!DOCTYPE html><html><body>частично'), null)
+  assert.equal(sewContentError('{}'), null)
+  assert.equal(sewContentError('[]'), null)
+  assert.equal(sewContentError('{"message":"   "}'), null)
 })

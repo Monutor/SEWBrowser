@@ -182,6 +182,9 @@ interface ShellConfig {
   pricetagPaperColorId: number
   /** Сколько копий каждого ценника */
   pricetagCopies: number
+  /** Ширина штрих-кода на ценнике (1..999). У SEW поля ширины нет — значение
+   *  проходит санитайз и хранится, но в задание печати пока не уходит. */
+  pricetagBarcodeWidth: number
   clearOnExit: 'none' | 'cache' | 'all'
   tabs: NavTab[]
   folders: NavFolder[]

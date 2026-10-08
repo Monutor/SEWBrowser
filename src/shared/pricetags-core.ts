@@ -187,6 +187,58 @@ export function sewErrorMessage(status: number, subject: string): string {
   return `SEW ответил HTTP ${status} (${subject})`
 }
 
+/**
+ * Текст ошибки из тела `GET pricetag-content/{id}` — конверт SEW с HTTP 200.
+ *
+ * Зачем: рендер ценников асинхронный, поэтому содержимое опрашивают в цикле, и
+ * «ещё не готово» от SEW приходит двумя разными телами. Пока рендер идёт — это
+ * ПУСТОЕ тело (проверено по HAR: `size: 0` при HTTP 200), и его мы обязаны
+ * распознать как «жди дальше». А вот JSON-ошибка при HTTP 200 — это отказ,
+ * и раньше он молча уходил в тот же опрос: пользователь 60 с смотрел на
+ * «Рендер ценников не успел» вместо реального объяснения SEW.
+ *
+ * Возвращает `null`, если это точно не ошибка: пустое тело, HTML (в том числе
+ * частично отрисованный — он JSON не разбирается) и любой JSON без
+ * распознанного текста ошибки. Намеренно снисходителен к форме: HAR снят на
+ * успешной сессии и ни одного ошибочного ответа не содержит, поэтому опираться
+ * приходится на конвенцию конверта, а не на один «канонический» вид.
+ */
+export function sewContentError(body: string): string | null {
+  const raw = String(body ?? '').trim()
+  if (!raw) return null
+  let json: unknown
+  try {
+    json = JSON.parse(raw)
+  } catch {
+    // HTML (или его обрывок) — это рендер, а не ошибка.
+    return null
+  }
+  if (!isRecord(json)) return null
+
+  // Конвенция SEW: responseHeader.errors[].message — тем же разбирается
+  // normalizeSearchResponse, где errors[] трактуется как предупреждения.
+  const header = isRecord(json.responseHeader) ? json.responseHeader : {}
+  const firstErrorMessage = (list: unknown): string => {
+    if (!Array.isArray(list)) return ''
+    for (const item of list) {
+      const message = isRecord(item) ? asString(item.message).trim() : ''
+      if (message) return message
+    }
+    return ''
+  }
+  const candidates = [
+    firstErrorMessage(header.errors),
+    firstErrorMessage(json.errors),
+    asString(json.message).trim(),
+    asString(json.error).trim(),
+    isRecord(json.error) ? asString(json.error.message).trim() : '',
+    asString(json.error_description).trim(),
+    asString(json.detail).trim(),
+    asString(json.reason).trim(),
+  ]
+  return candidates.find((message) => message.length > 0) ?? null
+}
+
 export function isValidTemplateId(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0
 }
@@ -196,6 +248,23 @@ export function isValidPaperColorId(value: unknown): value is number {
 }
 
 export function isValidCopies(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 999
+}
+
+/**
+ * Ширина штрих-кода на ценнике — целое от 1 до 999 (в единицах шаблона).
+ *
+ * Диапазон намеренно тот же, что у `isValidCopies`, но функция отдельная:
+ * это разные величины, и общий валидатор связывает их диапазоны намертво —
+ * расширение копий до 9999 заодно расширило бы штрих, а сужение сломало бы
+ * конфиг у пользователей с широким штрихом.
+ *
+ * ВАЖНО: у SEW нет поля ширины штриха — ни в теле задания печати, ни среди
+ * admin-settings (в HAR за 2026-10-07 проверено: есть только `barcode_template`
+ * = id шаблона). Ключ проходит санитайз и хранится в config.json, но в запрос
+ * пока не уходит. Прежде чем слать его в SEW, нужно найти фактическое поле.
+ */
+export function isValidBarcodeWidth(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 999
 }
 

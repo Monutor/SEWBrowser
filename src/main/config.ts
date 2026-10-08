@@ -89,6 +89,9 @@ export interface SewConfig {
   pricetagPaperColorId: number;
   /** Сколько копий каждого ценника */
   pricetagCopies: number;
+  /** Ширина штрих-кода на ценнике (1..999). У SEW поля ширины нет — ключ
+   *  проходит санитайз и хранится, но в задание печати пока не уходит. */
+  pricetagBarcodeWidth: number;
    /** Автоочистка при выходе: 'none' | 'cache' (только HTTP-кэш) | 'all' (кэш + все хранилища) */
   clearOnExit: 'none' | 'cache' | 'all';
    tabs: NavTab[];
@@ -135,6 +138,7 @@ const DEFAULTS: SewConfig = {
   pricetagTemplateId: 89,
   pricetagPaperColorId: 1,
   pricetagCopies: 1,
+  pricetagBarcodeWidth: 100,
     scanFolders: [],
   maxLiveTabs: 4,
 }

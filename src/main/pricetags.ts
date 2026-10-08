@@ -21,6 +21,7 @@ import {
   isValidTemplateId,
   normalizeSearchResponse,
   pricetagFileName,
+  sewContentError,
   sewErrorMessage,
   type BuildInput,
   type PrepareItem,
@@ -100,6 +101,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** Итог опроса рендера: либо готовое HTML, либо причина, по которой не дождались.
+ *  Ошибка приходит именно «ответом», а не исключением: SEW отдаёт JSON-конверт с
+ *  HTTP 200, и бросать его мимо `describeError` нельзя — тот без `status`
+ *  объявил бы сеть недоступной. */
+type ContentOutcome = { ok: true; html: string } | { ok: false; error: string }
 
 function statusOf(err: unknown): number {
   const status = isRecord(err) ? err.status : undefined
@@ -202,7 +209,7 @@ export function createPricetags(deps: PricetagsDeps): PricetagsService {
 
   /** Забирает HTML ценников: рендер в SEW асинхронный, поэтому опрашиваем с
    *  растущей паузой до RENDER_TIMEOUT_MS. */
-  async function fetchContent(printTaskId: string): Promise<string> {
+  async function fetchContent(printTaskId: string): Promise<ContentOutcome> {
     const deadline = Date.now() + RENDER_TIMEOUT_MS
     let attempt = 0
     let html = ''
@@ -219,9 +226,14 @@ export function createPricetags(deps: PricetagsDeps): PricetagsService {
         if (status === 401 || status === 403) throw err
         html = ''
       }
-      if (html.includes('price-tag')) return html
+      if (html.includes('price-tag')) return { ok: true, html }
+      // Отказ SEW приходит JSON-конвертом с HTTP 200: он не бросается и не
+      // содержит 'price-tag', поэтому раньше опрос молчал до таймаута, и
+      // пользователь получал «Рендер ценников не успел» вместо причины.
+      const sewError = sewContentError(html)
+      if (sewError) return { ok: false, error: `SEW не отдал ценники: ${sewError}` }
     }
-    return ''
+    return { ok: false, error: 'Рендер ценников не успел — попробуйте ещё раз' }
   }
 
   async function build(raw: {
@@ -272,12 +284,15 @@ export function createPricetags(deps: PricetagsDeps): PricetagsService {
       }
       printTaskId = String(taskId)
 
-      const html = await fetchContent(printTaskId)
-      if (!html) {
+      const content = await fetchContent(printTaskId)
+      if (!content.ok) {
+        // Задание закрываем отменой, а не finish: PDF не напечатан, и оставить
+        // задание в очереди SEW — значит забыть о нём навсегда.
         await cancelTask(printTaskId)
         printTaskId = null
-        return { ok: false, error: 'Рендер ценников не успел — попробуйте ещё раз' }
+        return { ok: false, error: content.error }
       }
+      const html = content.html
 
       const pdf = await htmlToPdf(html)
       const name = pricetagFileName(shop, new Date())

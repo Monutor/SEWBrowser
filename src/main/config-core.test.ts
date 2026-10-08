@@ -12,6 +12,7 @@ const DEFAULTS = {
   pricetagTemplateId: 89,
   pricetagPaperColorId: 1,
   pricetagCopies: 1,
+  pricetagBarcodeWidth: 100,
 }
 
 describe('pickPricetagConfig — merge пользовательского config.json', () => {
@@ -55,6 +56,9 @@ describe('pickPricetagConfig — merge пользовательского config
       pricetagTemplateId: 96,
       pricetagPaperColorId: 3,
       pricetagCopies: 999,
+      // намеренно не дефолтное 100: тест обязан доказать, что значение взято
+      // из файла, а не подставлено дефолтом
+      pricetagBarcodeWidth: 250,
     }
     assert.deepEqual(pickPricetagConfig(user, DEFAULTS), user)
   })
@@ -126,7 +130,7 @@ describe('dropInvalidPricetags — патч config:set', () => {
 describe('ключи патч-пути и валидаторы не разъезжаются', () => {
   it('патч-путь обходит ровно те ключи, для которых заведён валидатор', () => {
     // Пока список ключей можно было написать руками, добавление пятого ключа
-    // ценников (задачи 6/9) могло забыться именно в нём: typecheck проходил бы
+    // ценников могло забыться именно в нём: typecheck проходил бы
     // (Record исчерпывающе типизирован, а массив строк — нет), патч-путь
     // config:set молча потерял бы санитайз, и битое значение доехало бы до
     // config.json. Сортировка — сравниваем множества, порядок тут не значит.
@@ -134,8 +138,8 @@ describe('ключи патч-пути и валидаторы не разъез
   })
 
   it('невалидное значение выбрасывается из патча для каждого ключа из VALIDATORS', () => {
-    // null невалиден сразу для всех четырёх проверок: код магазина ждёт строку,
-    // остальные три — число, а null не то и не другое. Ключи берём из
+    // null невалиден сразу для всех пяти проверок: код магазина ждёт строку,
+    // остальные четыре — число, а null не то и не другое. Ключи берём из
     // VALIDATORS, поэтому новый ключ ценников попадает в проверку сам.
     for (const key of Object.keys(VALIDATORS)) {
       assert.deepEqual(dropInvalidPricetags({ [key]: null }), {}, `ключ ${key} должен выбрасываться из патча`)

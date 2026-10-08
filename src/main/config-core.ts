@@ -1,5 +1,5 @@
 /**
- * Санитайз четырёх ключей фичи «Ценники» — вынесен из config.ts в чистый модуль,
+ * Санитайз пяти ключей фичи «Ценники» — вынесен из config.ts в чистый модуль,
  * потому что у них два тихих пути отказа (merge пользовательского config.json и
  * патч от config:set), и покрыть их тестами прямо в config.ts невозможно: тот
  * импортирует electron и под `node --test` физически не грузится. Здесь — ровно
@@ -7,14 +7,19 @@
  * sounds/store-core, inventory/xlsx-core, shared/pricetags-core).
  *
  * Правила валидации здесь НЕ дублируются: `isValidObjectId` живёт в
- * ./downloads/stockReport (его и так видит main), остальные три — в
+ * ./downloads/stockReport (его и так видит main), остальные четыре — в
  * ../shared/pricetags-core, оттуда же их берёт renderer. Если бы проверка
  * конфига проверяла значения по своим правилам, в SEW ушло бы то, что
  * приложение само же считает негодным.
  */
 
 import { isValidObjectId } from './downloads/stockReport.ts'
-import { isValidCopies, isValidPaperColorId, isValidTemplateId } from '../shared/pricetags-core.ts'
+import {
+  isValidBarcodeWidth,
+  isValidCopies,
+  isValidPaperColorId,
+  isValidTemplateId,
+} from '../shared/pricetags-core.ts'
 
 /**
  * Четыре ключа фичи «Ценники» — те же по форме поля, что объявлены в
@@ -32,6 +37,9 @@ export interface PricetagConfig {
   pricetagPaperColorId: number
   /** Сколько копий каждого ценника */
   pricetagCopies: number
+  /** Ширина штрих-кода на ценнике (1..999). У SEW поля ширины нет: ключ проходит
+   *  санитайз и хранится в config.json, но в задание печати пока не уходит. */
+  pricetagBarcodeWidth: number
 }
 
 type PricetagKey = keyof PricetagConfig
@@ -50,27 +58,34 @@ type RawPricetags = Partial<Record<PricetagKey, unknown>>
  *
  * Тип `Record<PricetagKey, …>` исчерпывающий — забытый ключ ценников роняет
  * typecheck. Список ключей, написанный руками, такой защиты не давал: при
- * добавлении пятого ключа (задачи 6/9) компилятор промолчал бы, патч-путь
- * `config:set` молча потерял бы санитайз, и битое значение доехало бы до
- * config.json.
+ * добавлении пятого ключа компилятор промолчал бы, патч-путь `config:set`
+ * молча потерял бы санитайз, и битое значение доехало бы до config.json.
+ *
+ * ВАЖНО: исчерпывающий тип накрывает ТОЛЬКО этот объект. `pickPricetagConfig`
+ * собирает результат литералом от руки, и туда пятый ключ забыть можно было
+ * молча — typecheck остался зелёным, а merge-путь перестал отдавать поле.
+ * Соединяет их тест «merge-путь уводит невалидное значение каждого ключа из
+ * VALIDATORS на дефолт»: он идёт по Object.keys(VALIDATORS), поэтому новый
+ * ключ проверяется сам, без ручного списка.
  */
 export const VALIDATORS: Record<PricetagKey, (value: unknown) => boolean> = {
   pricetagObjectId: isValidObjectId,
   pricetagTemplateId: isValidTemplateId,
   pricetagPaperColorId: isValidPaperColorId,
   pricetagCopies: isValidCopies,
+  pricetagBarcodeWidth: isValidBarcodeWidth,
 }
 
 /**
  * Ключи, которые обходятся в патч-пути, — производная от VALIDATORS, а не
  * рукопись. Каст нужен потому, что Object.keys() типизирован как string[]:
- * ложью он быть не может, ведь литерал выше задаёт ровно четыре свойства, и
+ * ложью он быть не может, ведь литерал выше задаёт ровно пять свойств, и
  * любое другое содержимое объекта уронил бы typecheck на месте.
  */
 export const PRICETAG_KEYS: readonly PricetagKey[] = Object.keys(VALIDATORS) as PricetagKey[]
 
 /**
- * Путь «прочитал config.json»: битое значение любого из четырёх ключей ->
+ * Путь «прочитал config.json»: битое значение любого из пяти ключей ->
  * дефолт из `defaults`. Отдельного `user[key] ?? defaults[key]` здесь
  * недостаточно: в файле лежит не мусор, а вполне разбираемый JSON — просто
  * значение не то (`89` строкой, цвет 4), и такой запрос SEW отвергнет.
@@ -81,6 +96,7 @@ export function pickPricetagConfig(user: RawPricetags, defaults: PricetagConfig)
     pricetagTemplateId: isValidTemplateId(user.pricetagTemplateId) ? user.pricetagTemplateId : defaults.pricetagTemplateId,
     pricetagPaperColorId: isValidPaperColorId(user.pricetagPaperColorId) ? user.pricetagPaperColorId : defaults.pricetagPaperColorId,
     pricetagCopies: isValidCopies(user.pricetagCopies) ? user.pricetagCopies : defaults.pricetagCopies,
+    pricetagBarcodeWidth: isValidBarcodeWidth(user.pricetagBarcodeWidth) ? user.pricetagBarcodeWidth : defaults.pricetagBarcodeWidth,
   }
 }
 
