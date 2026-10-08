@@ -9,22 +9,29 @@
 //     работает с одинаковой паузой между кликами;
 //   - «зависание» — та же единица, но пауза в 2–3 раза длиннее (иногда человек
 //     задумывается). Не настройка, а константа: убирается одним числом;
-//   - отклонение по позиции: null (считаем как есть) / 'skip' (пропустить
-//     позицию) / 'short' (недостача) / 'over' (излишек);
+//   - отклонение по позиции: null (считаем как есть) / 'short' (недостача) /
+//     'over' (излишек). Отклонений ровно два, у каждого своя частота и своя
+//     глубина — обе настраиваются в панели;
 //   - сколько единиц плагин должен внести по позиции с учётом отклонения.
 
 var EMU_TEMPO_MIN_SEC = 1
 var EMU_TEMPO_MAX_SEC = 3
-var EMU_ERROR_DEFAULT_PCT = 3
 
 // Границы скорости как у обычного темпа: быстрее 0,4 с SEW не успевает принять
 // ШК, а больше 10 с — уже не автовнос.
 var EMU_SPEED_FLOOR_SEC = 0.4
 var EMU_SPEED_CEIL_SEC = 10
 
-// Насколько глубоко врезаемся: недостача 1–3 единицы, излишек 1–2.
-var EMU_SHORT_MAX = 3
-var EMU_OVER_MAX = 2
+// Частота отклонений: доля позиций ЛП, посчитанных с расхождением, %.
+var EMU_SHORT_DEFAULT_PCT = 1
+var EMU_OVER_DEFAULT_PCT = 1
+var EMU_PCT_CEIL = 100
+
+// Глубина отклонения: на сколько единиц в позиции ошибается человек.
+var EMU_SHORT_MAX_DEFAULT = 3
+var EMU_OVER_MAX_DEFAULT = 2
+var EMU_DEPTH_MIN = 1
+var EMU_DEPTH_MAX = 99
 
 // Шанс «зависания» на одной позиции.
 var EMU_STALL_PCT = 5
@@ -67,32 +74,40 @@ function emuStallFactor(pct, rnd) {
   return EMU_STALL_FACTOR_MIN + (EMU_STALL_FACTOR_MAX - EMU_STALL_FACTOR_MIN) * r()
 }
 
+/** Частота отклонения, % позиций: зажим 0–100, мусор → дефолт. */
+function emuPct(value, fallback) {
+  return emuClamp(emuNum(value, fallback), 0, EMU_PCT_CEIL)
+}
+
+/** Глубина отклонения, единиц: целое 1..EMU_DEPTH_MAX, мусор → дефолт. */
+function emuDepth(value, fallback) {
+  return Math.round(emuClamp(emuNum(value, fallback), EMU_DEPTH_MIN, EMU_DEPTH_MAX))
+}
+
 /**
- * Тип отклонения для одной позиции: 'skip' | 'short' | 'over' | null.
- * Один бросок на позицию, а не на единицу: «частота ошибок, %» читается как
- * «доля позиций, посчитанных с расхождением». Типы — 50/25/25.
+ * Тип отклонения для одной позиции: 'short' | 'over' | null.
+ * Частоты независимы: сперва бросок на недостачу, и только если не выпало — на
+ * излишек. На позиции оба шанса складываются (1 % + 1 % дают 1,99 % позиций с
+ * расхождением), зато каждый процент читается буквально: «недостача 2 %» — это
+ * ровно каждая 50-я позиция посчитана с недостачей.
  */
-function emuRoll(pct, rnd) {
+function emuRoll(shortPct, overPct, rnd) {
   var r = rnd || Math.random
-  var p = emuClamp(emuNum(pct, 0), 0, 100)
-  if (p <= 0) return null
-  if (r() * 100 >= p) return null
-  var pick = r()
-  if (pick < 0.5) return 'skip'
-  if (pick < 0.75) return 'short'
-  return 'over'
+  if (r() * 100 < emuPct(shortPct, 0)) return 'short'
+  if (r() * 100 < emuPct(overPct, 0)) return 'over'
+  return null
 }
 
 /**
  * Сколько единиц плагин должен внести по позиции. remaining — остаток минус
  * уже посчитанное в ЛП. dev === null — считаем всё, как без эмуляции.
+ * depth — своя глубина для недостачи/излишка, зажимается на 1..EMU_DEPTH_MAX.
  */
-function emuTarget(remaining, dev, rnd) {
+function emuTarget(remaining, dev, depth, rnd) {
   var r = rnd || Math.random
   var base = Math.max(0, Math.round(emuNum(remaining, 0)))
-  if (dev === 'skip') return 0
-  if (dev === 'short') return Math.max(0, base - (1 + Math.floor(r() * EMU_SHORT_MAX)))
-  if (dev === 'over') return base + 1 + Math.floor(r() * EMU_OVER_MAX)
+  if (dev === 'short') return Math.max(0, base - (1 + Math.floor(r() * emuDepth(depth, EMU_SHORT_MAX_DEFAULT))))
+  if (dev === 'over') return base + 1 + Math.floor(r() * emuDepth(depth, EMU_OVER_MAX_DEFAULT))
   return base
 }
 
@@ -100,7 +115,6 @@ function emuTarget(remaining, dev, rnd) {
 function emuDescribe(counts) {
   var src = counts && typeof counts === 'object' ? counts : {}
   var parts = []
-  if (src.skip) parts.push('пропущено позиций: ' + src.skip)
   if (src.short) parts.push('недостача: ' + src.short)
   if (src.over) parts.push('излишек: ' + src.over)
   return parts.join(', ')

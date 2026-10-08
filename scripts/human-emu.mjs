@@ -10,9 +10,10 @@ import { readFileSync } from 'node:fs'
 const SRC = readFileSync(new URL('../features/sew-inventory/core.js', import.meta.url), 'utf8')
 const api = new Function(
   SRC +
-    '\nreturn { EMU_TEMPO_MIN_SEC, EMU_TEMPO_MAX_SEC, EMU_ERROR_DEFAULT_PCT, EMU_SPEED_FLOOR_SEC,' +
-    ' EMU_SPEED_CEIL_SEC, EMU_SHORT_MAX, EMU_OVER_MAX, EMU_STALL_PCT,' +
-    ' emuNum, emuClamp, emuRandSec, emuStallFactor, emuRoll, emuTarget, emuDescribe }'
+    '\nreturn { EMU_TEMPO_MIN_SEC, EMU_TEMPO_MAX_SEC, EMU_SHORT_DEFAULT_PCT, EMU_OVER_DEFAULT_PCT,' +
+    ' EMU_PCT_CEIL, EMU_SPEED_FLOOR_SEC, EMU_SPEED_CEIL_SEC, EMU_SHORT_MAX_DEFAULT, EMU_OVER_MAX_DEFAULT,' +
+    ' EMU_DEPTH_MIN, EMU_DEPTH_MAX, EMU_STALL_PCT,' +
+    ' emuNum, emuClamp, emuPct, emuDepth, emuRandSec, emuStallFactor, emuRoll, emuTarget, emuDescribe }'
 )()
 
 test('emuNum понимает запятую как десятичный разделитель и откатывается к дефолту', () => {
@@ -48,69 +49,100 @@ test('emuStallFactor: без шанса — единица, при шансе �
   assert.equal(api.emuStallFactor(5, () => 0.9), 1)
 })
 
-test('emuRoll: 0 % — без отклонений, 100 % — тип по кубику', () => {
-  assert.equal(api.emuRoll(0, () => 0), null)
-  assert.equal(api.emuRoll(0, () => 0.5), null)
-  assert.equal(api.emuRoll(100, () => 0.1), 'skip')
-  assert.equal(api.emuRoll(100, () => 0.6), 'short')
-  assert.equal(api.emuRoll(100, () => 0.8), 'over')
-  // Ниже порога — как будто отклонений нет.
-  assert.equal(api.emuRoll(3, () => 0.99), null)
+test('emuPct и emuDepth зажимают мусор и границы', () => {
+  assert.equal(api.emuPct(undefined, api.EMU_SHORT_DEFAULT_PCT), api.EMU_SHORT_DEFAULT_PCT)
+  assert.equal(api.emuPct('мусор', 7), 7)
+  assert.equal(api.emuPct(-5, 7), 0)
+  assert.equal(api.emuPct(500, 7), api.EMU_PCT_CEIL)
+  assert.equal(api.emuDepth(undefined, api.EMU_SHORT_MAX_DEFAULT), api.EMU_SHORT_MAX_DEFAULT)
+  assert.equal(api.emuDepth(0, 3), api.EMU_DEPTH_MIN)
+  assert.equal(api.emuDepth(1000, 2), api.EMU_DEPTH_MAX)
+  // Глубина всегда целая — иначе Math.floor(r()*дробь) давал бы плавающий сдвиг.
+  assert.equal(api.emuDepth(2.6, 3), 3)
 })
 
-test('частота отклонений держится заданного процента', () => {
-  let hits = 0
-  for (let i = 0; i < 20000; i++) {
-    if (api.emuRoll(3) !== null) hits++
+test('emuRoll: 0 % у обоих — без отклонений, 100 % — всегда отклонение', () => {
+  assert.equal(api.emuRoll(0, 0, () => 0), null)
+  assert.equal(api.emuRoll(0, 0, () => 0.5), null)
+  assert.equal(api.emuRoll(100, 0, () => 0.1), 'short')
+  assert.equal(api.emuRoll(0, 100, () => 0.1), 'over')
+  assert.equal(api.emuRoll(100, 100, () => 0.1), 'short')
+  // Ниже порога — как будто отклонений нет.
+  assert.equal(api.emuRoll(3, 3, () => 0.99), null)
+})
+
+test('частоты недостачи и излишка независимы', () => {
+  let short = 0
+  let over = 0
+  for (let i = 0; i < 40000; i++) {
+    const dev = api.emuRoll(1, 1)
+    if (dev === 'short') short++
+    if (dev === 'over') over++
   }
-  const pct = (hits / 20000) * 100
-  assert.ok(pct > 2.4 && pct < 3.6, 'доля отклонений ' + pct.toFixed(2) + ' %, ожидалось ~3 %')
+  const shortPct = (short / 40000) * 100
+  const overPct = (over / 40000) * 100
+  assert.ok(shortPct > 0.9 && shortPct < 1.1, 'доля недостачи ' + shortPct.toFixed(2) + ' %, ожидалось ~1 %')
+  assert.ok(overPct > 0.85 && overPct < 1.05, 'доля излишка ' + overPct.toFixed(2) + ' %, ожидалось ~1 %')
+  // Ноль у одного вида не выключает другой.
+  let onlyOver = 0
+  for (let i = 0; i < 20000; i++) {
+    if (api.emuRoll(0, 2) === 'over') onlyOver++
+  }
+  const onlyOverPct = (onlyOver / 20000) * 100
+  assert.ok(onlyOverPct > 1.8 && onlyOverPct < 2.2, 'доля излишка ' + onlyOverPct.toFixed(2) + ' %, ожидалось ~2 %')
 })
 
 test('emuTarget: без отклонения — весь остаток', () => {
   assert.equal(api.emuTarget(7, null), 7)
-  assert.equal(api.emuTarget(7, null, () => 0), 7)
+  assert.equal(api.emuTarget(7, null, 3, () => 0), 7)
   assert.equal(api.emuTarget(0, null), 0)
   assert.equal(api.emuTarget(-3, null), 0)
 })
 
-test('emuTarget: пропуск — ноль, недостача — минус 1–3, излишек — плюс 1–2', () => {
-  assert.equal(api.emuTarget(7, 'skip', () => 0), 0)
-  assert.equal(api.emuTarget(7, 'short', () => 0), 6)
-  assert.equal(api.emuTarget(7, 'short', () => 0.99), 4)
-  assert.equal(api.emuTarget(7, 'over', () => 0), 8)
-  assert.equal(api.emuTarget(7, 'over', () => 0.99), 9)
+test('emuTarget: недостача — минус 1..глубина, излишек — плюс 1..глубина', () => {
+  assert.equal(api.emuTarget(7, 'short', 3, () => 0), 6)
+  assert.equal(api.emuTarget(7, 'short', 3, () => 0.99), 4)
+  assert.equal(api.emuTarget(7, 'over', 2, () => 0), 8)
+  assert.equal(api.emuTarget(7, 'over', 2, () => 0.99), 9)
   // Остаток меньше самой недостачи — уходим в ноль, а не в минус.
-  assert.equal(api.emuTarget(2, 'short', () => 0.5), 0)
-  assert.equal(api.emuTarget(1, 'short', () => 0), 0)
+  assert.equal(api.emuTarget(2, 'short', 3, () => 0.5), 0)
+  assert.equal(api.emuTarget(1, 'short', 3, () => 0), 0)
+})
+
+test('глубина отклонения настраивается отдельно для каждого вида', () => {
+  assert.equal(api.emuTarget(10, 'short', 1, () => 0.99), 9)
+  assert.equal(api.emuTarget(10, 'short', 5, () => 0.99), 5)
+  assert.equal(api.emuTarget(10, 'over', 1, () => 0.99), 11)
+  assert.equal(api.emuTarget(10, 'over', 5, () => 0.99), 15)
+  // Ноль в настройке поднимается до минимума (отклонение в 0 единиц не бывает),
+  // а мусор берёт дефолт — настройка не может тихо отключить отклонения.
+  assert.equal(api.emuTarget(10, 'short', 0, () => 0.99), 10 - 1)
+  assert.equal(api.emuTarget(10, 'over', 'мусор', () => 0.99), 10 + api.EMU_OVER_MAX_DEFAULT)
 })
 
 test('emuDescribe собирает итоги и молчит, когда отклонений не было', () => {
-  assert.equal(api.emuDescribe({ skip: 0, short: 0, over: 0 }), '')
+  assert.equal(api.emuDescribe({ short: 0, over: 0 }), '')
   assert.equal(api.emuDescribe(null), '')
-  assert.equal(
-    api.emuDescribe({ skip: 2, short: 1, over: 3 }),
-    'пропущено позиций: 2, недостача: 1, излишек: 3'
-  )
+  assert.equal(api.emuDescribe({ short: 1, over: 3 }), 'недостача: 1, излишек: 3')
 })
 
 test('модельный прогон: план сходится с остатками в границах отклонений', () => {
   const rows = []
   for (let i = 0; i < 300; i++) rows.push({ sku: 'SKU-' + i, qty: 4, counted: 1 })
-  const deviations = { skip: 0, short: 0, over: 0 }
+  const deviations = { short: 0, over: 0 }
   let planned = 0
   let real = 0
   for (const row of rows) {
     const remaining = Math.max(0, row.qty - row.counted)
-    const dev = api.emuRoll(3)
+    const dev = api.emuRoll(3, 3)
     if (dev) deviations[dev]++
-    planned += api.emuTarget(remaining, dev)
+    planned += api.emuTarget(remaining, dev, dev === 'over' ? api.EMU_OVER_MAX_DEFAULT : api.EMU_SHORT_MAX_DEFAULT)
     real += remaining
   }
-  const totalDev = deviations.skip + deviations.short + deviations.over
+  const totalDev = deviations.short + deviations.over
   assert.ok(totalDev > 0, 'на 300 позициях при 3 % отклонения должны случиться')
-  // Пропуск стоит все 3 единицы позиции, недостача — до 3, излишек добавляет до 2.
-  assert.ok(planned >= real - deviations.skip * 3 - deviations.short * api.EMU_SHORT_MAX)
-  assert.ok(planned <= real + deviations.over * api.EMU_OVER_MAX)
+  // Недостача стоит до 3 единиц позиции, излишек добавляет до 2.
+  assert.ok(planned >= real - deviations.short * api.EMU_SHORT_MAX_DEFAULT)
+  assert.ok(planned <= real + deviations.over * api.EMU_OVER_MAX_DEFAULT)
   assert.equal(api.emuDescribe(deviations) !== '', true)
 })

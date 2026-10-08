@@ -213,7 +213,7 @@ async function answerScans(tab: ShellTab, req: ScansRequest): Promise<void> {
  */
 async function answerInventory(
   tab: ShellTab,
-  req: { id: string; type?: string; zone?: string; skus?: string[] },
+  req: { id: string; type?: string; zone?: string; skus?: string[]; manualPath?: string },
 ): Promise<void> {
   let result: unknown
   try {
@@ -221,7 +221,8 @@ async function answerInventory(
     if (req.type === 'pick') {
       result = await window.shell.pickStockFile()
     } else {
-      result = await window.shell.readStockForZone(req.zone ?? '', req.skus ?? [])
+      // manualPath — ручной режим плагина: main читает файл с диска, а не качает.
+      result = await window.shell.readStockForZone(req.zone ?? '', req.skus ?? [], req.manualPath)
     }
   } catch (err) {
     console.warn('[inventory-bridge] readStockForZone failed:', err)

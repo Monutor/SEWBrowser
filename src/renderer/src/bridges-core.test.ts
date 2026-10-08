@@ -105,13 +105,22 @@ describe('asScansReqs', () => {
 describe('asInvReqs', () => {
   it('чистит skus до строк', () => {
     assert.deepEqual(asInvReqs([{ id: 'a', zone: 'z', skus: ['1', 2, null] }]), [
-      { id: 'a', type: undefined, zone: 'z', skus: ['1'] },
+      { id: 'a', type: undefined, zone: 'z', skus: ['1'], manualPath: undefined },
     ])
   })
   it('переносит type для pick-запроса', () => {
     assert.deepEqual(asInvReqs([{ id: 'a', type: 'pick' }]), [
-      { id: 'a', type: 'pick', zone: undefined, skus: [] },
+      { id: 'a', type: 'pick', zone: undefined, skus: [], manualPath: undefined },
     ])
+  })
+  it('переносит manualPath — ручной режим читает файл с диска', () => {
+    assert.deepEqual(asInvReqs([{ id: 'a', zone: 'z', skus: [], manualPath: 'C:\\ost.xlsx' }]), [
+      { id: 'a', type: undefined, zone: 'z', skus: [], manualPath: 'C:\\ost.xlsx' },
+    ])
+  })
+  it('пустой manualPath = авто-режим (качаем из SEW)', () => {
+    const [req] = asInvReqs([{ id: 'a', manualPath: '' }])
+    assert.equal(req.manualPath, undefined)
   })
   it('мусор в zone даёт undefined, а не мусор', () => {
     const [req] = asInvReqs([{ id: 'a', zone: 7 }])

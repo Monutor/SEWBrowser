@@ -1,13 +1,20 @@
 /* Панель «Автоподсчёт ЛП». Правый нижний угол, поверх страницы SEW.
    Размеры — компактные, но заметные: панель открывают пальцем/мышью в
-   перерыве между подсчётом, а не в первый раз. */
+   перерыве между подсчётом, а не в первый раз.
+   Колонка flex: шапка прижата к верху, тело прокручивается — иначе на
+   маленьком мониторе блок уезжает за верхний край экрана и настройки
+   (файл остатков, галки, кнопка «Собрать состав») становятся недоступны. */
 
 .sew-inv-panel {
   position: fixed;
   right: 16px;
   bottom: 16px;
   z-index: 2147483000;
+  display: flex;
+  flex-direction: column;
   width: 320px;
+  /* Панель растёт вверх от нижнего края, но не выше окна */
+  max-height: calc(100vh - 32px);
   font-family: Roboto, "Segoe UI", Arial, sans-serif;
   font-size: 13px;
   line-height: 1.35;
@@ -23,6 +30,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  /* Шапка не сжимается и не уезжает при прокрутке тела */
+  flex: 0 0 auto;
   padding: 8px 10px;
   background: #2b3a55;
   color: #ffffff;
@@ -41,12 +50,19 @@
   gap: 6px;
 }
 
-/* Панель скрыта: по умолчанию и по кнопке в тулбаре оболочки. */
-.sew-inv-hidden {
+/* Панель скрыта: по умолчанию и по кнопке в тулбаре оболочки. Селектор из двух
+   классов — иначе author display:flex выше перебил бы скрытие. */
+.sew-inv-panel.sew-inv-hidden {
   display: none;
 }
 
 .sew-inv-body {
+  /* min-height:0 — без него flex-потомок не даёт телу сжаться до прокрутки,
+     и панель снова уезжает за верхний край окна */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 10px;
 }
 
@@ -219,6 +235,18 @@
   background: #ffffff;
   border: 1px solid #c8cede;
   border-radius: 6px;
+}
+
+/* Авто-режим: путь задан, но не используется. Поле остаётся редактируемым —
+   приглушаем цветом, а не disabled, иначе текст нельзя даже выделить. */
+.sew-inv-zone-idle {
+  color: #6b7280;
+  background: #f3f5f9;
+  border-color: #dde2ec;
+}
+
+.sew-inv-zone-idle::placeholder {
+  color: #98a0ad;
 }
 
 /* Прогресс автовноса: цифры крупнее, чтобы читались с расстояния. */

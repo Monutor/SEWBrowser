@@ -39,8 +39,13 @@ var TEMPO_MAX_SEC = 10
 // принять введённое значение. Этот кусок темпа не сокращаем.
 var CONFIRM_MIN_MS = 300
   var DIALOG_WAIT_MS = 8000
-  var UNIT_ATTEMPTS = 2
-  var SHELF_WAIT_MS = 6000
+var UNIT_ATTEMPTS = 2
+   var SHELF_WAIT_MS = 6000
+   // Оценка «осталось» меряется по последним замерам темпа: 20 единиц — чтобы
+   // усталость и зависания не дёргали цифру, но и не копили в оценку минуты
+   // перерыва. Замер длиннее 30 с — это не работа, а пауза или уход: игнор.
+   var TEMPO_SAMPLES = 20
+   var TEMPO_SAMPLE_MAX_MS = 30000
 
   var state = {
     lp: null,
@@ -52,12 +57,17 @@ var CONFIRM_MIN_MS = 300
     tempoSec: TEMPO_DEFAULT_SEC,
     /** Эмуляция человека: разброс темпа и намеренные отклонения в подсчёте.
      *  Расчёты — в core.js (склеивается перед этим файлом), границы и дефолты
-     *  оттуда же: EMU_TEMPO_MIN_SEC, EMU_TEMPO_MAX_SEC, EMU_ERROR_DEFAULT_PCT. */
+     *  оттуда же: EMU_TEMPO_MIN_SEC, EMU_TEMPO_MAX_SEC, EMU_SHORT_DEFAULT_PCT… */
     human: {
       on: false,
       minSec: EMU_TEMPO_MIN_SEC,
       maxSec: EMU_TEMPO_MAX_SEC,
-      errorPct: EMU_ERROR_DEFAULT_PCT
+      /** Доля позиций с недостачей и излишком, % — у каждого своя */
+      shortPct: EMU_SHORT_DEFAULT_PCT,
+      overPct: EMU_OVER_DEFAULT_PCT,
+      /** Глубина отклонения, единиц — у недостачи и излишка своя */
+      shortMax: EMU_SHORT_MAX_DEFAULT,
+      overMax: EMU_OVER_MAX_DEFAULT
     },
     /** Зона по номеру ЛП: { '924147': 'Торговый зал' }. После старта ЛП шапка с
      *  «Зоной ЛП» скрывается, а ЛП может длиться часами — запоминаем. */
@@ -141,8 +151,17 @@ var CONFIRM_MIN_MS = 300
       state.human.minSec = state.human.maxSec
       state.human.maxSec = swap
     }
-    var pct = parseFloat(String(src.errorPct === undefined ? '' : src.errorPct).replace(',', '.'))
-    state.human.errorPct = isFinite(pct) ? Math.min(100, Math.max(0, pct)) : EMU_ERROR_DEFAULT_PCT
+    // Настройки из старой версии плагина: один errorPct на пропуск/недостачу/
+    // излишек в пропорции 50/25/25. Пропуски убрали, оставшиеся две четверти
+    // становится отдельными частотами — иначе настройка молча пропала бы.
+    var legacy = null
+    if (src.shortPct === undefined && src.overPct === undefined && src.errorPct !== undefined) {
+      legacy = Math.max(0, Math.min(100, emuNum(src.errorPct, EMU_SHORT_DEFAULT_PCT * 4) / 4))
+    }
+    state.human.shortPct = emuPct(src.shortPct, legacy === null ? EMU_SHORT_DEFAULT_PCT : legacy)
+    state.human.overPct = emuPct(src.overPct, legacy === null ? EMU_OVER_DEFAULT_PCT : legacy)
+    state.human.shortMax = emuDepth(src.shortMax, EMU_SHORT_MAX_DEFAULT)
+    state.human.overMax = emuDepth(src.overMax, EMU_OVER_MAX_DEFAULT)
     return state.human
   }
 
@@ -159,7 +178,10 @@ var CONFIRM_MIN_MS = 300
           on: state.human.on,
           minSec: state.human.minSec,
           maxSec: state.human.maxSec,
-          errorPct: state.human.errorPct
+          shortPct: state.human.shortPct,
+          overPct: state.human.overPct,
+          shortMax: state.human.shortMax,
+          overMax: state.human.overMax
         }
       })
     } catch (e) {
@@ -176,7 +198,10 @@ var CONFIRM_MIN_MS = 300
     if (els.emuBox) els.emuBox.hidden = !state.human.on
     if (els.emuMin) els.emuMin.value = String(state.human.minSec)
     if (els.emuMax) els.emuMax.value = String(state.human.maxSec)
-    if (els.emuErr) els.emuErr.value = String(state.human.errorPct)
+    if (els.emuShortPct) els.emuShortPct.value = String(state.human.shortPct)
+    if (els.emuShortMax) els.emuShortMax.value = String(state.human.shortMax)
+    if (els.emuOverPct) els.emuOverPct.value = String(state.human.overPct)
+    if (els.emuOverMax) els.emuOverMax.value = String(state.human.overMax)
   }
 
   /** Переписать настройки эмуляции из полей (change) и запомнить. */
@@ -185,7 +210,10 @@ var CONFIRM_MIN_MS = 300
       on: state.human.on,
       minSec: els.emuMin ? els.emuMin.value : state.human.minSec,
       maxSec: els.emuMax ? els.emuMax.value : state.human.maxSec,
-      errorPct: els.emuErr ? els.emuErr.value : state.human.errorPct
+      shortPct: els.emuShortPct ? els.emuShortPct.value : state.human.shortPct,
+      shortMax: els.emuShortMax ? els.emuShortMax.value : state.human.shortMax,
+      overPct: els.emuOverPct ? els.emuOverPct.value : state.human.overPct,
+      overMax: els.emuOverMax ? els.emuOverMax.value : state.human.overMax
     })
     saveHuman()
     renderHumanUi()
@@ -222,13 +250,27 @@ var CONFIRM_MIN_MS = 300
     return typed ? els.zoneInput.value.trim() : ''
   }
 
-  /** Синхронировать UI режима остатков: значение поля и его заблокированность. */
+  /** Синхронировать UI режима остатков: значение поля и подсказки к нему. */
   function renderStockUi() {
     if (!els.stockPathInput) return
-    // Включено «Скачивать автоматически» → путь не нужен, поле заблокировано.
     var auto = state.stockMode === STOCK_MODE_AUTO
     els.stockAuto.checked = auto
-    els.stockPathInput.disabled = auto
+    // Поле остаётся доступным в обоих режимах: путь задают заранее, а галку
+    // снимают уже на ЛП. Приглушаем цветом, а не disabled — заблокированный
+    // input не даёт даже выделить текст, а путь в авто-режиме всё равно нужен.
+    els.stockPathInput.classList.toggle('sew-inv-zone-idle', auto)
+    els.stockPathInput.title = auto
+      ? 'Файл остатков с диска. Пока включено «Скачивать автоматически», он не используется'
+      : 'Путь к файлу остатков — читается вместо скачивания из SEW'
+    els.stockPathInput.placeholder = auto
+      ? (state.stockPath ? 'путь есть, но не используется' : 'не задан — скачаем из SEW')
+      : 'не задан — укажи путь или нажми «…»'
+    // Кнопку выбора в авто-режиме блокируем: раз файл всё равно не читается,
+    // диалог только путает. Путь при этом можно вписать руками — поле живое.
+    els.stockBrowse.disabled = auto
+    els.stockBrowse.title = auto
+      ? 'Пока включено «Скачивать автоматически», файл не используется — снимите галку'
+      : 'Выбрать файл остатков на диске'
     // Путь остаётся в памяти даже на авто-режиме: переключатель вернёт его назад.
     if (els.stockPathInput.value !== state.stockPath) els.stockPathInput.value = state.stockPath || ''
   }
@@ -468,8 +510,9 @@ function lpNumberFromUrl() {
 /**
  * Как вбивать ШК полки. В торговом зале товар один на всю полку, поэтому ШК
  * полки вбивается ОДИН раз на лист подсчёта. На складе товар лежит в своей
- * ячейке, и там полка идёт перед каждым товаром (решение от 01.10.2026:
- * сначала разбираемся с ТЗ, склад — потом).
+ * ячейке, и там ШК полки вбивается при смене ячейки: пока товар идёт с той же
+ * полки, SEW помнит её сам (решение от 01.10.2026: сначала разбираемся с ТЗ,
+ * склад — потом).
  */
 function isTradingHall(zone) {
   return normText(zone).indexOf('торговый зал') !== -1
@@ -743,7 +786,7 @@ function shelfBarcodeOf(row) {
 
     // Режим подгрузки остатков: авто (скачиваем из SEW) или ручной (файл с диска).
     // Путь к файлу — в строке с кнопкой «…», а тумблер «Скачивать автоматически»
-    // ниже: включён → путь не нужен и поле заблокировано; выключён → юзер задаёт файл.
+    // ниже: путь задают в любом режиме (заранее), а галка решает, что с ним будет.
     var stockRow = el('div', 'sew-inv-zonerow')
     stockRow.appendChild(el('span', 'sew-inv-zonelabel', 'Файл остатков'))
     els.stockPathInput = el('input', 'sew-inv-zone')
@@ -751,6 +794,15 @@ function shelfBarcodeOf(row) {
     els.stockPathInput.placeholder = 'не задан — скачаем из SEW'
     els.stockPathInput.autocomplete = 'off'
     els.stockPathInput.title = 'Путь к файлу остатков для ручного режима'
+    // Путь можно и вбить руками, и выбрать кнопкой «…» — запоминаем оба.
+    els.stockPathInput.addEventListener('input', function () {
+      var path = els.stockPathInput.value.trim()
+      if (path === state.stockPath) return
+      state.stockPath = path
+      saveStockPath(path)
+      // Подсказка в поле зависит от режима, поэтому перерисовываем её же.
+      renderStockUi()
+    })
     stockRow.appendChild(els.stockPathInput)
     els.stockBrowse = el('button', 'sew-inv-btn sew-inv-browse', '…')
     els.stockBrowse.type = 'button'
@@ -796,10 +848,21 @@ function shelfBarcodeOf(row) {
     var emuMax = emuNumberRow('темп до', EMU_SPEED_FLOOR_SEC, EMU_SPEED_CEIL_SEC, '0.1', 'Максимальная пауза между единицами, сек')
     els.emuMax = emuMax.input
     els.emuBox.appendChild(emuMax.row)
-    var emuErr = emuNumberRow('ошибок, %', 0, 100, '1', 'Доля позиций, посчитанных с расхождением: пропуск, недостача, излишек')
-    els.emuErr = emuErr.input
-    els.emuBox.appendChild(emuErr.row)
-    els.emuBox.appendChild(el('div', 'sew-inv-note', 'периодически «зависает», изредка пропускает позицию или ошибается на 1–3 шт'))
+    // Ошибки только двух видов — недостача и излишек, у каждого своя частота
+    // («% позиций») и своя глубина («макс. ед.»).
+    var emuShortPct = emuNumberRow('недостача, %', 0, EMU_PCT_CEIL, '0.1', 'Доля позиций, посчитанных с недостачей')
+    els.emuShortPct = emuShortPct.input
+    els.emuBox.appendChild(emuShortPct.row)
+    var emuShortMax = emuNumberRow('недостача, ед.', EMU_DEPTH_MIN, EMU_DEPTH_MAX, '1', 'На сколько единиц максимум недосчитать по позиции')
+    els.emuShortMax = emuShortMax.input
+    els.emuBox.appendChild(emuShortMax.row)
+    var emuOverPct = emuNumberRow('излишек, %', 0, EMU_PCT_CEIL, '0.1', 'Доля позиций, посчитанных с излишком')
+    els.emuOverPct = emuOverPct.input
+    els.emuBox.appendChild(emuOverPct.row)
+    var emuOverMax = emuNumberRow('излишек, ед.', EMU_DEPTH_MIN, EMU_DEPTH_MAX, '1', 'На сколько единиц максимум пересчитать по позиции')
+    els.emuOverMax = emuOverMax.input
+    els.emuBox.appendChild(emuOverMax.row)
+    els.emuBox.appendChild(el('div', 'sew-inv-note', 'периодически «зависает», изредка недосчитывает или пересчитывает позицию'))
     body.appendChild(els.emuBox)
 
     var actions = el('div', 'sew-inv-actions')
@@ -831,6 +894,9 @@ function shelfBarcodeOf(row) {
     pause.addEventListener('click', function () {
       if (!state.run) return
       state.run.paused = !state.run.paused
+      // Пауза не должна попасть в оценку темпа: сбрасываем точку отсчёта, иначе
+      // первая единица после перерыва даст «замер» в минуты.
+      state.run.lastUnitAt = 0
       pause.textContent = state.run.paused ? 'Продолжить' : 'Пауза'
       updateProgress()
     })
@@ -854,6 +920,9 @@ function shelfBarcodeOf(row) {
 
     // Галочка и блок доп. настроек — из уже загруженного state.human.
     renderHumanUi()
+    // Режим остатков — тоже: сюда может прийти после настроек, а поле с кнопкой
+    // выбора к этому моменту уже в DOM.
+    renderStockUi()
 
     panel.appendChild(body)
     document.body.appendChild(panel)
@@ -936,14 +1005,14 @@ function shelfBarcodeOf(row) {
     }
     // Ручной режим: без выбранного файла нечего читать — просим юзера.
     if (state.stockMode === STOCK_MODE_MANUAL && !state.stockPath) {
-      setStatus('выбери файл остатков на диске через «…» (тумблер «Скачивать автоматически» вниз)')
+      setStatus('файл остатков не задан — впиши путь в поле «Файл остатков» или выбери кнопкой «…» (тумблер «Скачивать автоматически» вниз)')
       return
     }
     state.busy = true
     els.collect.disabled = true
-    setStatus('качаю остатки и разбираю ЛП…')
+    var manualPath = state.stockMode === STOCK_MODE_MANUAL ? state.stockPath : undefined
+    setStatus(manualPath ? 'читаю файл остатков и разбираю ЛП…' : 'качаю остатки и разбираю ЛП…')
     try {
-      var manualPath = state.stockMode === STOCK_MODE_MANUAL ? state.stockPath : undefined
       var answer = await requestStock(zone, [], manualPath)
       if (!answer || !answer.ok) {
         setStatus('остатки не получились: ' + ((answer && answer.error) || 'нет ответа'))
@@ -969,10 +1038,12 @@ function shelfBarcodeOf(row) {
       els.start.disabled = false
       var shelfNote = isTradingHall(zoneForQueue)
         ? (sheetShelf ? ', ШК полки ' + sheetShelf + ' один раз' : ', ШК полки нет в остатках')
-        : ', ШК полки перед каждым товаром'
-      setStatus('готово: к вносу ' + preview.total + ' шт' + shelfNote +
+        : ', ШК полки вбивается при смене ячейки'
+      var collectEta = preview.total * plannedPerUnitSec()
+      setStatus('готово: к вносу ' + preview.total + ' шт по ' + preview.items.length + ' позициям' + shelfNote +
         (preview.skipped.length ? ', без ШК ' + preview.skipped.length : '') +
-        ' (~' + formatEta(preview.total * state.tempoSec) + ' при темпе ' + state.tempoSec + ' с/шт)')
+        ' (~' + formatEta(collectEta) + ', финиш около ' + formatClock(collectEta) +
+        ' при темпе ' + plannedPerUnitSec() + ' с/шт)')
       saveLastRun(state.lp, summary)
     } catch (err) {
       setStatus('ошибка сбора: ' + ((err && err.message) || err))
@@ -1185,7 +1256,7 @@ function shelfBarcodeOf(row) {
     var items = []
     var skipped = []
     var total = 0
-    var deviations = { skip: 0, short: 0, over: 0 }
+    var deviations = { short: 0, over: 0 }
     var emu = state.human.on
     for (var i = 0; i < summary.matched.length; i++) {
       var item = summary.matched[i]
@@ -1195,8 +1266,8 @@ function shelfBarcodeOf(row) {
         skipped.push({ sku: item.sku, reason: 'нет ШК' })
         continue
       }
-      var dev = emu ? emuRoll(state.human.errorPct) : null
-      var target = emuTarget(remaining, dev)
+      var dev = emu ? emuRoll(state.human.shortPct, state.human.overPct) : null
+      var target = emuTarget(remaining, dev, dev === 'over' ? state.human.overMax : state.human.shortMax)
       if (dev) deviations[dev]++
       items.push({
         sku: item.sku,
@@ -1231,22 +1302,77 @@ function shelfBarcodeOf(row) {
     return fallback
   }
 
-  function formatEta(seconds) {
-    if (!isFinite(seconds) || seconds <= 0) return '—'
-    var minutes = Math.floor(seconds / 60)
-    var rest = Math.round(seconds % 60)
-    return minutes ? minutes + ' мин ' + rest + ' с' : rest + ' с'
-  }
+  /**
+ * Время по-человечески: секунды → минуты → часы → дни. Раньше минуты выдавались
+ * голым числом, и на большой лист подсчёта статус выглядел как «осталось
+ * 50000 мин» — цифра верная, но ни о чём не говорит.
+ */
+function formatEta(seconds) {
+  if (!isFinite(seconds) || seconds <= 0) return '—'
+  var total = Math.round(seconds)
+  if (total < 60) return total + ' с'
+  var minutes = Math.round(total / 60)
+  if (minutes < 60) return minutes + ' мин'
+  var hours = Math.floor(minutes / 60)
+  var restMinutes = minutes % 60
+  if (hours < 22) return hours + ' ч' + (restMinutes ? ' ' + restMinutes + ' мин' : '')
+  var days = Math.floor(hours / 24)
+  var restHours = hours % 24
+  return days + ' д' + (restHours ? ' ' + restHours + ' ч' : '')
+}
 
-  function updateProgress() {
-    var run = state.run
-    var left = Math.max(0, run.total - run.entered)
-    var perUnit = run.startedAt ? (Date.now() - run.startedAt) / Math.max(1, run.entered) : 0
-    els.progress.textContent =
-      'внесено ' + run.entered + ' из ' + run.total + ' шт' +
-      (run.paused ? ' · пауза' : '') +
-      (left ? ' · осталось ~' + formatEta(left * perUnit) : ' · готово')
+/** «около 18:40» — когда ориентировочно закончим. */
+function formatClock(secondsFromNow) {
+  if (!isFinite(secondsFromNow) || secondsFromNow <= 0) return '—'
+  var at = new Date(Date.now() + secondsFromNow * 1000)
+  return ('0' + at.getHours()).slice(-2) + ':' + ('0' + at.getMinutes()).slice(-2)
+}
+
+/** Темп одной единицы по настройкам, сек: обычный или середина диапазона эмуляции. */
+function plannedPerUnitSec() {
+  return state.human.on ? (state.human.minSec + state.human.maxSec) / 2 : state.tempoSec
+}
+
+/**
+ * Замерить темп по факту. Среднее по последним TEMPO_SAMPLES замерам: оценка
+ * «время с начала / внесено» с первого же замера тянула в оценку открытие
+ * диалога, первый принятый ШК и любую паузу на обед.
+ */
+function noteUnitEntered(run) {
+  var now = Date.now()
+  if (run.lastUnitAt) {
+    var dt = now - run.lastUnitAt
+    if (dt > 0 && dt <= TEMPO_SAMPLE_MAX_MS) {
+      run.samples.push(dt)
+      if (run.samples.length > TEMPO_SAMPLES) run.samples.shift()
+    }
   }
+  run.lastUnitAt = now
+}
+
+/** Замерный темп одной единицы, сек; пока замеров нет — темп из настроек. */
+function measuredPerUnitSec(run) {
+  var samples = run && run.samples ? run.samples : []
+  if (!samples.length) return plannedPerUnitSec()
+  var sum = 0
+  for (var i = 0; i < samples.length; i++) sum += samples[i]
+  return sum / samples.length / 1000
+}
+
+function updateProgress() {
+  var run = state.run
+  var left = Math.max(0, run.total - run.entered)
+  var leftSec = left * measuredPerUnitSec(run)
+  // Позиции и единицы — разные счётчики: в торговом зале лист из 700 позиций
+  // это десятки тысяч штук, и «осталось 47000 шт» без позиций нечитаемо.
+  els.progress.textContent =
+    'позиций ' + run.posDone + ' из ' + run.posTotal +
+    ' · внесено ' + run.entered + ' из ' + run.total + ' шт' +
+    (run.paused ? ' · пауза' : '') +
+    (left
+      ? ' · осталось ~' + formatEta(leftSec) + ', финиш около ' + formatClock(leftSec)
+      : ' · готово')
+}
 
   async function runQueue(queue) {
     var run = state.run
@@ -1260,8 +1386,11 @@ function shelfBarcodeOf(row) {
 
     // Полка. В торговом зале она одна на весь лист — вбиваем её ШК один раз
     // перед первой позицией, иначе SEW не поймёт, с какой полки товар.
+    // На складе полка своя у каждой ячейки: вбиваем ШК только при переходе на
+    // другую полку, иначе пять товаров с одной полки дали бы пять лишних ШК.
     var perItemShelf = !isTradingHall(zone)
-    var shelfEntered = false
+    // ШК полки, который сейчас уже вбит в диалоге SEW: пусто — ещё ни разу.
+    var activeShelfBarcode = ''
 
     function noteShelf(unit) {
       if (unit.shelf) zoneDone.shelf = unit.shelf
@@ -1278,17 +1407,21 @@ function shelfBarcodeOf(row) {
           run.stopped = true
           setStatus('ШК полки не принят — очередь остановлена')
         } else {
-          shelfEntered = true
+          activeShelfBarcode = sheetShelf
         }
       } else {
         setStatus('у позиций нет ШК ячейки — полку не вношу, вбивай вручную')
       }
+      // ШК полки — служебная единица, в оценку темпа она не идёт: сбрасываем
+      // замер, чтобы первая позиция не «подарила» оценке лишние секунды.
+      run.lastUnitAt = 0
     }
 
     for (var i = 0; i < queue.items.length && !run.stopped; i++) {
       var item = queue.items[i]
       // На складе полка идёт перед каждым товаром: там товар лежит в своей ячейке.
-      if (perItemShelf && !shelfEntered && item.cellBarcode) {
+      // ШК вбиваем только если он другой — на той же полке SEW помнит её сам.
+      if (perItemShelf && item.cellBarcode && item.cellBarcode !== activeShelfBarcode) {
         var shelfUnit = await enterUnit(zone, item.cellBarcode)
         noteShelf(shelfUnit)
         if (!shelfUnit.ok) {
@@ -1297,7 +1430,7 @@ function shelfBarcodeOf(row) {
           setStatus('ШК полки не принят на ' + item.sku + ' — очередь остановлена')
           break
         }
-        shelfEntered = true
+        activeShelfBarcode = item.cellBarcode
       }
       // По эмуляции вносим ровно item.target: он уже с учётом расхождения.
       while (item.entered < item.target) {
@@ -1316,24 +1449,28 @@ function shelfBarcodeOf(row) {
         }
         item.entered++
         run.entered++
+        noteUnitEntered(run)
         updateProgress()
         saveProgress(zone, run)
       }
+      // Позиция засчитана, только если её остаток внесён полностью: после
+      // «Стоп» или отказа по ШК она в счётчик позиций не попадает.
+      if (item.entered >= item.target) run.posDone++
     }
 
     els.pause.hidden = true
     els.stop.hidden = true
     els.start.disabled = false
     var done = run.failed.length === 0
-    // Итоги эмуляции: сколько позиций пропущено / посчитано с недостачей или
-    // излишком. Без них результат выглядит «слишком правильным».
+    // Итоги эмуляции: сколько позиций посчитано с недостачей или излишком. Без них
+    // результат выглядит «слишком правильным».
     var emuNote = ''
     if (state.human.on) {
       var described = emuDescribe(run.deviations)
       if (described) emuNote = ', эмуляция: ' + described
     }
     setStatus(done
-      ? 'подсчёт внесён полностью: ' + run.entered + ' шт за ' + formatEta((Date.now() - run.startedAt) / 1000) +
+      ? 'подсчёт внесён полностью: ' + run.posDone + ' позиций / ' + run.entered + ' шт за ' + formatEta((Date.now() - run.startedAt) / 1000) +
         (zoneDone.shelf ? ', зона-источник «' + zoneDone.shelf + '»' : '') + emuNote
       : 'остановлено: внесено ' + run.entered + ' из ' + run.total + emuNote)
     saveProgress(zone, run)
@@ -1364,9 +1501,7 @@ function shelfBarcodeOf(row) {
     if (state.busy || !state.summary) return
     var queue = buildQueue(state.summary)
     if (queue.total === 0) {
-      setStatus(queue.deviations.skip
-        ? 'эмуляция пропустила все позиции — вносить нечего'
-        : 'вносить нечего: всё уже посчитано или нет ШК')
+      setStatus('вносить нечего: всё уже посчитано, нет ШК или позиции сведены к нулю')
       return
     }
     if (queue.skipped.length) {
@@ -1380,17 +1515,26 @@ function shelfBarcodeOf(row) {
     state.run = {
       total: queue.total,
       entered: 0,
+      posTotal: queue.items.length,
+      posDone: 0,
       paused: false,
       stopped: false,
       failed: [],
       deviations: queue.deviations,
-      startedAt: Date.now()
+      startedAt: Date.now(),
+      // Темп меряется по ходу внесения: первые замеры — оценка из настроек.
+      samples: [],
+      lastUnitAt: 0
     }
     updateProgress()
     // При эмуляции темп случайный, поэтому оценка берётся по середине диапазона.
-    var perUnit = state.human.on ? (state.human.minSec + state.human.maxSec) / 2 : state.tempoSec
-    var skipNote = queue.deviations.skip ? ', эмуляция пропустит ' + queue.deviations.skip + ' позиций' : ''
-    setStatus('подсчёт идёт, ~' + formatEta(queue.total * perUnit) + '. Диалог откроет плагин.' + skipNote)
+    var perUnit = plannedPerUnitSec()
+    var etaSec = queue.total * perUnit
+    var devNote = queue.deviations.short || queue.deviations.over
+      ? '. Эмуляция: ' + emuDescribe(queue.deviations)
+      : ''
+    setStatus('подсчёт идёт, ' + queue.items.length + ' позиций / ' + queue.total + ' шт, ~' +
+      formatEta(etaSec) + ', финиш около ' + formatClock(etaSec) + '. Диалог откроет плагин.' + devNote)
     try {
       await runQueue(queue)
     } catch (err) {

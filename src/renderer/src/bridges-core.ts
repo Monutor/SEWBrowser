@@ -95,6 +95,8 @@ export interface InvRequest {
   type?: string
   zone?: string
   skus?: string[]
+  /** Ручной режим: путь к файлу остатков на диске вместо скачивания из SEW */
+  manualPath?: string
 }
 
 /** Отсечь битые записи очереди: без id ответ не положить, url/zone приводим к строке */
@@ -128,6 +130,7 @@ export function asInvReqs(items: unknown[]): InvRequest[] {
     type: typeof rec.type === 'string' ? rec.type : undefined,
     zone: typeof rec.zone === 'string' ? rec.zone : undefined,
     skus: Array.isArray(rec.skus) ? rec.skus.filter((s): s is string => typeof s === 'string') : [],
+    manualPath: typeof rec.manualPath === 'string' && rec.manualPath ? rec.manualPath : undefined,
   })
   }
   return out
