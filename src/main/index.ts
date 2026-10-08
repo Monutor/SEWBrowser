@@ -371,6 +371,24 @@ function createWindow(): void {
     saveConfig({ stockDir: dir })
     return dir
   })
+  // Выбор файла остатков для плагина sew-inventory (ручной режим). Возвращает
+  // путь или null — отмена диалога. Пустая строка/битой файл — тоже null,
+  // но с предупреждением: гость не сможет открыть бинарь в xlsx-разборе.
+  ipcMain.handle('stock:pick-file', async () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return null
+    const picked = await dialog.showOpenDialog(mainWindow, {
+      title: 'Файл остатков (xlsx) для плагина sew-inventory',
+      properties: ['openFile'],
+      filters: [{ name: 'Остатки', extensions: ['xlsx'] }, { name: 'Все файлы', extensions: ['*'] }],
+    })
+    if (!picked || picked.canceled || !Array.isArray(picked.filePaths) || picked.filePaths.length === 0) return null
+    const src = picked.filePaths[0]
+    if (!existsSync(src)) {
+      console.warn('[shell] stock file vanished after dialog:', src)
+      return null
+    }
+    return src
+  })
   // Список системных принтеров для диалога печати. Список одинаков для любого
   // webContents, поэтому гость не нужен — берём у webContents главного окна.
   ipcMain.handle('printers:list', async () => {
@@ -1503,18 +1521,36 @@ function createWindow(): void {
   // main (в госте zip не распаковать), фильтрация — там же, чтобы не гонять
   // 8 тысяч строк через мост и обратно в страницу.
   ipcMain.handle('inventory:stock', async (_event, payload: unknown) => {
-    const req = (payload ?? {}) as { zone?: unknown; skus?: unknown }
+    const req = (payload ?? {}) as { zone?: unknown; skus?: unknown; manualPath?: unknown }
     const zone = typeof req.zone === 'string' ? req.zone : ''
     const skus = Array.isArray(req.skus)
       ? req.skus.filter((s): s is string => typeof s === 'string').slice(0, 100000)
       : undefined
-    const file = await runStockDownload()
-    if (!file.ok) return { ok: false, error: file.error }
+    // Ручной режим: плагин передал путь к файлу остатков — читаем его вместо
+    // скачивания. Пустая строка/не строка = авто-режим (скачиваем как usual).
+    const manualPath = typeof req.manualPath === 'string' && req.manualPath ? req.manualPath : undefined
+    let buffer: Buffer
+    let stockName = ''
+    if (manualPath) {
+      if (!existsSync(manualPath)) return { ok: false, error: 'файл остатков не найден на диске: ' + manualPath }
+      try {
+        buffer = readFileSync(manualPath)
+      } catch (err) {
+        console.warn('[shell] stock file read failed:', manualPath, err)
+        return { ok: false, error: 'не удалось прочитать файл: ' + String((err as Error)?.message ?? err) }
+      }
+      stockName = basename(manualPath)
+    } else {
+      const file = await runStockDownload()
+      if (!file.ok) return { ok: false, error: file.error }
+      buffer = readFileSync(file.path)
+      stockName = file.name
+    }
     try {
-      const balance = readStockBalance(readFileSync(file.path), { zone: zone || undefined, skus })
+      const balance = readStockBalance(buffer, { zone: zone || undefined, skus })
       return {
         ok: true,
-        name: file.name,
+        name: stockName,
         totalRows: balance.totalRows,
         matchedRows: balance.matchedRows,
         zones: balance.zones,

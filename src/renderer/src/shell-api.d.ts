@@ -472,6 +472,8 @@ interface ShellApi {
   readScanFile(id: string): Promise<ScanFileContent>
   /** Открыть выбор файла с диска и прочитать его в base64 (для переноса в SEW) */
   pickScanFile(): Promise<ScanFileContent | null>
+  /** Выбор файла остатков с диска для плагина sew-inventory (ручной режим); null — отмена */
+  pickStockFile(): Promise<string | null>
   /** Выбор пути к программе сканера (EXE) через родной диалог — для настроек */
   browseScannerApp(): Promise<string>
   /** Выбор папки автосохранения сканов через родной диалог — для настроек */

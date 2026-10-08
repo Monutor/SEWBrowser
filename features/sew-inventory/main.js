@@ -26,6 +26,9 @@
   var ANSWER_POLL_MS = 250
   var ANSWER_TIMEOUT_MS = 120000
   var RESCAN_MS = 2000
+  // Режим подгрузки остатков: авто (скачиваем из SEW) или ручной (файл с диска).
+  var STOCK_MODE_AUTO = 'auto'
+  var STOCK_MODE_MANUAL = 'manual'
 // Темп автовноса — секунд на единицу, по умолчанию как у sew-helper (пауза перед
 // открытием диалога 900 мс + 300 мс на подтверждение ≈ 1,2 с). Настраивается в
 // панели и запоминается; фактические паузы считаются от него в stepWaits().
@@ -58,7 +61,12 @@ var CONFIRM_MIN_MS = 300
     },
     /** Зона по номеру ЛП: { '924147': 'Торговый зал' }. После старта ЛП шапка с
      *  «Зоной ЛП» скрывается, а ЛП может длиться часами — запоминаем. */
-    zoneByLp: {}
+    zoneByLp: {},
+    /** Откуда брать остатки для подсчёта: 'auto' (скачиваем из SEW) или
+     *  'manual' (читаем указанный юзером файл). Запоминается между сессиями. */
+    stockMode: STOCK_MODE_AUTO,
+    /** Путь к файлу остатков для manual-режима — на диске, в plugin-data не дублируем. */
+    stockPath: ''
   }
 
   /** Темп из поля ввода, с зажимом в разумные пределы. */
@@ -74,18 +82,44 @@ var CONFIRM_MIN_MS = 300
     if (els.tempoInput) els.tempoInput.value = String(state.tempoSec)
   }
 
+  /** Режим подгрузки остатков из хранилища: дефолт — авто. */
+  function applyStockMode(raw) {
+    state.stockMode = raw === STOCK_MODE_MANUAL ? STOCK_MODE_MANUAL : STOCK_MODE_AUTO
+  }
+
   /** Темп живёт в plugin-data: одна цифра, общий для всех ЛП. */
   async function loadSettings() {
     try {
-      var data = await chrome.storage.local.get(['zoneByLp', 'tempoSec', 'humanEmu'])
+      var data = await chrome.storage.local.get(['zoneByLp', 'tempoSec', 'humanEmu', 'stockMode', 'stockPath'])
       if (data && data.zoneByLp && typeof data.zoneByLp === 'object') state.zoneByLp = data.zoneByLp
       if (data && data.tempoSec !== undefined) applyTempo(Number(data.tempoSec))
       if (data && data.humanEmu) applyHuman(data.humanEmu)
+      if (data && data.stockMode !== undefined) applyStockMode(data.stockMode)
+      if (data && typeof data.stockPath === 'string') state.stockPath = data.stockPath
     } catch (e) {
       /* дефолты уже выставлены */
     }
     // Настройки могли прийти после buildPanel — показываем их в панели.
     renderHumanUi()
+    renderStockUi()
+  }
+
+  /** Запомнить режим подгрузки остатков. */
+  function saveStockMode() {
+    try {
+      chrome.storage.local.set({ stockMode: state.stockMode })
+    } catch (e) {
+      /* не страшно */
+    }
+  }
+
+  /** Запомнить путь к файлу остатков для ручного режима. */
+  function saveStockPath(path) {
+    try {
+      chrome.storage.local.set({ stockPath: typeof path === 'string' ? path : '' })
+    } catch (e) {
+      /* не страшно */
+    }
   }
 
   function saveTempo(seconds) {
@@ -186,6 +220,57 @@ var CONFIRM_MIN_MS = 300
     if (remembered) return remembered
     var typed = normText(els.zoneInput ? els.zoneInput.value : '')
     return typed ? els.zoneInput.value.trim() : ''
+  }
+
+  /** Синхронировать UI режима остатков: значение поля и его заблокированность. */
+  function renderStockUi() {
+    if (!els.stockPathInput) return
+    // Включено «Скачивать автоматически» → путь не нужен, поле заблокировано.
+    var auto = state.stockMode === STOCK_MODE_AUTO
+    els.stockAuto.checked = auto
+    els.stockPathInput.disabled = auto
+    // Путь остаётся в памяти даже на авто-режиме: переключатель вернёт его назад.
+    if (els.stockPathInput.value !== state.stockPath) els.stockPathInput.value = state.stockPath || ''
+  }
+
+  /**
+   * Открыть диалог выбора файла остатков через мост оболочки (у гостя нет
+   * window.shell). Кладём {id, type:'pick'} в очередь моста, ждём ответ — путь
+   * строкой в window.__sewInventoryRes[id] или пустую строку/null при отмене.
+   * Успешный путь запоминаем между сессиями; отмена ничего не меняет.
+   */
+  function pickStockFile() {
+    return new Promise(function (resolve) {
+      var id = 'pick' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)
+      var answers = window[RES] || (window[RES] = {})
+      var queue = window[REQ] || (window[REQ] = [])
+      answers[id] = ''
+      queue.push({ id: id, type: 'pick' })
+      var waited = 0
+      var timer = setInterval(function () {
+        waited += ANSWER_POLL_MS
+        var box = window[RES] || {}
+        if (box[id]) {
+          clearInterval(timer)
+          var raw = box[id]
+          delete box[id]
+          var picked = typeof raw === 'string' ? raw : ''
+          if (picked) {
+            state.stockPath = picked
+            saveStockPath(picked)
+            renderStockUi()
+          }
+          resolve(picked || null)
+          return
+        }
+        if (waited >= ANSWER_TIMEOUT_MS) {
+          clearInterval(timer)
+          delete box[id]
+          console.warn('[sew-inventory] мост не ответил на выбор файла за', ANSWER_TIMEOUT_MS / 1000, 'с')
+          resolve(null)
+        }
+      }, ANSWER_POLL_MS)
+    })
   }
 
   /** Ключ ЛП: тот же номер в другой зоне — уже другой лист, пусть и с тем же номером. */
@@ -410,13 +495,14 @@ function shelfBarcodeOf(row) {
 
   // --- Мост остатков ------------------------------------------------------
 
-  function requestStock(zone, skus) {
+  function requestStock(zone, skus, manualPath) {
     return new Promise(function (resolve) {
       var id = 'inv' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)
       var answers = window[RES] || (window[RES] = {})
       var queue = window[REQ] || (window[REQ] = [])
       answers[id] = ''
-      queue.push({ id: id, zone: zone, skus: skus })
+      // Ручной режим передаёт путь к файлу; main читает его вместо скачивания.
+      queue.push({ id: id, zone: zone, skus: skus, manualPath: manualPath || undefined })
       var waited = 0
       var timer = setInterval(function () {
         waited += ANSWER_POLL_MS
@@ -655,6 +741,38 @@ function shelfBarcodeOf(row) {
     els.tempoRow = tempoRow
     body.appendChild(tempoRow)
 
+    // Режим подгрузки остатков: авто (скачиваем из SEW) или ручной (файл с диска).
+    // Путь к файлу — в строке с кнопкой «…», а тумблер «Скачивать автоматически»
+    // ниже: включён → путь не нужен и поле заблокировано; выключён → юзер задаёт файл.
+    var stockRow = el('div', 'sew-inv-zonerow')
+    stockRow.appendChild(el('span', 'sew-inv-zonelabel', 'Файл остатков'))
+    els.stockPathInput = el('input', 'sew-inv-zone')
+    els.stockPathInput.type = 'text'
+    els.stockPathInput.placeholder = 'не задан — скачаем из SEW'
+    els.stockPathInput.autocomplete = 'off'
+    els.stockPathInput.title = 'Путь к файлу остатков для ручного режима'
+    stockRow.appendChild(els.stockPathInput)
+    els.stockBrowse = el('button', 'sew-inv-btn sew-inv-browse', '…')
+    els.stockBrowse.type = 'button'
+    els.stockBrowse.title = 'Выбрать файл остатков на диске'
+    els.stockBrowse.addEventListener('click', function () { void pickStockFile() })
+    stockRow.appendChild(els.stockBrowse)
+    body.appendChild(stockRow)
+
+    var stockCheckRow = el('label', 'sew-inv-check')
+    els.stockAuto = el('input', 'sew-inv-check-box')
+    els.stockAuto.type = 'checkbox'
+    els.stockAuto.checked = state.stockMode === STOCK_MODE_AUTO
+    els.stockAuto.title = 'Скачивать остатки из SEW автоматически; выключите, чтобы задать свой файл'
+    els.stockAuto.addEventListener('change', function () {
+      applyStockMode(els.stockAuto.checked ? STOCK_MODE_AUTO : STOCK_MODE_MANUAL)
+      saveStockMode()
+      renderStockUi()
+    })
+    stockCheckRow.appendChild(els.stockAuto)
+    stockCheckRow.appendChild(el('span', 'sew-inv-check-label', 'Скачивать автоматически'))
+    body.appendChild(stockCheckRow)
+
     // Эмуляция человека: темп берётся случайно из диапазона, иногда человек
     // «зависает», а изредка позиция считается с расхождением. Значение полей
     // живёт в state.human и переживает перезапуск страницы.
@@ -816,11 +934,17 @@ function shelfBarcodeOf(row) {
       setStatus('в таблице ЛП нет позиций — проверь, открыт ли лист подсчёта')
       return
     }
+    // Ручной режим: без выбранного файла нечего читать — просим юзера.
+    if (state.stockMode === STOCK_MODE_MANUAL && !state.stockPath) {
+      setStatus('выбери файл остатков на диске через «…» (тумблер «Скачивать автоматически» вниз)')
+      return
+    }
     state.busy = true
     els.collect.disabled = true
     setStatus('качаю остатки и разбираю ЛП…')
     try {
-      var answer = await requestStock(zone, [])
+      var manualPath = state.stockMode === STOCK_MODE_MANUAL ? state.stockPath : undefined
+      var answer = await requestStock(zone, [], manualPath)
       if (!answer || !answer.ok) {
         setStatus('остатки не получились: ' + ((answer && answer.error) || 'нет ответа'))
         return

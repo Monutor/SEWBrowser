@@ -213,11 +213,16 @@ async function answerScans(tab: ShellTab, req: ScansRequest): Promise<void> {
  */
 async function answerInventory(
   tab: ShellTab,
-  req: { id: string; zone?: string; skus?: string[] },
+  req: { id: string; type?: string; zone?: string; skus?: string[] },
 ): Promise<void> {
   let result: unknown
   try {
-    result = await window.shell.readStockForZone(req.zone ?? '', req.skus ?? [])
+    // 'pick' — гость нажал «…» в панели: открываем диалог выбора файла остатков.
+    if (req.type === 'pick') {
+      result = await window.shell.pickStockFile()
+    } else {
+      result = await window.shell.readStockForZone(req.zone ?? '', req.skus ?? [])
+    }
   } catch (err) {
     console.warn('[inventory-bridge] readStockForZone failed:', err)
     result = { ok: false, error: String((err as Error)?.message ?? err) }

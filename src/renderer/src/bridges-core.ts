@@ -91,6 +91,8 @@ export interface ScansRequest {
 
 export interface InvRequest {
   id: string
+  /** 'pick' — запрос выбора файла остатков с диска; пусто = обычный разбор по зоне */
+  type?: string
   zone?: string
   skus?: string[]
 }
@@ -121,11 +123,12 @@ export function asInvReqs(items: unknown[]): InvRequest[] {
   for (const item of items) {
     const rec = asRecord(item)
     if (!rec || typeof rec.id !== 'string') continue
-    out.push({
-      id: rec.id,
-      zone: typeof rec.zone === 'string' ? rec.zone : undefined,
-      skus: Array.isArray(rec.skus) ? rec.skus.filter((s): s is string => typeof s === 'string') : [],
-    })
+  out.push({
+    id: rec.id,
+    type: typeof rec.type === 'string' ? rec.type : undefined,
+    zone: typeof rec.zone === 'string' ? rec.zone : undefined,
+    skus: Array.isArray(rec.skus) ? rec.skus.filter((s): s is string => typeof s === 'string') : [],
+  })
   }
   return out
 }

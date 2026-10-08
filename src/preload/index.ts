@@ -432,6 +432,8 @@ const api = {
    *  кнопка тулбара, и сразу разбирается в main по зоне ЛП и её SKU */
   readStockForZone: (zone: string, skus: string[]): Promise<StockInventoryResult> =>
     ipcRenderer.invoke('inventory:stock', { zone, skus }),
+  /** Выбор файла остатков с диска для плагина sew-inventory (ручной режим); null — отмена */
+  pickStockFile: (): Promise<string | null> => ipcRenderer.invoke('stock:pick-file'),
   /** Принтеры системы для диалога печати (name идёт в deviceName) */
   listPrinters: (): Promise<ShellPrinterLike[]> => ipcRenderer.invoke('printers:list'),
   /** ПКМ по странице → «Печать…»: main шлёт 'shell:open-print' */

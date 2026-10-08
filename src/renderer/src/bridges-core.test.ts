@@ -105,7 +105,12 @@ describe('asScansReqs', () => {
 describe('asInvReqs', () => {
   it('чистит skus до строк', () => {
     assert.deepEqual(asInvReqs([{ id: 'a', zone: 'z', skus: ['1', 2, null] }]), [
-      { id: 'a', zone: 'z', skus: ['1'] },
+      { id: 'a', type: undefined, zone: 'z', skus: ['1'] },
+    ])
+  })
+  it('переносит type для pick-запроса', () => {
+    assert.deepEqual(asInvReqs([{ id: 'a', type: 'pick' }]), [
+      { id: 'a', type: 'pick', zone: undefined, skus: [] },
     ])
   })
   it('мусор в zone даёт undefined, а не мусор', () => {
