@@ -6,7 +6,7 @@ release/
 *.tsbuildinfo
 docs/
 
-# AI assistants — локальные конфиги, сессии, кэш (общий AGENTS.md остаётся в гите!)
+# AI assistants — локальные конфиги, сессии, кэш; AGENTS.md больше не коммитим
 .opencode/
 .claude/
 .cursor/
@@ -18,6 +18,7 @@ docs/
 .superpowers/
 *.code-workspace
 OPTIMIZATION.md
+AGENTS.md
 
 # Editors / OS
 .vscode/
