@@ -13,10 +13,12 @@ import {
   RENDER_TIMEOUT_MS,
   buildPrintTaskBody,
   buildSearchBody,
+  isAccessDenied,
   isValidCopies,
   isValidPaperColorId,
   isValidTemplateId,
   normalizeSearchResponse,
+  pricetagAccessHint,
   pricetagFileName,
   sewContentError,
   sewErrorMessage,
@@ -43,6 +45,9 @@ export interface PricetagStoresResult {
   ok: boolean
   stores: SewStore[]
   current?: string
+  /** Логин, под кем открыта сессия SEW (перехват x-username у SPA). Пусто —
+   *  перехвата не было: тогда поле логина оставляем как есть. */
+  sessionUsername?: string
   error?: string
 }
 
@@ -62,6 +67,9 @@ export interface PricetagsDeps {
   api: SewApi
   openPdfViewer(pdf: Buffer, title: string): void
   fallbackObjectId(): string
+  /** Логин из конфига (`x-username`) — нужен, чтобы в отказе показать, какой
+   *  именно табельный номер не подошёл. Геттер: конфиг меняется на лету. */
+  sewUsername?: () => string
 }
 
 export interface PricetagsService {
@@ -94,8 +102,15 @@ function statusOf(err: unknown): number {
   return typeof status === 'number' ? status : 0
 }
 
-/** Текст ошибки наружу: 401/403 — по-русски из общего словаря, сеть — её текст. */
-function describeError(err: unknown, subject: string): string {
+/** Текст ошибки наружу: 401/403 — по-русски из общего словаря, сеть — её текст.
+ *  `access` — расшифровка отказа по правам: SEW на него отвечает либо 403, либо
+ *  200 с «Access Denied» в `responseHeader.errors`, и без неё пользователь видел
+ *  английское «Access Denied» вместо причины. */
+function describeError(
+  err: unknown,
+  subject: string,
+  access?: { configured?: string; session?: string },
+): string {
   const message = isRecord(err) && typeof err.message === 'string' ? err.message : ''
   if (message.startsWith('вкладка SEW не найдена')) return message
   if (message.startsWith('рендер HTML в PDF не успел')) return 'Рендер HTML в PDF не успел'
@@ -103,6 +118,9 @@ function describeError(err: unknown, subject: string): string {
   const status = statusOf(err)
   // Тело отказа, если клиент его сохранил: показываем текст SEW, а не догадку.
   const body = isRecord(err) && typeof err.body === 'string' ? err.body : undefined
+  if (isAccessDenied(status, body)) {
+    return `SEW отказал в доступе (${subject}): ${pricetagAccessHint(access?.configured, access?.session)}`
+  }
   if (status) return sewErrorMessage(status, subject, body)
   return `SEW недоступен: ${message || String(err)}`
 }
@@ -116,6 +134,25 @@ export function createPricetags(deps: PricetagsDeps): PricetagsService {
    *  зафиксирована на момент поиска, поэтому «Собрать PDF» обязано печатать их
    *  в том же магазине — иначе ценники магазина A ушли бы в печать под B. */
   let preparedShop = ''
+
+  /** Логин, под кем открыта сессия SEW (перехват x-username у живой SPA).
+   *  Нужен только для расшифровки отказа по правам: без него SEW отвечает на
+   *  ценники «Access Denied», и пользователь видит английский текст, не зная,
+   *  что в поле логина стоит чужой табельный номер. */
+  let sessionUsername = ''
+
+  async function refreshSessionUsername(): Promise<void> {
+    try {
+      sessionUsername = (await deps.api.fetchSessionUsername()) ?? ''
+    } catch {
+      sessionUsername = ''
+    }
+  }
+
+  /** Русское объяснение отказа по правам с обоими логинами. */
+  function accessDeniedMessage(): string {
+    return `SEW отказал в доступе к ценникам: ${pricetagAccessHint(deps.sewUsername?.(), sessionUsername)}`
+  }
 
   function disposePdf(): void {
     if (!lastPdf) return
@@ -133,6 +170,7 @@ export function createPricetags(deps: PricetagsDeps): PricetagsService {
 
   async function stores(): Promise<PricetagStoresResult> {
     try {
+      await refreshSessionUsername()
       const json = await deps.api.json(PROFILE_PATH)
       const profile: SewProfile = isRecord(json) ? json : {}
       const raw = [profile.defaultObject, ...(Array.isArray(profile.additionalShopNumbers) ? profile.additionalShopNumbers : [])]
@@ -145,9 +183,21 @@ export function createPricetags(deps: PricetagsDeps): PricetagsService {
         list.push({ id, name: id })
       }
       if (list.length === 0) return { ok: false, stores: [], error: 'у сотрудника нет доступных магазинов' }
-      return { ok: true, stores: list, current: list[0].id }
+      return {
+        ok: true,
+        stores: list,
+        current: list[0].id,
+        sessionUsername: sessionUsername || undefined,
+      }
     } catch (err) {
-      return { ok: false, stores: [], error: describeError(err, 'список магазинов') }
+      return {
+        ok: false,
+        stores: [],
+        error: describeError(err, 'список магазинов', {
+          configured: deps.sewUsername?.(),
+          session: sessionUsername,
+        }),
+      }
     }
   }
 
@@ -158,8 +208,18 @@ export function createPricetags(deps: PricetagsDeps): PricetagsService {
     try {
       const json = await deps.api.json(SEARCH_PATH, { method: 'POST', body: buildSearchBody(shop, wanted) })
       const result: PrepareResult = normalizeSearchResponse(json, wanted)
+      // Отказ по правам SEW отдаёт HTTP 200 с текстом «Access Denied» в
+      // responseHeader.errors: позиций нет, и без разбора этот английский текст
+      // уезжал в оверлей прямо к пользователю. Заменяем на расшифровку с обоими
+      // логинами — из поля настроек и из живой сессии SEW.
+      const denied = !!result.warning && isAccessDenied(0, result.warning)
       if (result.items.length === 0) {
-        return { ok: false, error: result.warning ?? `ни один артикул не найден в магазине ${shop}` }
+        return {
+          ok: false,
+          error: denied
+            ? accessDeniedMessage()
+            : (result.warning ?? `ни один артикул не найден в магазине ${shop}`),
+        }
       }
       // Привязываем позиции к магазину только на успехе: после неудачного поиска
       // в оверлее остаются прежние позиции, и они остаются привязаны к прежнему
@@ -167,7 +227,10 @@ export function createPricetags(deps: PricetagsDeps): PricetagsService {
       preparedShop = shop
       return { ok: true, result }
     } catch (err) {
-      return { ok: false, error: describeError(err, 'ценники') }
+      return {
+        ok: false,
+        error: describeError(err, 'ценники', { configured: deps.sewUsername?.(), session: sessionUsername }),
+      }
     }
   }
 
@@ -214,7 +277,12 @@ export function createPricetags(deps: PricetagsDeps): PricetagsService {
       // содержит 'price-tag', поэтому раньше опрос молчал до таймаута, и
       // пользователь получал «Рендер ценников не успел» вместо причины.
       const sewError = sewContentError(html)
-      if (sewError) return { ok: false, error: `SEW не отдал ценники: ${sewError}` }
+      if (sewError) {
+        // Тот же отказ по правам, но в теле опроса: заменяем английский текст
+        // SEW расшифровкой, иначе он уедет в оверлей как «…: Access Denied».
+        if (isAccessDenied(200, html)) return { ok: false, error: accessDeniedMessage() }
+        return { ok: false, error: `SEW не отдал ценники: ${sewError}` }
+      }
     }
     return { ok: false, error: 'Рендер ценников не успел — попробуйте ещё раз' }
   }
@@ -298,7 +366,10 @@ export function createPricetags(deps: PricetagsDeps): PricetagsService {
       return { ok: true, pdfName: basename(path) }
     } catch (err) {
       if (printTaskId) await cancelTask(printTaskId)
-      return { ok: false, error: describeError(err, 'ценники') }
+      return {
+        ok: false,
+        error: describeError(err, 'ценники', { configured: deps.sewUsername?.(), session: sessionUsername }),
+      }
     }
   }
 

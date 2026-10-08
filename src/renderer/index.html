@@ -689,6 +689,12 @@
           <label for="pricetags-username">Логин SEW (табельный номер)</label>
           <input id="pricetags-username" type="text" spellcheck="false" autocomplete="off" placeholder="напр. 181165" />
         </div>
+        <!-- Логин живой сессии SEW: подсистема ценников работает от x-username, и
+             при входе под другим сотрудником SEW отвечает «Access Denied». -->
+        <div id="pricetags-login-hint" class="pricetags-login-hint" hidden>
+          <span id="pricetags-login-hint-text"></span>
+          <button id="pricetags-login-fix" type="button" class="pricetags-login-fix">подставить</button>
+        </div>
         <div class="settings-row">
           <label for="pricetags-paper">Бумага</label>
           <select id="pricetags-paper">

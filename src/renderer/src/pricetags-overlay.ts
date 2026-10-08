@@ -172,10 +172,39 @@ function fillPaper(): void {
   )
 }
 
+/** Логин, под кем открыта сессия SEW, — из перехвата x-username у живой SPA.
+ *  Подсистема ценников работает от него, и при входе под другим сотрудником
+ *  SEW отвечает «Access Denied» без всяких подробностей. Поэтому несовпадение
+ *  показываем сами, до первой попытки собрать PDF. */
+let sessionUsername = ''
+
+function renderLoginHint(live?: string): void {
+  const box = el('pricetags-login-hint')
+  const text = el('pricetags-login-hint-text')
+  sessionUsername = typeof live === 'string' ? live.trim() : ''
+  if (!box || !text) return
+  if (!sessionUsername) {
+    box.hidden = true
+    return
+  }
+  const configured = (el('pricetags-username') as HTMLInputElement | null)?.value.trim() ?? ''
+  if (configured && configured !== sessionUsername) {
+    text.textContent = `сессия SEW открыта под ${sessionUsername}, в поле ${configured} — SEW откажет в доступе`
+  } else if (!configured) {
+    text.textContent = `сессия SEW открыта под ${sessionUsername}`
+  } else {
+    // Логины совпали — предупреждать не о чем.
+    box.hidden = true
+    return
+  }
+  box.hidden = false
+}
+
 async function loadStores(): Promise<void> {
   const store = select('pricetags-store')
   if (!store) return
   const res = await window.shell.pricetagsStores()
+  renderLoginHint(res.sessionUsername)
   if (!res.ok) {
     // Причину дублируем в подписи селекта, а не только в статус: статус общий
     // на весь оверлей и следующим кликом («Найти») перезаписывается ошибкой
@@ -326,5 +355,14 @@ el('pricetags-template')?.addEventListener('change', (event) => {
     const value = input.value.trim()
     if (input.value !== value) input.value = value
     void persist({ sewUsername: value }, 'логин SEW')
+  })
+  // Подставить логин живой сессии: после правки поля подсказка обязана уйти,
+  // иначе она продолжала бы требовать то, что уже сделано.
+  el('pricetags-login-fix')?.addEventListener('click', () => {
+    if (!sessionUsername) return
+    const input = el('pricetags-username') as HTMLInputElement | null
+    if (input) input.value = sessionUsername
+    void persist({ sewUsername: sessionUsername }, 'логин SEW')
+    renderLoginHint(sessionUsername)
   })
 }

@@ -247,6 +247,40 @@ export function sewContentError(body: string): string | null {
   return candidates.find((message) => message.length > 0) ?? null
 }
 
+/** Отказ шлюза именно по правам. SEW на отказ подсистемы ценников отдаёт
+ *  либо HTTP 403 с телом «…Access Denied…», либо HTTP 200 с тем же текстом в
+ *  `responseHeader.errors[].message` — второй случай разбирает `sewContentError`,
+ *  и его текст доходит до пользователя английским. */
+export function isAccessDenied(status: number, body?: string): boolean {
+  return status === 403 || /access\s*denied/i.test(String(body ?? ''))
+}
+
+/**
+ * Объяснение отказа по правам в ценниках: почти всегда это несовпадение
+ * табельного номера в поле «Логин SEW» с тем, под кем открыта сессия SEW.
+ * `sessionUsername` — логин, который живая SPA кладёт в `x-username`; пусто,
+ * если перехвата не было, и тогда подсказка ограничивается первым предложением.
+ */
+export function pricetagAccessHint(configured?: string, sessionUsername?: string): string {
+  const mine = String(configured ?? '').trim()
+  const live = String(sessionUsername ?? '').trim()
+  if (live && mine && live !== mine) {
+    return (
+      `SEW не пускает к ценникам под логином «${mine}»: сессия открыта под «${live}». ` +
+      'Подставьте логин сессии в поле «Логин SEW» — он уходит в заголовке x-username.'
+    )
+  }
+  if (live && !mine) {
+    return (
+      `в поле «Логин SEW» пусто, а сессия открыта под «${live}» — подставьте его, ` +
+      'он уходит в заголовке x-username.'
+    )
+  }
+  return mine
+    ? `нет прав у логина «${mine}». Проверьте поле «Логин SEW»: обычно SEW открыт под другим сотрудником.`
+    : 'нет прав на ценники. Укажите табельный номер в поле «Логин SEW».'
+}
+
 export function isValidTemplateId(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0
 }

@@ -1424,13 +1424,15 @@ function createWindow(): void {
     void win.loadURL(pathToFileURL(htmlPath).toString())
   }
 
-  // Сервис ценников: оркестрация фичи в main (см. pricetags.ts). Все 3
-  // зависимости доступны в scope createWindow() — sewApi, openPdfViewer и config.
+  // Сервис ценников: оркестрация фичи в main (см. pricetags.ts). Все 4
+  // зависимости доступны в scope createWindow() — sewApi, openPdfViewer,
+  // config и getConfig (логин для расшифровки отказа по правам).
   const pricetags = createPricetags({
     api: sewApi,
     openPdfViewer,
     fallbackObjectId: () =>
       isValidObjectId(config.pricetagObjectId) ? config.pricetagObjectId : config.stockObjectId,
+    sewUsername: () => getConfig().sewUsername,
   })
 
   ipcMain.handle('pricetags:stores', () => pricetags.stores())

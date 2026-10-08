@@ -268,6 +268,8 @@ interface PricetagStoresResult {
   ok: boolean
   stores: { id: string; name: string }[]
   current?: string
+  /** Логин живой сессии SEW (перехват x-username) — для сверки с полем логина */
+  sessionUsername?: string
   error?: string
 }
 interface PricetagPrepareResult {
@@ -534,8 +536,9 @@ interface ShellApi {
   /** Выбор папки для отчёта об остатках; null — отмена */
   pickStockDir(): Promise<string | null>
   /** Остатки для плагина `sew-inventory`: файл скачивается тем же кодом, что и
-   *  кнопка «Остатки», и разбирается в main по зоне ЛП и её SKU */
-  readStockForZone(zone: string, skus: string[]): Promise<StockInventoryResult>
+   *  кнопка «Остатки», и разбирается в main по зоне ЛП и её SKU. manualPath —
+   *  ручной режим плагина: читать файл остатков с диска вместо скачивания */
+  readStockForZone(zone: string, skus: string[], manualPath?: string): Promise<StockInventoryResult>
   /** Принтеры системы (список одинаков для всех webContents) */
   listPrinters(): Promise<ShellPrinter[]>
   /** ПКМ по странице → «Печать…»: main шлёт 'shell:open-print' */

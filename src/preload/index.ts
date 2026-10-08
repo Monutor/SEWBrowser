@@ -93,6 +93,8 @@ interface PricetagStoresResult {
   ok: boolean
   stores: { id: string; name: string }[]
   current?: string
+  /** Логин живой сессии SEW (перехват x-username) — для сверки с полем логина */
+  sessionUsername?: string
   error?: string
 }
 
@@ -429,9 +431,10 @@ const api = {
   /** Выбор папки для отчёта об остатках; null — отмена */
   pickStockDir: (): Promise<string | null> => ipcRenderer.invoke('stock:pick-dir'),
   /** Остатки для плагина sew-inventory: файл скачивается тем же кодом, что и
-   *  кнопка тулбара, и сразу разбирается в main по зоне ЛП и её SKU */
-  readStockForZone: (zone: string, skus: string[]): Promise<StockInventoryResult> =>
-    ipcRenderer.invoke('inventory:stock', { zone, skus }),
+   *  кнопка тулбара, и сразу разбирается в main по зоне ЛП и её SKU. manualPath
+   *  — ручной режим плагина: читать файл остатков с диска вместо скачивания */
+  readStockForZone: (zone: string, skus: string[], manualPath?: string): Promise<StockInventoryResult> =>
+    ipcRenderer.invoke('inventory:stock', { zone, skus, manualPath }),
   /** Выбор файла остатков с диска для плагина sew-inventory (ручной режим); null — отмена */
   pickStockFile: (): Promise<string | null> => ipcRenderer.invoke('stock:pick-file'),
   /** Принтеры системы для диалога печати (name идёт в deviceName) */

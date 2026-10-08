@@ -98,6 +98,12 @@ export function sewHeaders(username?: string): Record<string, string> {
 /** Адрес страницы гостя — им сверяется, что вкладка именно SEW, а не SSO. */
 const GUEST_URL_JS = 'location.href'
 
+/** Логин, который живая SPA SEW кладёт в `x-username` (перехват в плагине
+ *  `sew-auth`). Это то, за кого SEW видит текущую сессию: если поле «Логин SEW»
+ *  в ценниках содержит другой табельный номер, подсистема ценников отвечает
+ *  «Access Denied». Значение живёт только в памяти страницы. */
+const SEW_USERNAME_JS = '(function () { try { return typeof window.__sewAuthUsername === "string" ? window.__sewAuthUsername : null } catch (e) { return null } })()'
+
 /** Bearer SEW из localStorage гостя: `window.__sewAuthBearer` (его ставит плагин
  *  `features/sew-auth`), иначе токен keycloak. Перенесено из src/main/index.ts. */
 const SEW_BEARER_JS = `(function () {
@@ -148,6 +154,9 @@ export interface SewApiDeps {
 
 export interface SewApi {
   fetchBearer(): Promise<string | null>
+  /** Логин текущей сессии SEW по перехвату SPA; null — перехвата не было
+   *  (например, SPA ещё не делала запросов к подсистеме ценников). */
+  fetchSessionUsername(): Promise<string | null>
   json(path: string, init?: SewHttpInit): Promise<unknown>
   text(path: string): Promise<string>
   /** POST, тело ответа не читается. Нужно там, где SEW отвечает 200 с пустым
@@ -177,26 +186,43 @@ async function readErrorBody(res: { text?: () => Promise<string> }): Promise<str
 }
 
 export function createSewApi(deps: SewApiDeps): SewApi {
+  /** Первая вкладка SEW, у которой pick вернул непустое значение. Гость не на
+   *  SEW-хосте (Keycloak SSO, подделанный домен) и неготовый пропускается —
+   *  ровно как в fetchBearer. */
+  async function firstFromSewGuest(pick: (id: number) => Promise<string | null>): Promise<string | null> {
+    for (const id of deps.guestIds()) {
+      let value: string | null = null
+      try {
+        const url = String((await deps.guestEval(id, GUEST_URL_JS)) ?? '')
+        if (!isSewHost(url)) continue
+        value = await pick(id)
+      } catch {
+        // гость ещё не готов (нет dom-ready) или уже выгружен — следующий
+        continue
+      }
+      if (value) return value
+    }
+    return null
+  }
+
   /** Заголовок Authorization из первой вкладки SEW, которая его отдала, иначе
    *  null. URL гостя сверяется обязательно: в allowlist есть Keycloak SSO
    *  (kc.tech.mvideo.ru), там в storage тоже лежит `keycloak.token` — без
    *  сверки чужой токен ушёл бы в запрос и SEW ответил бы 401, а вызывающий
    *  показал бы «сессия протухла». */
   async function fetchBearer(): Promise<string | null> {
-    for (const id of deps.guestIds()) {
-      let raw: unknown = null
-      try {
-        const url = String((await deps.guestEval(id, GUEST_URL_JS)) ?? '')
-        if (!isSewHost(url)) continue
-        raw = await deps.guestEval(id, SEW_BEARER_JS)
-      } catch {
-        // гость ещё не готов (нет dom-ready) или уже выгружен — следующий
-        continue
-      }
-      const header = bearerHeader(raw)
-      if (header) return header
-    }
-    return null
+    const raw = await firstFromSewGuest((id) =>
+      Promise.resolve(deps.guestEval(id, SEW_BEARER_JS) as Promise<string | null>),
+    )
+    return bearerHeader(raw)
+  }
+
+  async function fetchSessionUsername(): Promise<string | null> {
+    const raw = await firstFromSewGuest((id) =>
+      Promise.resolve(deps.guestEval(id, SEW_USERNAME_JS) as Promise<string | null>),
+    )
+    const value = typeof raw === 'string' ? raw.trim() : ''
+    return isValidSewUsername(value) ? value : null
   }
 
   async function request(path: string, init: SewHttpInit | undefined, as: 'json' | 'text' | 'none'): Promise<unknown> {
@@ -239,6 +265,7 @@ export function createSewApi(deps: SewApiDeps): SewApi {
 
   return {
     fetchBearer,
+    fetchSessionUsername,
     json: (path, init) => request(path, init, 'json') as Promise<unknown>,
     text: (path) => request(path, undefined, 'text') as Promise<string>,
     post: (path, body) => request(path, { method: 'POST', body }, 'none') as Promise<void>,

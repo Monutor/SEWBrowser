@@ -264,6 +264,43 @@ test('createSewApi: post() не разбирает тело — пустой о�
   assert.equal(init.body, '{}')
 })
 
+test('createSewApi: fetchSessionUsername берёт x-username у вкладки SEW, мусор — нет', async () => {
+  const asked: Array<[number, string]> = []
+  // 1 — не SEW-хост (Keycloak SSO), 2 — SEW, но перехвата не было.
+  const urls = ['https://kc.tech.mvideo.ru/auth', `${SEW_ORIGIN}/v2/`]
+  const api = createSewApi({
+    guestIds: () => [1, 2],
+    fetchImpl: () => Promise.reject(new Error('сеть не нужна')),
+    guestEval: (id, code) => {
+      const branch = code === 'location.href' ? 'url' : 'username'
+      asked.push([id, branch])
+      if (branch === 'url') return Promise.resolve(urls[id - 1])
+      return Promise.resolve(null)
+    },
+  })
+  assert.equal(await api.fetchSessionUsername(), null)
+  // у чужого гостя логин даже не спрашивали
+  assert.deepEqual(asked, [[1, 'url'], [2, 'url'], [2, 'username']])
+
+  const live = createSewApi({
+    guestIds: () => [7],
+    fetchImpl: () => Promise.reject(new Error('сеть не нужна')),
+    guestEval: (id, code) =>
+      Promise.resolve(code === 'location.href' ? `${SEW_ORIGIN}/v2/` : ' 172030 '),
+  })
+  assert.equal(await live.fetchSessionUsername(), '172030')
+
+  // Мусор из заголовков чужого запроса в подсказку не пускаем: значение пойдёт
+  // в текст пользователю и в заголовок нашего запроса.
+  const junk = createSewApi({
+    guestIds: () => [7],
+    fetchImpl: () => Promise.reject(new Error('сеть не нужна')),
+    guestEval: (id, code) =>
+      Promise.resolve(code === 'location.href' ? `${SEW_ORIGIN}/v2/` : 'user\r\nX-Evil: 1'),
+  })
+  assert.equal(await junk.fetchSessionUsername(), null)
+})
+
 test('createSewApi: post() по-прежнему прокидывает status не-2xx', async () => {
   const api = createSewApi({
     guestIds: () => [7],

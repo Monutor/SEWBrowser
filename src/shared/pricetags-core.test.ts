@@ -3,12 +3,14 @@ import assert from 'node:assert/strict'
 import {
   buildPrintTaskBody,
   buildSearchBody,
+  isAccessDenied,
   isValidBarcodeWidth,
   isValidCopies,
   isValidPaperColorId,
   isValidTemplateId,
   normalizeSearchResponse,
   parseSkuInput,
+  pricetagAccessHint,
   pricetagFileName,
   sewContentError,
   sewErrorMessage,
@@ -179,6 +181,29 @@ test('sewErrorMessage: свой текст SEW важнее нашей дога�
   assert.equal(sewErrorMessage(403, 'ценники', ''), 'нет прав на ценники по магазину')
   assert.equal(sewErrorMessage(403, 'ценники', '<html>403</html>'), 'нет прав на ценники по магазину')
   assert.equal(sewErrorMessage(403, 'ценники', '{}'), 'нет прав на ценники по магазину')
+})
+
+test('isAccessDenied: 403, «Access Denied» в теле и в тексте ошибки SEW', () => {
+  assert.equal(isAccessDenied(403), true)
+  assert.equal(isAccessDenied(200, '{"responseHeader":{"errors":[{"message":"Произошла неизвестная ошибка: Access Denied"}]}}'), true)
+  assert.equal(isAccessDenied(0, 'Access denied'), true)
+  assert.equal(isAccessDenied(200, '{"message":"Нет прав на шаблон"}'), false)
+  assert.equal(isAccessDenied(401, '{"message":"сессия протухла"}'), false)
+  assert.equal(isAccessDenied(200), false)
+})
+
+test('pricetagAccessHint: несовпадение логинов называет оба номера', () => {
+  const hint = pricetagAccessHint('181165', '172030')
+  assert.match(hint, /181165/)
+  assert.match(hint, /172030/)
+  assert.match(hint, /x-username/)
+  // Пустое поле — тоже несовпадение, только без второго номера.
+  assert.match(pricetagAccessHint('', '172030'), /172030/)
+  // Один логин известен — советуем проверить поле, а не выдумываем причину.
+  assert.match(pricetagAccessHint('181165', ''), /181165/)
+  assert.match(pricetagAccessHint('', ''), /табельный номер/)
+  // Совпадение логинов: функция не вызывается, но и логику не ломает.
+  assert.doesNotMatch(pricetagAccessHint('181165', '181165'), /сессия открыта/)
 })
 
 test('валидаторы конфига', () => {

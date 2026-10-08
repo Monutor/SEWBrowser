@@ -3496,3 +3496,31 @@ body {
   color: #e0a83c;
   font-size: 12px;
 }
+
+/* Несовпадение логина настроек с логином живой сессии SEW: та же тревожная
+   оранжевая подсказка, но с кнопкой — исправляется в один клик. */
+.pricetags-login-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -4px 0 6px;
+  color: #e0a83c;
+  font-size: 12px;
+}
+.pricetags-login-hint[hidden] {
+  display: none;
+}
+.pricetags-login-fix {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 12px;
+  color: #e0a83c;
+  background: transparent;
+  border: 1px solid rgba(224, 168, 60, 0.5);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.pricetags-login-fix:hover {
+  background: rgba(224, 168, 60, 0.12);
+}
