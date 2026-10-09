@@ -35,6 +35,7 @@ import {
 import { isAllowedScanTarget, normalizeScanPath, pickedScanPath } from './scans-core'
 import { isAllowedFaviconUrl } from './favicon-core'
 import { isAllowedStockTarget } from './stock-core'
+import { sanitizeTaskNotifications, TASKS_DEFAULT_PATH } from './tasks-core'
 
 let mainWindow: BrowserWindow | null = null
 // Мониторинг папок HP-софта (по одной на каждую папку из scanFolders в настройках).
@@ -434,8 +435,9 @@ function createWindow(): void {
   })
   // Уведомления tasks-notify: пачка за тик → одно OS-уведомление (или по одному при <=3)
   ipcMain.handle('notify:tasks', (_event, items: unknown) => {
-    const list = Array.isArray(items) ? items.filter((x): x is { id: number; title: string; body: string; url: string } =>
-      !!x && typeof x === 'object' && typeof (x as {id:unknown}).id === 'number' && typeof (x as {title:unknown}).title === 'string') : []
+    // title/body/url пришли от гостевой страницы: режем длины, url сверяем с
+    // allowlist (иначе клик по уведомлению открыл бы чужой сайт).
+    const list = sanitizeTaskNotifications(items, isAllowedUrl)
     if (list.length === 0 || !mainWindow || mainWindow.isDestroyed()) return false
     const ttlSec = alertTtlSec()
     const showOne = (title: string, body: string, url: string): void => {
@@ -460,9 +462,9 @@ function createWindow(): void {
       }
     }
     if (list.length <= 3) {
-      for (const it of list) showOne(it.title, typeof it.body === 'string' ? it.body : '', typeof it.url === 'string' ? it.url : '/v2/relocation/tasks')
+      for (const it of list) showOne(it.title, it.body, it.url || TASKS_DEFAULT_PATH)
     } else {
-      showOne(`Новые задания: ${list.length}`, list.slice(0, 3).map((x) => x.title).join('\n'), '/v2/relocation/tasks')
+      showOne(`Новые задания: ${list.length}`, list.slice(0, 3).map((x) => x.title).join('\n'), TASKS_DEFAULT_PATH)
     }
     try { mainWindow.flashFrame(true) } catch { /* ignore */ }
     return true
