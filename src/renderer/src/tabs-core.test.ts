@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  applyInPageNavigation,
   clampTabIndex,
   cycleTabIndex,
   hostOfTabUrl,
@@ -8,6 +9,7 @@ import {
   normalizeTabUrl,
   tabTitle,
   tabsToSuspend,
+  type NavHistoryState,
   type SuspendCandidate,
 } from './tabs-core.ts'
 
@@ -302,5 +304,59 @@ describe('tabsToSuspend', () => {
 
   it('пустой список вкладок даёт пустой план', () => {
     assert.deepEqual(tabsToSuspend([], { budget: 4, activeId: 0, isSplit: false }), [])
+  })
+})
+
+describe('applyInPageNavigation — переход внутри документа', () => {
+  const nav = (over: Partial<NavHistoryState> = {}): NavHistoryState => ({
+    navCount: 3,
+    maxNav: 5,
+    pendingHistory: 0,
+    ...over,
+  })
+
+  it('применяет отложенный шаг назад и обнуляет pendingHistory', () => {
+    const s = nav({ pendingHistory: -1 })
+    assert.deepEqual(applyInPageNavigation(s), { navCount: 2, maxNav: 5 })
+    assert.equal(s.pendingHistory, 0)
+  })
+
+  it('применяет отложенный шаг вперёд', () => {
+    const s = nav({ pendingHistory: 1 })
+    assert.deepEqual(applyInPageNavigation(s), { navCount: 4, maxNav: 5 })
+  })
+
+  it('без отложенного шага глубину не трогает', () => {
+    const s = nav()
+    assert.deepEqual(applyInPageNavigation(s), { navCount: 3, maxNav: 5 })
+  })
+
+  it('отложенный шаг назад у самой первой записи игнорирует', () => {
+    assert.deepEqual(applyInPageNavigation(nav({ navCount: 1, pendingHistory: -1 })), {
+      navCount: 1,
+      maxNav: 5,
+    })
+  })
+
+  it('отложенный шаг вперёд на конце истории игнорирует', () => {
+    assert.deepEqual(applyInPageNavigation(nav({ navCount: 5, maxNav: 5, pendingHistory: 1 })), {
+      navCount: 5,
+      maxNav: 5,
+    })
+  })
+
+  it('pendingHistory всегда обнуляется, даже когда шаг неприменим', () => {
+    const s = nav({ navCount: 5, maxNav: 5, pendingHistory: 1 })
+    applyInPageNavigation(s)
+    assert.equal(s.pendingHistory, 0)
+  })
+
+  it('не заводит новую запись истории (в отличие от полной навигации)', () => {
+    // Кнопки «назад/вперёд» в SPA остаются на своём уровне: вкладка не должна
+    // углублять историю на каждый pushState.
+    assert.deepEqual(applyInPageNavigation(nav({ navCount: 2, maxNav: 2 })), {
+      navCount: 2,
+      maxNav: 2,
+    })
   })
 })

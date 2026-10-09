@@ -113,6 +113,34 @@ export interface SuspendPlanOptions {
   isSplit: boolean
 }
 
+export interface NavHistoryState {
+  navCount: number
+  maxNav: number
+  pendingHistory: number
+}
+
+/**
+ * Переход внутри документа (did-navigate-in-page): SPA-переход, смена hash.
+ *
+ * Нового документа нет, поэтому глубину не углубляем — иначе кнопки «назад/
+ * вперёд» уезжали бы на каждую внутреннюю перерисовку адреса. Но отложенный
+ * шаг нашей кнопки «назад/вперёд» (pendingHistory) обязателен к применению:
+ * гость отдаёт его именно этим событием, а не did-navigate. Иначе он повиснет
+ * и следующая полная навигация будет засчитана как шаг «назад».
+ *
+ * Состояние мутируется на месте (pendingHistory гасится в любом случае) —
+ * так же, как его сбрасывает полная навигация в tabs.ts.
+ */
+export function applyInPageNavigation(state: NavHistoryState): { navCount: number; maxNav: number } {
+  const delta = state.pendingHistory
+  state.pendingHistory = 0
+  if (delta !== 0) {
+    const next = state.navCount + delta
+    if (next >= 1 && next <= state.maxNav) state.navCount = next
+  }
+  return { navCount: state.navCount, maxNav: state.maxNav }
+}
+
 /**
  * Кого выгрузить (разорвать <webview>), чтобы живых гостей осталось не больше budget.
  *

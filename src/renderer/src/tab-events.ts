@@ -3,6 +3,7 @@ import {
   activeView,
   isActiveTab,
   isSplit,
+  noteTabInPageNavigated,
   noteTabNavigated,
   openTab,
   setSplitFocus,
@@ -220,6 +221,10 @@ export function wireTabEvents(tab: ShellTab): void {
   })
   view.addEventListener('did-navigate-in-page', (event) => {
     setTabUrl(tab, event.url)
+    // Тот же документ: история не углубляется, но отложенный шаг нашей кнопки
+    // «назад/вперёд» отрабатывает здесь — иначе он повиснет и следующая полная
+    // навигация пройдёт как шаг «назад».
+    if (noteTabInPageNavigated(tab) && isActiveTab(tab)) deps.updateNavButtons()
     if (isActiveTab(tab)) deps.updateAddressBar()
   })
   view.addEventListener('did-finish-load', () => {

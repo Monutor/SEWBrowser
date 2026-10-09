@@ -1,4 +1,4 @@
-import { clampTabIndex, cycleTabIndex, isOpenInWindowGesture, normalizeTabUrl, tabFavicon, tabTitle, tabsToSuspend } from './tabs-core.ts'
+import { applyInPageNavigation, clampTabIndex, cycleTabIndex, isOpenInWindowGesture, normalizeTabUrl, tabFavicon, tabTitle, tabsToSuspend } from './tabs-core.ts'
 
 /**
  * Менеджер вкладок: по одному живому <webview> на вкладку, все работают одновременно.
@@ -595,6 +595,20 @@ export function noteTabNavigated(tab: ShellTab): void {
   }
   tab.navCount = tab.maxNav + 1
   tab.maxNav = tab.navCount
+}
+
+/**
+ * Переход внутри документа в did-navigate-in-page (SPA, смена hash): новый
+ * документ не загружен, поэтому история не углубляется — но отложенный шаг
+ * нашей кнопки «назад/вперёд» обязан отработать именно здесь, иначе он повиснет
+ * и следующая полная навигация пройдёт как шаг «назад».
+ *
+ * Возвращает true, если глубина сдвинулась — вызывающий обновит кнопки.
+ */
+export function noteTabInPageNavigated(tab: ShellTab): boolean {
+  const before = tab.navCount
+  applyInPageNavigation(tab)
+  return tab.navCount !== before
 }
 
 export function canTabGoBack(tab: ShellTab): boolean {
