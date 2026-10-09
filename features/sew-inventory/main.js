@@ -284,18 +284,19 @@ var UNIT_ATTEMPTS = 2
   function pickStockFile() {
     return new Promise(function (resolve) {
       var id = 'pick' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)
-      var answers = window[RES] || (window[RES] = {})
+      // Ключ НЕ создаём заранее: invTakeAnswer отличает «ещё нет ответа» по
+      // отсутствию ключа, и заглушка '' выглядела бы как ответ моста.
       var queue = window[REQ] || (window[REQ] = [])
-      answers[id] = ''
       queue.push({ id: id, type: 'pick' })
       var waited = 0
       var timer = setInterval(function () {
         waited += ANSWER_POLL_MS
-        var box = window[RES] || {}
-        if (box[id]) {
+        // Ответ — это наличие ключа, а не truthy-значение: отмена диалога
+        // приходит как null (см. invAnswered в core.js).
+        var taken = invTakeAnswer(window[RES], id)
+        if (taken.answered) {
           clearInterval(timer)
-          var raw = box[id]
-          delete box[id]
+          var raw = taken.value
           var picked = typeof raw === 'string' ? raw : ''
           if (picked) {
             state.stockPath = picked
@@ -307,7 +308,6 @@ var UNIT_ATTEMPTS = 2
         }
         if (waited >= ANSWER_TIMEOUT_MS) {
           clearInterval(timer)
-          delete box[id]
           console.warn('[sew-inventory] мост не ответил на выбор файла за', ANSWER_TIMEOUT_MS / 1000, 'с')
           resolve(null)
         }
@@ -541,19 +541,17 @@ function shelfBarcodeOf(row) {
   function requestStock(zone, skus, manualPath) {
     return new Promise(function (resolve) {
       var id = 'inv' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)
-      var answers = window[RES] || (window[RES] = {})
+      // Ключ заранее не создаём — см. invTakeAnswer в core.js.
       var queue = window[REQ] || (window[REQ] = [])
-      answers[id] = ''
       // Ручной режим передаёт путь к файлу; main читает его вместо скачивания.
       queue.push({ id: id, zone: zone, skus: skus, manualPath: manualPath || undefined })
       var waited = 0
       var timer = setInterval(function () {
         waited += ANSWER_POLL_MS
-        var box = window[RES] || {}
-        if (box[id]) {
+        var taken = invTakeAnswer(window[RES], id)
+        if (taken.answered) {
           clearInterval(timer)
-          var raw = box[id]
-          delete box[id]
+          var raw = taken.value
           // Мост оболочки кладёт в ответ ОБЪЕКТ (JSON.stringify без кавычек в
           // коде гостя даёт литерал) — принимаем и объект, и строку, чтобы
           // не зависеть от того, как именно записан ответ.
@@ -577,7 +575,6 @@ function shelfBarcodeOf(row) {
         }
         if (waited >= ANSWER_TIMEOUT_MS) {
           clearInterval(timer)
-          delete box[id]
           console.warn('[sew-inventory] мост не ответил за', ANSWER_TIMEOUT_MS / 1000, 'с; в очереди осталось:', (window[REQ] || []).length)
           resolve({ ok: false, error: 'оболочка не ответила — перезапусти приложение (main/preload меняются только при рестарте)' })
         }

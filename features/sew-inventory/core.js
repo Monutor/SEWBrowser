@@ -111,6 +111,28 @@ function emuTarget(remaining, dev, depth, rnd) {
   return base
 }
 
+// --- Мост остатков: контракт ответа ----------------------------------------
+// Ответ кладут в window.__sewInventoryRes[id] и он может быть FALSY: отмена
+// диалога «выбрать файл» — это null, а мост оболочки пишет JSON.stringify(...),
+// так что undefined тоже становится null. Проверка `if (box[id])` на таком
+// ответе не срабатывает, и гость молча крутит таймер до ANSWER_TIMEOUT_MS
+// (120 с), а потом рапортует «мост не ответил». Ответ — это НАЛИЧИЕ ключа.
+
+/** Есть ли ответ моста по id (значение может быть любым, включая null). */
+function invAnswered(box, id) {
+  if (!box || typeof box !== 'object') return false
+  if (typeof id !== 'string' || !id) return false
+  return Object.prototype.hasOwnProperty.call(box, id)
+}
+
+/** Забрать ответ моста и убрать ключ. answered:false — ответа ещё нет. */
+function invTakeAnswer(box, id) {
+  if (!invAnswered(box, id)) return { answered: false, value: undefined }
+  var value = box[id]
+  try { delete box[id] } catch (e) {}
+  return { answered: true, value: value }
+}
+
 /** Человекочитаемые итоги внедрённых отклонений для статус-бара. */
 function emuDescribe(counts) {
   var src = counts && typeof counts === 'object' ? counts : {}
