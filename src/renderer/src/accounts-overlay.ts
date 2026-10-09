@@ -2,6 +2,7 @@ import { setStatus } from './status-ui'
 import { guestJS } from './guest'
 import { activeTab } from './tabs'
 import { isGuestReady } from './tab-events'
+import { createRenderSeq, runLatest } from './render-seq-core.ts'
 
 // DOM-ссылки берём лениво: типы ненулевые (гарды в функциях остаются рабочими
 // как защита на момент вызова), иначе повторные вызовы дают каскад TS2531.
@@ -41,22 +42,37 @@ function accountLabel(a: AccountInfo): string {
   return a.fio ? `${a.fio} · ${a.tabNum}` : a.tabNum
 }
 
-/** Список аккаунтов в окне «Аккаунты SEW»: войти / изменить / удалить */
+/**
+ * Список аккаунтов в окне «Аккаунты SEW»: войти / изменить / удалить.
+ *
+ * Через runLatest: два параллельных входа (двойной Ctrl+Shift+L или хоткей
+ * поверх checkLoginForm) оба очищают список до await, а рисовать должен
+ * только более новый вызов — иначе строки задваиваются.
+ */
+const accountsSeq = createRenderSeq()
+
 async function renderAccountsList(): Promise<AccountInfo[]> {
   const setAccounts = setAccountsEl()
   if (setAccounts) setAccounts.innerHTML = ''
-  let accounts: AccountInfo[] = []
+  return runLatest(accountsSeq, loadAccounts, (accounts) => renderAccounts(accounts, setAccounts))
+}
+
+async function loadAccounts(): Promise<AccountInfo[]> {
   try {
-    accounts = await window.shell.listAccounts()
+    return await window.shell.listAccounts()
   } catch (err) {
     console.warn('[shell] list accounts failed:', err)
+    return []
   }
-  if (!setAccounts) return accounts
+}
+
+function renderAccounts(accounts: AccountInfo[], setAccounts: HTMLElement | null): void {
+  if (!setAccounts) return
   if (accounts.length === 0) {
     const empty = document.createElement('span')
     empty.textContent = 'Нет сохранённых аккаунтов'
     setAccounts.append(empty)
-    return accounts
+    return
   }
   for (const a of accounts) {
     const row = document.createElement('div')
@@ -79,7 +95,6 @@ async function renderAccountsList(): Promise<AccountInfo[]> {
     row.append(info, login, edit, del)
     setAccounts.append(row)
   }
-  return accounts
 }
 
 async function deleteAccount(a: AccountInfo): Promise<void> {
