@@ -1,7 +1,8 @@
 import { app, safeStorage } from 'electron'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
+import { writeJsonAtomic } from '../json-file'
 
 /**
  * Аккаунты SEW (табельный номер + пароль + ФИО-подпись).
@@ -44,9 +45,7 @@ function readAll(): StoredAccount[] {
 }
 
 function writeAll(accounts: StoredAccount[]): void {
-  const file = credentialsFile()
-  mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, JSON.stringify(accounts, null, 2), 'utf-8')
+  writeJsonAtomic(credentialsFile(), accounts)
 }
 
 function toPublic(a: StoredAccount): AccountPublic {
@@ -132,8 +131,7 @@ export function getLastUsedAccountId(): string | null {
 
 export function setLastUsedAccountId(id: string | null): void {
   try {
-    mkdirSync(dirname(lastAccountFile()), { recursive: true })
-    writeFileSync(lastAccountFile(), JSON.stringify({ accountId: id ?? null }), 'utf-8')
+    writeJsonAtomic(lastAccountFile(), { accountId: id ?? null })
   } catch (err) {
     console.warn('[credentials] failed to write last account:', err)
   }

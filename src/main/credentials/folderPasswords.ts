@@ -1,8 +1,9 @@
 import { app, safeStorage } from 'electron'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { createFolderUnlockStore } from './folderUnlock'
+import { writeJsonAtomic } from '../json-file'
 
 /**
  * Пароли к папкам вкладок. Хранятся ТОЛЬКО в шифрованном виде: safeStorage ОС
@@ -40,9 +41,7 @@ function readAll(): StoredFolderPassword[] {
 }
 
 function writeAll(all: StoredFolderPassword[]): void {
-  const f = file()
-  mkdirSync(dirname(f), { recursive: true })
-  writeFileSync(f, JSON.stringify(all, null, 2), 'utf-8')
+  writeJsonAtomic(file(), all)
 }
 
 export function isFolderPasswordEncryptionAvailable(): boolean {

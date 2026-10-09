@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { normalizeRememberMinutes } from './credentials/folderUnlock'
 import { DEFAULT_OBJECT_ID, isValidObjectId } from './downloads/stockReport'
@@ -13,6 +13,7 @@ import { dropInvalidPricetags, pickMaxLiveTabs, pickPricetagConfig } from './con
 // должны разъезжаться: если здесь принять строку, которую sew-api потом пошлёт
 // «как есть», в заголовок может попасть мусор из config.json.
 import { isValidSewUsername } from './sew-api'
+import { writeJsonAtomic } from './json-file'
 
 export interface NavTab {
   id: string;
@@ -371,7 +372,7 @@ export function saveConfig(partial: Partial<SewConfig>): SewConfig {
   // иначе оно вечно хранится в config.json мёртвым грузом.
   if ('scanFolders' in validPartial) delete merged.scanFolder
   try {
-    writeFileSync(configFile(), JSON.stringify(merged, null, 2), 'utf-8')
+    writeJsonAtomic(configFile(), merged)
   } catch (err) {
     console.warn('[SEWBrowser] failed to write config:', err)
   }

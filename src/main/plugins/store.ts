@@ -1,6 +1,7 @@
 import { app } from 'electron'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { writeJsonAtomic } from '../json-file'
 
 /**
  * Персистентное key-value хранилище данных плагинов — замена chrome.storage.local
@@ -49,7 +50,7 @@ export function setPluginData(name: string, obj: Record<string, unknown>): boole
   const file = fileOf(name)
   if (!file || !obj || typeof obj !== 'object') return false
   try {
-    writeFileSync(file, JSON.stringify({ ...readAll(name), ...obj }, null, 2), 'utf-8')
+    writeJsonAtomic(file, { ...readAll(name), ...obj })
     return true
   } catch {
     return false
@@ -64,7 +65,7 @@ export function removePluginData(name: string, keys: string[]): boolean {
     if (typeof key === 'string') delete all[key]
   }
   try {
-    writeFileSync(file, JSON.stringify(all, null, 2), 'utf-8')
+    writeJsonAtomic(file, all)
     return true
   } catch {
     return false

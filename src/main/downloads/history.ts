@@ -1,6 +1,7 @@
 import { app } from 'electron'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { writeJsonAtomic } from '../json-file'
 
 export interface DownloadRecord {
   id: string
@@ -51,7 +52,7 @@ export function loadDownloadHistory(): DownloadRecord[] {
 
 function saveHistory(records: DownloadRecord[]): void {
   try {
-    writeFileSync(historyFile(), JSON.stringify(records, null, 2), 'utf-8')
+    writeJsonAtomic(historyFile(), records)
   } catch (err) {
     console.warn('[downloads] failed to write history:', err)
   }
