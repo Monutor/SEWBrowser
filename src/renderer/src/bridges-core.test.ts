@@ -7,6 +7,7 @@ import {
   asScansReqs,
   buildTakeScript,
   emptyQueues,
+  isInteractiveRequest,
   nextPollDelay,
   parseTakeResult,
 } from './bridges-core.ts'
@@ -129,6 +130,31 @@ describe('asInvReqs', () => {
   })
   it('режет записи без id', () => {
     assert.deepEqual(asInvReqs([{ zone: 'z' }]), [])
+  })
+})
+
+describe('isInteractiveRequest', () => {
+  it('выбор файла сканов — интерактивный: ждёт модальный диалог', () => {
+    assert.equal(isInteractiveRequest('scans', { type: 'pick' }), true)
+  })
+  it('выбор файла остатков — интерактивный', () => {
+    assert.equal(isInteractiveRequest('inv', { type: 'pick' }), true)
+  })
+  it('чтение/удаление/список сканов ждут ответа мгновенно — не интерактивные', () => {
+    assert.equal(isInteractiveRequest('scans', { type: 'read' }), false)
+    assert.equal(isInteractiveRequest('scans', { type: 'delete' }), false)
+    assert.equal(isInteractiveRequest('scans', { type: 'list' }), false)
+    assert.equal(isInteractiveRequest('scans', { type: 'launch' }), false)
+    assert.equal(isInteractiveRequest('scans', { type: 'open' }), false)
+    assert.equal(isInteractiveRequest('scans', { type: 'show' }), false)
+  })
+  it('разбор остатков по зоне без диалога — не интерактивный', () => {
+    assert.equal(isInteractiveRequest('inv', { type: undefined }), false)
+    assert.equal(isInteractiveRequest('inv', { type: 'read' }), false)
+  })
+  it('BFF-запросы не интерактивные ни при каком type', () => {
+    assert.equal(isInteractiveRequest('bff', { type: 'pick' }), false)
+    assert.equal(isInteractiveRequest('bff', { type: undefined }), false)
   })
 })
 

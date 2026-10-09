@@ -364,29 +364,29 @@ function createWindow(): void {
   })
   // Выбор папки сохранения файлов (окно «Загрузки»). Пустая строка в
   // конфиге означает «системные Загрузки», поэтому сброс = пустая строка.
-  ipcMain.handle('downloads:pick-dir', () => {
+  ipcMain.handle('downloads:pick-dir', async () => {
     if (!mainWindow || mainWindow.isDestroyed()) return null
     const start = defaultSaveDir()
-    const picked = dialog.showOpenDialogSync(mainWindow, {
+    const picked = await dialog.showOpenDialog(mainWindow, {
       title: 'Папка сохранения файлов',
       defaultPath: start,
       properties: ['openDirectory', 'createDirectory'],
     })
-    const dir = Array.isArray(picked) ? picked[0] : undefined
+    const dir = picked && !picked.canceled ? picked.filePaths[0] : undefined
     if (!dir) return null
     saveConfig({ downloadsDir: dir })
     return dir
   })
   // Папка для отчёта об остатках. Пустая строка = папка загрузок (defaultSaveDir),
   // поэтому сброс = пустая строка, как у downloadsDir.
-  ipcMain.handle('stock:pick-dir', () => {
+  ipcMain.handle('stock:pick-dir', async () => {
     if (!mainWindow || mainWindow.isDestroyed()) return null
-    const picked = dialog.showOpenDialogSync(mainWindow, {
+    const picked = await dialog.showOpenDialog(mainWindow, {
       title: 'Папка для отчёта об остатках',
       defaultPath: stockSaveDir(),
       properties: ['openDirectory', 'createDirectory'],
     })
-    const dir = Array.isArray(picked) ? picked[0] : undefined
+    const dir = picked && !picked.canceled ? picked.filePaths[0] : undefined
     if (!dir) return null
     saveConfig({ stockDir: dir })
     return dir
@@ -480,7 +480,7 @@ function createWindow(): void {
   ipcMain.handle('sound:pick', async (_event, slot: unknown) => {
     if (!isSoundSlot(slot)) return null
     if (!mainWindow || mainWindow.isDestroyed()) return null
-    const paths = await dialog.showOpenDialogSync(mainWindow, {
+    const picked = await dialog.showOpenDialog(mainWindow, {
       title: 'Выберите звук уведомления',
       filters: [
         { name: 'Аудио', extensions: ['mp3', 'wav', 'ogg'] },
@@ -488,6 +488,7 @@ function createWindow(): void {
       ],
       properties: ['openFile'],
     })
+    const paths = picked && !picked.canceled ? picked.filePaths : []
     if (!Array.isArray(paths) || paths.length === 0) return null
     const src = paths[0]
     const ext = pickSoundExt(basename(src))
@@ -944,9 +945,11 @@ function createWindow(): void {
       return content
     })
     // Выбор файла с диска (альтернатива HP-софту): диалог → чтение в base64.
+    // Диалог обязателен асинхронным: showOpenDialogSync блокирует event loop
+    // main, а значит и весь IPC оболочки на время, пока пользователь выбирает файл.
     ipcMain.handle('scans:pick', async () => {
       if (!mainWindow || mainWindow.isDestroyed()) return null
-      const paths = await dialog.showOpenDialogSync(mainWindow, {
+      const picked = await dialog.showOpenDialog(mainWindow, {
         title: 'Выберите файл для переноса в SEW',
         filters: [
           { name: 'Документы', extensions: ['pdf', 'png', 'jpg', 'jpeg', 'bmp', 'tif', 'tiff'] },
@@ -954,8 +957,8 @@ function createWindow(): void {
         ],
         properties: ['openFile'],
       })
-      if (!Array.isArray(paths) || paths.length === 0) return null
-      const content = readScanFile(paths[0])
+      if (!picked || picked.canceled || !Array.isArray(picked.filePaths) || picked.filePaths.length === 0) return null
+      const content = readScanFile(picked.filePaths[0])
       if (!content) return null
       // Пользователь выбрал этот файл в диалоге — разрешаем оперировать им,
       // даже если он лежит вне папок сканов. Гость дописать сюда путь не может.
@@ -966,20 +969,22 @@ function createWindow(): void {
     // Выбор пути к программе сканера (EXE) — для настройки scannerAppPath.
     ipcMain.handle('scans:browse-app', async () => {
       if (!mainWindow || mainWindow.isDestroyed()) return ''
-      const paths = await dialog.showOpenDialogSync(mainWindow, {
+      const picked = await dialog.showOpenDialog(mainWindow, {
         title: 'Выберите программу сканера (EXE)',
         filters: [{ name: 'Программа', extensions: ['exe'] }],
         properties: ['openFile'],
       })
+      const paths = picked && !picked.canceled ? picked.filePaths : []
       return Array.isArray(paths) && paths.length > 0 ? paths[0] : ''
     })
     // Выбор павки автосохранения сканов — для настройки scanFolder.
     ipcMain.handle('scans:browse-folder', async () => {
       if (!mainWindow || mainWindow.isDestroyed()) return ''
-      const paths = await dialog.showOpenDialogSync(mainWindow, {
+      const picked = await dialog.showOpenDialog(mainWindow, {
         title: 'Выберите папку автосохранения сканов',
         properties: ['openDirectory'],
       })
+      const paths = picked && !picked.canceled ? picked.filePaths : []
       return Array.isArray(paths) && paths.length > 0 ? paths[0] : ''
     })
 

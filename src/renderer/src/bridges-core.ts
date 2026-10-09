@@ -36,6 +36,24 @@ export function emptyQueues(): TakenQueues {
   return { bff: [], scans: [], inv: [] }
 }
 
+/** Типы запросов, которые открывают модальный диалог выбора файла на диске. */
+const INTERACTIVE_TYPES: Partial<Record<BridgeChannel, readonly string[]>> = {
+  scans: ['pick'],
+  inv: ['pick'],
+}
+
+/**
+ * Запрос, ответ на который придёт только после действия пользователя (выбор
+ * файла в нативном диалоге). На такие ответы нельзя блокировать очередь опроса:
+ * пока диалог открыт, цикл pumpPollBridge не дойдёт до следующих вкладок.
+ */
+export function isInteractiveRequest(channel: BridgeChannel, req: object): boolean {
+  if (!('type' in req)) return false
+  const type = (req as { type: unknown }).type
+  if (typeof type !== 'string') return false
+  return INTERACTIVE_TYPES[channel]?.includes(type) === true
+}
+
 /**
  * Скрипт гостя: разом снимает (splice(0)) все перечисленные очереди и отдаёт их
  * одной JSON-строкой. Строка вместо объекта — результат executeJavaScript

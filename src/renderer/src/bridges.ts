@@ -11,6 +11,7 @@ import {
   BRIDGE_CHANNELS,
   BRIDGE_PLUGIN,
   buildTakeScript,
+  isInteractiveRequest,
   nextPollDelay,
   parseTakeResult,
   type BridgeChannel,
@@ -119,11 +120,31 @@ export async function pumpPollBridge(): Promise<boolean> {
     const queues = parseTakeResult(rawTake)
     if (!anyRequest(queues)) continue
     hadWork = true
+    // Обычные ответы ждём по очереди — они быстрые. Ответ на запрос с нативным
+    // диалогом (выбор файла) уходит в фон: пока пользователь не выбрал файл,
+    // ждать нельзя, иначе pollBusy держит опрос и мосты встают на ВСЕХ вкладках.
     for (const req of asBffReqs(queues.bff)) await answerBff(tab, req)
-    for (const req of asScansReqs(queues.scans)) await answerScans(tab, req)
-    for (const req of asInvReqs(queues.inv)) await answerInventory(tab, req)
+    for (const req of asScansReqs(queues.scans)) await answerRequest('scans', req, () => answerScans(tab, req))
+    for (const req of asInvReqs(queues.inv)) await answerRequest('inv', req, () => answerInventory(tab, req))
   }
   return hadWork
+}
+
+/**
+ * Ответить на один запрос. Интерактивный (нативный диалог) — запустить без
+ * ожидания: гость сам ждёт ответа по своему таймауту, а очередь опроса должна
+ * идти дальше по остальным вкладкам.
+ */
+async function answerRequest(
+  channel: BridgeChannel,
+  req: { id: string },
+  answer: () => Promise<void>,
+): Promise<void> {
+  if (isInteractiveRequest(channel, req)) {
+    answer().catch(() => undefined)
+    return
+  }
+  await answer()
 }
 
 /**
