@@ -460,28 +460,54 @@ describe('moveTab', () => {
     assert.equal(tabsModule.primaryTab()?.id, a!.id)
   })
 
-  it('броск вправо ставит вкладку после цели, влево — перед ней', () => {
+  it('броск вправо ставит вкладку сразу после цели, а не после следующей за ней', () => {
     setup()
     const a = tabsModule.openTab('https://a.mvideoeldorado.ru/')
     const b = tabsModule.openTab('https://b.mvideoeldorado.ru/')
     const c = tabsModule.openTab('https://c.mvideoeldorado.ru/')
     const d = tabsModule.openTab('https://d.mvideoeldorado.ru/')
     assert.ok(a && b && c && d)
-    // Тянем первую вкладку на третью: вправо — встаём после неё
+    // Тянем первую вкладку на третью: вправо — сразу после цели (C), не после D
     fire(tabButton(0), 'dragstart')
     fire(tabButton(2), 'dragover')
     assert.ok(tabButton(2).className.includes('drop-after'))
     fire(tabButton(2), 'drop')
-    assert.deepEqual(tabsModule.listTabs().map((t) => t.id), [b!.id, c!.id, d!.id, a!.id])
-    // Тянем последнюю на первую: влево — встаём перед ней
-    fire(tabButton(3), 'dragstart')
-    fire(tabButton(0), 'dragover')
-    assert.ok(tabButton(0).className.includes('drop-before'))
-    fire(tabButton(0), 'drop')
-    assert.deepEqual(tabsModule.listTabs().map((t) => t.id), [a!.id, b!.id, c!.id, d!.id])
+    assert.deepEqual(tabsModule.listTabs().map((t) => t.id), [b!.id, c!.id, a!.id, d!.id])
     // Маркер снят, перетаскиваемая вкладка не осталась призрачной
     assert.equal(tabButton(0).className.includes('drop-'), false)
     assert.equal(tabButton(0).className.includes('dragging'), false)
+  })
+
+  it('броск влево ставит вкладку сразу перед целью', () => {
+    setup()
+    const a = tabsModule.openTab('https://a.mvideoeldorado.ru/')
+    const b = tabsModule.openTab('https://b.mvideoeldorado.ru/')
+    const c = tabsModule.openTab('https://c.mvideoeldorado.ru/')
+    const d = tabsModule.openTab('https://d.mvideoeldorado.ru/')
+    assert.ok(a && b && c && d)
+    // Тянем последнюю вкладку на вторую: влево — сразу перед ней (B), не перед A
+    fire(tabButton(3), 'dragstart')
+    fire(tabButton(1), 'dragover')
+    assert.ok(tabButton(1).className.includes('drop-before'))
+    fire(tabButton(1), 'drop')
+    assert.deepEqual(tabsModule.listTabs().map((t) => t.id), [a!.id, d!.id, b!.id, c!.id])
+  })
+
+  it('броск на соседнюю вкладку меняет их местами в обе стороны', () => {
+    setup()
+    const a = tabsModule.openTab('https://a.mvideoeldorado.ru/')
+    const b = tabsModule.openTab('https://b.mvideoeldorado.ru/')
+    const c = tabsModule.openTab('https://c.mvideoeldorado.ru/')
+    const d = tabsModule.openTab('https://d.mvideoeldorado.ru/')
+    assert.ok(a && b && c && d)
+    // Первая на вторую
+    fire(tabButton(0), 'dragstart')
+    fire(tabButton(1), 'drop')
+    assert.deepEqual(tabsModule.listTabs().map((t) => t.id), [b!.id, a!.id, c!.id, d!.id])
+    // Последняя на третью (после перестановки D — по-прежнему последняя)
+    fire(tabButton(3), 'dragstart')
+    fire(tabButton(2), 'drop')
+    assert.deepEqual(tabsModule.listTabs().map((t) => t.id), [b!.id, a!.id, d!.id, c!.id])
   })
 })
 

@@ -738,12 +738,18 @@ let dragTabId = 0
  * тянем вправо (с меньшего индекса на больший) — вставляем после цели, иначе
  * до неё. Так перетаскивание вправо всегда даёт ожидаемый порядок, и правило
  * работает одинаково при любой ширине окна.
+ *
+ * moveTab вставляет индекс уже ПОСЛЕ splice(from, 1), а здесь индексы взяты
+ * ДО него. При переносе вправо цель сдвинулась на вкладку влево, поэтому
+ * «сразу после цели» — это и есть её прежний индекс target, а не target + 1
+ * (ошибочный +1 уводил вкладку за следующую). При переносе влево цель не
+ * сдвигается, и вставка на её прежний индекс = перед ней.
  */
 function dropIndexFor(targetId: number): number {
   const from = tabs.findIndex((tab) => tab.id === dragTabId)
   const target = tabs.findIndex((tab) => tab.id === targetId)
   if (from < 0 || target < 0 || from === target) return -1
-  return from < target ? target + 1 : target
+  return target
 }
 
 /**
