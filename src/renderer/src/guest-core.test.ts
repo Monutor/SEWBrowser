@@ -138,6 +138,77 @@ test('buildInjectScript: кавычки в имени плагина не лом
   assert.match(script, /window\.__shellPluginName = "we\\"ird\\\\name"/)
 })
 
+/** Исполняет батч в node: фейковое окно + настоящий IIFE. */
+function runBatch(
+  shim: string,
+  plugins: InjectablePlugin[],
+): { threw: unknown; errors: Record<string, string>; win: Record<string, unknown> } {
+  const win: Record<string, unknown> = {}
+  const script = buildInjectScript({ stores: {}, pollHost: false, shim, plugins })
+  let threw: unknown = null
+  let errors: Record<string, string> = {}
+  try {
+    // eslint-disable-next-line no-new-func -- воспроизводим ровно то, что уходит в гостя.
+    // `return ` перед IIFE обязателен: executeJavaScript берёт completion value
+    // выражения, а тело функции без return даёт undefined.
+    const run = new Function(
+      'window',
+      'console',
+      `return ${script}`,
+    ) as (w: Record<string, unknown>, c: unknown) => string
+    errors = parseInjectResult(run(win, { error() {}, log() {}, warn() {} }))
+  } catch (err) {
+    threw = err
+  }
+  return { threw, errors, win }
+}
+
+/** Шим, который НЕ выставил фабрику (страница заняла имя или шим упал). */
+const SHIM_WITHOUT_FACTORY =
+  '(function(){ if(!window.__shellChromeShim){ window.__shellChromeShim = true; } })()'
+
+/** Шим, который и штатно выставляет фабрику chrome для плагина. */
+const SHIM_WITH_FACTORY =
+  '(function(){ if(!window.__shellChromeShim){ window.__shellChromeShim = true;' +
+  ' window.__shellChromeFor = function(name){ return { name: name }; }; } })()'
+
+test('buildInjectScript: падение фабрики chrome не обрывает весь батч', () => {
+  const { threw, errors } = runBatch(SHIM_WITHOUT_FACTORY, [
+    plugin('alpha', { code: 'window.__ranAlpha = 1;' }),
+    plugin('beta', { code: 'window.__ranBeta = 1;' }),
+  ])
+  assert.equal(threw, null, 'батч не должен бросать наружу')
+  // Каждый плагин падает сам по себе, а не обрывает соседей и весь скрипт.
+  assert.ok(errors.alpha, 'ошибка первого плагина должна попасть в отчёт')
+  assert.ok(errors.beta, 'второй плагин должен дойти до отчёта, а не быть пропущен')
+})
+
+test('buildInjectScript: со штатным шимом ошибок нет', () => {
+  const { threw, errors, win } = runBatch(SHIM_WITH_FACTORY, [
+    plugin('alpha', { code: 'window.__ranAlpha = 1;' }),
+    plugin('beta', { code: 'window.__ranBeta = 1;' }),
+  ])
+  assert.equal(threw, null)
+  assert.deepEqual(errors, {})
+  assert.equal(win.__ranAlpha, 1)
+  assert.equal(win.__ranBeta, 1)
+})
+
+test('buildInjectScript: init плагина переживает падение фабрики у соседа', () => {
+  const { threw, errors, win } = runBatch(SHIM_WITHOUT_FACTORY, [
+    plugin('alpha', { code: 'window.__ranAlpha = 1;' }),
+    plugin('beta', { init: 'window.__readyBeta = 1;' }),
+  ])
+  assert.equal(threw, null)
+  assert.ok(errors.alpha)
+  assert.equal(win.__readyBeta, 1)
+})
+
+test('buildInjectScript: ошибка chrome попадает в отчёт под именем плагина', () => {
+  const { errors } = runBatch(SHIM_WITHOUT_FACTORY, [plugin('alpha', { code: '1;' })])
+  assert.match(errors.alpha ?? '', /__shellChromeFor|is not a function/)
+})
+
 test('parseInjectResult: разбирает JSON-строку', () => {
   assert.deepEqual(parseInjectResult('{"a":"boom","b":"bang"}'), { a: 'boom', b: 'bang' })
 })

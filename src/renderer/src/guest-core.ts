@@ -88,10 +88,13 @@ export function buildInjectScript(opts: InjectScriptOptions): string {
           // Код выполняется в IIFE с собственным `chrome`, привязанным к стору
           // этого плагина: отложенные вызовы (наблюдатели, обработчики) видят
           // свои данные, а не 'default' (имя в __shellPluginName уже сброшено).
-          `(() => {\nconst chrome = window.__shellChromeFor(${key});\n` +
+          // Вызов фабрики ВНУТРИ guard: шим само-защищён и может не выставиться
+          // (страница заняла имя или он упал), а TypeError на __shellChromeFor
+          // стоял бы вне try и оборвал весь батч — все плагины молчали бы.
+          `(() => {\n` +
           guard(
             plugin.name,
-            `${code}\n`,
+            `const chrome = window.__shellChromeFor(${key});\n${code}\n`,
           ) +
           `\n})();\n` +
           `}\n`,
