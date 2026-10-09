@@ -386,8 +386,13 @@ const api = {
   /** Узкий fetch-мост для плагинов: только allowlist-URL (BFF mvideo — CORS режет из страницы) */
   netFetch: (url: string): Promise<{ ok: boolean; status: number; data: unknown }> =>
     ipcRenderer.invoke('net:fetch', url),
-  /** Иконка вкладки: main качает картинку (оболочка CORS не обойдёт) и отдаёт data-URL */
-  fetchFavicon: (url: string): Promise<string | null> => ipcRenderer.invoke('favicon:fetch', url),
+  /**
+   * Иконка вкладки: main качает картинку (оболочка CORS не обойдёт) и отдаёт
+   * data-URL. Второй аргумент — URL страницы вкладки: main сверяет хост иконки
+   * с хостом страницы и allowlist, не давая гостю качать что угодно.
+   */
+  fetchFavicon: (url: string, pageUrl: string): Promise<string | null> =>
+    ipcRenderer.invoke('favicon:fetch', url, pageUrl),
    /** Уведомления tasks-notify: пачка новых заданий → OS Notification в main */
   notifyTasks: (items: { id: number; title: string; body: string; url: string }[]): Promise<boolean> =>
     ipcRenderer.invoke('notify:tasks', items),

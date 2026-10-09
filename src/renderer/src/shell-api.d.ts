@@ -506,7 +506,7 @@ interface ShellApi {
   /** Узкий fetch-мост main-процесса (только allowlist-URL, напр. BFF mvideo) */
   netFetch(url: string): Promise<NetFetchResult>
   /** Иконка вкладки: main качает картинку и отдаёт data-URL (null — нечем заменить букву) */
-  fetchFavicon(url: string): Promise<string | null>
+  fetchFavicon(url: string, pageUrl: string): Promise<string | null>
   /** Уведомления tasks-notify: пачка новых заданий → OS Notification в main */
   notifyTasks(items: { id: number; title: string; body: string; url: string }[]): Promise<boolean>
   /** Клик по OS-уведомлению tasks-notify: main шлёт 'tasks:open-url' — renderer переходит */

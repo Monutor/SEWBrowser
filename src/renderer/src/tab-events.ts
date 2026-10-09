@@ -150,7 +150,7 @@ export async function loadTabFavicon(tab: ShellTab): Promise<void> {
     return
   }
   try {
-    const data = await window.shell.fetchFavicon(src)
+    const data = await window.shell.fetchFavicon(src, pageUrl)
     if (data) {
       if (faviconCache.size >= FAVICON_CACHE_LIMIT) faviconCache.clear()
       faviconCache.set(host, data)

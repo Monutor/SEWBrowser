@@ -33,6 +33,7 @@ import {
   type ScanFileContent,
 } from './scans'
 import { isAllowedScanTarget, normalizeScanPath, pickedScanPath } from './scans-core'
+import { isAllowedFaviconUrl } from './favicon-core'
 
 let mainWindow: BrowserWindow | null = null
 // Мониторинг папок HP-софта (по одной на каждую папку из scanFolders в настройках).
@@ -522,8 +523,16 @@ function createWindow(): void {
   ipcMain.handle('net:fetch', (_event, url: unknown) => bffFetch(url))
   // Иконка вкладки: renderer не может забрать картинку с чужого хоста (CORS),
   // поэтому качаем в main через net.fetch и отдаём готовый data-URL.
-  ipcMain.handle('favicon:fetch', async (_event, url: unknown) => {
+  // URL иконки приходит из гостевой страницы, поэтому качать можно только у хоста
+  // самой страницы или у хоста из allowlist — иначе это запрос с куками сессии
+  // на любой хост, включая внутреннюю сеть гостя.
+  ipcMain.handle('favicon:fetch', async (_event, url: unknown, pageUrl: unknown) => {
     if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return null
+    const config = getConfig()
+    if (!isAllowedFaviconUrl(url, pageUrl, config.allowlist, config.allowlistEnabled)) {
+      console.warn('[shell] favicon: хост вне allowlist — отказ:', String(url).slice(0, 200))
+      return null
+    }
     try {
       const res = await net.fetch(url)
       const mime = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase()
