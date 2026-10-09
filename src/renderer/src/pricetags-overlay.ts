@@ -1,4 +1,4 @@
-import { PAPER_COLORS, parseSkuInput } from '../../shared/pricetags-core'
+import { detectPatchRejection, PAPER_COLORS, parseSkuInput } from '../../shared/pricetags-core'
 import { setStatus } from './status-ui'
 
 export interface PricetagsOverlayDeps {
@@ -227,15 +227,49 @@ async function loadStores(): Promise<void> {
   )
 }
 
+/** Ключ конфига → поле оверлея. Нужно для точечного отката: показываем в
+ *  поле то, что реально записано в конфиг, а не то, что main отверг. */
+const PATCH_FIELDS: Partial<Record<keyof ShellConfig, string>> = {
+  pricetagObjectId: 'pricetags-store',
+  pricetagPaperColorId: 'pricetags-paper',
+  pricetagCopies: 'pricetags-copies',
+  pricetagTemplateId: 'pricetags-template',
+  sewUsername: 'pricetags-username',
+}
+
+const PATCH_LABELS: Partial<Record<keyof ShellConfig, string>> = {
+  pricetagObjectId: 'код магазина',
+  pricetagPaperColorId: 'цвет бумаги',
+  pricetagCopies: 'число копий',
+  pricetagTemplateId: 'шаблон ценника',
+  sewUsername: 'логин SEW',
+}
+
 /** Откат поля, если main не принял значение — образец `saveStockObjectId`
- *  в src/renderer/src/stock-report.ts. */
+ *  в src/renderer/src/stock-report.ts.
+ *
+ *  Отказ откатываем ТОЧЕЧНО, в само поле. Раньше здесь звался openPricetags(),
+ *  и вместе с полем стирались введённые артикулы и найденные позиции — опечатка
+ *  в логине SEW стоила пользователю всей работы. Сам разбор патча — в
+ *  detectPatchRejection (src/shared/pricetags-core.ts), он же даёт текст статуса. */
 async function persist(patch: Partial<ShellConfig>, label: string): Promise<void> {
   const next = await deps.savePricetagsConfig(patch)
-  const keys = Object.keys(patch) as Array<keyof ShellConfig>
-  const rejected = keys.some((key) => String(next[key]) !== String(patch[key]))
-  if (rejected) {
-    setStatus(`${label} не принят настройками — значение откачено`)
-    await openPricetags()
+  const labels: Record<string, string> = {}
+  for (const [key, name] of Object.entries(PATCH_LABELS)) {
+    if (key in patch && name) labels[key] = name
+  }
+  const rejection = detectPatchRejection(patch, next, labels)
+  if (rejection.rejected.length > 0) {
+    for (const key of rejection.rejected) {
+      const fieldId = PATCH_FIELDS[key as keyof ShellConfig]
+      if (!fieldId) continue
+      const field = el(fieldId) as HTMLInputElement | HTMLSelectElement | null
+      if (field) field.value = String(rejection.values[key] ?? '')
+    }
+    // Логин откатился — подсказка «нет прав» обязана пересчитаться, иначе она
+    // продолжала бы требовать то, что уже приведено к прежнему виду.
+    if (rejection.rejected.includes('sewUsername')) renderLoginHint(sessionUsername)
+    setStatus(rejection.message ?? `${label} не принят настройками — значение откачено`)
     return
   }
   setStatus(`${label} сохранён`)

@@ -310,6 +310,60 @@ export function isValidBarcodeWidth(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 999
 }
 
+/** Разбор ответа на отвергнутый патч конфига оверлея «Ценники». */
+export interface PatchRejection {
+  /** Ключи патча, которых main не принял (остались прежними). Порядок патча. */
+  rejected: string[]
+  /** Что показать в поле вместо отвергнутого ввода. */
+  values: Record<string, unknown>
+  /** Подписи отвергнутых полей (по `labels`, без подписи — сам ключ). */
+  labels: string[]
+  /** Текст статуса; `null`, когда отказа нет. */
+  message: string | null
+}
+
+/**
+ * Что из патча main не принял.
+ *
+ * `next` — конфиг, вернувшийся от `config:set`. Ключ считается отвергнутым,
+ * если в нём не то, что просили (сравнение строкое: форма отдаёт «3»,
+ * конфиг — `3`). Раньше та же проверка жила в оверлее, но отказ обрабатывался
+ * полным переоткрытием панели — вместе с введёнными артикулами и найденными
+ * позициями. Здесь только данные для точечного отката; состояние панели
+ * не трогает.
+ *
+ * Отказ по ЗНАЧЕНИЮ отличаем от отказа по ПУСТОТЕ: пустое логин main
+ * принимает, и очистка поля не должна выглядеть как ошибка.
+ */
+export function detectPatchRejection(
+  patch: unknown,
+  next: unknown,
+  labels: Readonly<Record<string, string>> = {},
+): PatchRejection {
+  const empty: PatchRejection = { rejected: [], values: {}, labels: [], message: null }
+  if (!isRecord(patch)) return empty
+  if (!isRecord(next)) return empty
+
+  const rejected: string[] = []
+  const values: Record<string, unknown> = {}
+  const names: string[] = []
+  for (const key of Object.keys(patch)) {
+    const wanted = patch[key]
+    if (String(next[key]) === String(wanted)) continue
+    rejected.push(key)
+    values[key] = next[key]
+    names.push(labels[key] || key)
+  }
+  if (rejected.length === 0) return empty
+
+  const fields = names.join(', ')
+  const many = names.length > 1
+  const message =
+    `${fields}: ${many ? 'значения не приняты' : 'значение не принято'} настройками — откат. ` +
+    'Введённые артикулы и позиции на месте.'
+  return { rejected, values, labels: names, message }
+}
+
 const pad = (n: number, len = 2): string => String(n).padStart(len, '0')
 
 /** Имя PDF вида «Ценники S187 2026-10-07-1504.pdf» — с кодом магазина и датой. */
