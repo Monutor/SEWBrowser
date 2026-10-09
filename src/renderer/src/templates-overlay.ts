@@ -1,6 +1,7 @@
 ﻿import { setStatus } from './status-ui'
 import { guestJS } from './guest'
 import { activeTab } from './tabs'
+import { resetNestedTemplateModals } from './templates-modals.ts'
 
 /** Шаблоны SEW: порт UI расширения SEW-Pattern в оболочку. */
 
@@ -248,11 +249,15 @@ async function applyTemplateFromShell(id: string): Promise<void> {
 
 export function openTemplatesManage(): void {
   if (!manageOverlayEl()) return
+  // Открытие всегда стартует с чистых вложенных модалок: после Esc поверх
+  // формы могли остаться .open и кнопка удаления с замыканием на старый id.
+  resetNestedTemplateModals(document)
   manageOverlayEl().hidden = false
   templatesManageOpen = true
 }
 
 export function closeTemplatesManage(): void {
+  resetNestedTemplateModals(document)
   if (!manageOverlayEl()) return
   manageOverlayEl().hidden = true
   templatesManageOpen = false
