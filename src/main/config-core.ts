@@ -118,3 +118,34 @@ export function dropInvalidPricetags<T extends object>(patch: T): T {
   }
   return out
 }
+
+/** Бюджет живых гостей, когда в файле его нет или он мусорный. */
+const LIVE_TABS_FALLBACK = 4
+
+/**
+ * Бюджет живых гостей (процессов Chromium), читается из config.json.
+ *
+ * Целое >= 1 — сам бюджет; дробное усекается вниз (3.9 -> 3 гостя).
+ * **0 — осознанное «не выгружать фоновые вкладки»** и уходит в рендерер как 0,
+ * где `enforceTabBudget` на `maxLiveTabs <= 0` выходит сразу. Отсутствие поля
+ * и мусор (не-число, NaN, бесконечность, отрицательное) — дефолт.
+ *
+ * Отрицательное отдельно от 0: правка «-0» приходит как -1/-4, и если бы из
+ * него получался 0, то опечатка молча отключала бы экономию памяти — ровно тот
+ * исход, из-за которого 0 раньше и приравнивали к мусору. Теперь у 0 ровно
+ * одно значение, которое пользователь вводит руками осознанно, и обещание
+ * из документации `SewConfig.maxLiveTabs` перестаёт быть ложью.
+ *
+ * `fallback` передаётся вызывающим (config.ts знает свой DEFAULTS.maxLiveTabs),
+ * но битое значение в него самого не проходит: иначе дефолт без числа тихо
+ * выродился бы в «выгрузка выключена».
+ */
+export function pickMaxLiveTabs(value: unknown, fallback: number = LIVE_TABS_FALLBACK): number {
+  const dflt = typeof fallback === 'number' && Number.isFinite(fallback) && Math.floor(fallback) >= 1
+    ? Math.floor(fallback)
+    : LIVE_TABS_FALLBACK
+  if (typeof value !== 'number' || !Number.isFinite(value)) return dflt
+  const whole = Math.floor(value)
+  if (whole === 0) return 0
+  return whole >= 1 ? whole : dflt
+}

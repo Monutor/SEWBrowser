@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { PRICETAG_KEYS, VALIDATORS, dropInvalidPricetags, pickPricetagConfig } from './config-core.ts'
+import { PRICETAG_KEYS, VALIDATORS, dropInvalidPricetags, pickMaxLiveTabs, pickPricetagConfig } from './config-core.ts'
 
 /**
  * Дефолты фичи «Ценники» — те же значения, что в DEFAULTS (config.ts).
@@ -150,5 +150,67 @@ describe('ключи патч-пути и валидаторы не разъез
     for (const key of Object.keys(VALIDATORS)) {
       assert.deepEqual(pickPricetagConfig({ [key]: null }, DEFAULTS), DEFAULTS, `ключ ${key} должен уходить на дефолт`)
     }
+  })
+})
+
+/** Бюджет живых гостей по умолчанию — то же значение, что в DEFAULTS (config.ts). */
+const LIVE_TABS_FALLBACK = 4
+
+describe('pickMaxLiveTabs — бюджет живых гостей', () => {
+  it('0 из config.json выключает выгрузку, а не превращается в дефолт', () => {
+    // Пользователь руками ставит 0, чтобы вкладки не выгружались. Раньше здесь
+    // возвращался дефолт: SEWBrowser продолжал молча выгружать фоновые вкладки,
+    // и обещание из документации SewConfig («0 — не выгружать») было ложью.
+    assert.equal(pickMaxLiveTabs(0, LIVE_TABS_FALLBACK), 0)
+    // -0 тоже выключение (Math.floor(-0.4) === -0, но проверим явно: значение
+    // должно быть ровно 0, а не мусором уйти в дефолт).
+    assert.equal(Object.is(pickMaxLiveTabs(-0, LIVE_TABS_FALLBACK), 0), true)
+  })
+
+  it('положительное целое и его дробная часть берутся как есть, вниз', () => {
+    assert.equal(pickMaxLiveTabs(1, LIVE_TABS_FALLBACK), 1)
+    assert.equal(pickMaxLiveTabs(4, LIVE_TABS_FALLBACK), 4)
+    assert.equal(pickMaxLiveTabs(16, LIVE_TABS_FALLBACK), 16)
+    assert.equal(pickMaxLiveTabs(3.9, LIVE_TABS_FALLBACK), 3)
+  })
+
+  it('отсутствие поля и мусор из файла идут на дефолт', () => {
+    for (const bad of [undefined, null, '4', '', {}, [], true, NaN, Infinity, -Infinity]) {
+      assert.equal(pickMaxLiveTabs(bad, LIVE_TABS_FALLBACK), LIVE_TABS_FALLBACK, `${JSON.stringify(bad)} должен давать дефолт`)
+    }
+  })
+
+  it('отрицательное значение — мусор, а не «выключить выгрузку»', () => {
+    // -1 в файле получается опечаткой («-0» при правке), а не намерением. Если
+    // бы от него шёл 0, то битое значение молча отключало бы экономию памяти —
+    // ровно тот исход, ради которого 0 нельзя приравнивать к мусору.
+    for (const bad of [-1, -4, -0.5, -100]) {
+      assert.equal(pickMaxLiveTabs(bad, LIVE_TABS_FALLBACK), LIVE_TABS_FALLBACK, `${bad} должен давать дефолт`)
+    }
+  })
+
+  it('битый дефолт не вырождается в 0 — выгрузка не отключается молча', () => {
+    // 0 означает «не выгружать», поэтому дефолт ни при каких обстоятельствах не
+    // должен стать нулём: иначе правка вызова или битое значение в DEFAULTS
+    // тихо отключили бы экономию памяти у всех вкладок.
+    for (const bad of [undefined, null, 0, -1, NaN, '4', {}]) {
+      const out = pickMaxLiveTabs('мусор', bad as unknown as number)
+      assert.equal(out, LIVE_TABS_FALLBACK, `fallback ${JSON.stringify(bad)} должен давать дефолт`)
+      assert.ok(out >= 1, `fallback ${JSON.stringify(bad)} не должен давать 0`)
+    }
+  })
+
+  it('валидный 0 остаётся 0 независимо от дефолта', () => {
+    // Наоборот: 0 — осознанный выбор пользователя, и подмена дефолта не должна
+    // его перебивать, иначе фикс снова станет ложью.
+    assert.equal(pickMaxLiveTabs(0, undefined), 0)
+    assert.equal(pickMaxLiveTabs(0, 8), 0)
+    assert.equal(pickMaxLiveTabs(0, 0), 0)
+  })
+
+  it('явный дефолт вызывающего уважается', () => {
+    assert.equal(pickMaxLiveTabs(undefined, 8), 8)
+    assert.equal(pickMaxLiveTabs(undefined, 8.7), 8)
+    assert.equal(pickMaxLiveTabs('мусор', 2), 2)
   })
 })

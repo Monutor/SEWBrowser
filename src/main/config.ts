@@ -7,7 +7,7 @@ import { DEFAULT_OBJECT_ID, isValidObjectId } from './downloads/stockReport'
 // config.ts под `node --test` не грузится, а тихих путей отказа у ключей два
 // (чтение config.json и патч config:set). Валидаторы config-core.ts берёт те
 // же, из shared/stockReport, — свои правила не дублируются.
-import { dropInvalidPricetags, pickPricetagConfig } from './config-core'
+import { dropInvalidPricetags, pickMaxLiveTabs, pickPricetagConfig } from './config-core'
 // Валидатор логина SEW живёт в ./sew-api — том же electron-free модуле, где
 // сам заголовок x-username собирается. Правило проверки и правило отправки не
 // должны разъезжаться: если здесь принять строку, которую sew-api потом пошлёт
@@ -121,7 +121,12 @@ export interface SewConfig {
   /**
    * Сколько гостей (процессов Chromium) держать живыми одновременно. Дальние по
    * LRU фоновые вкладки выгружаются: webview разрывается, память освобождается,
-   * при возврате вкладка грузится заново. 0 или отсутствие поля — не выгружать.
+   * при возврате вкладка грузится заново.
+   *
+   * **0 — осознанно «не выгружать»** (пользователь ставит руками в config.json).
+   * Отсутствие поля — дефолт из DEFAULTS (выгрузка работает); мусор и
+   * отрицательные числа тоже уходят на дефолт, чтобы правка «-0» не отключала
+   * экономию памяти. Правила — в pickMaxLiveTabs (./config-core).
    */
   maxLiveTabs?: number;
 }
@@ -319,16 +324,8 @@ function sanitizeConfig(user: Partial<SewConfig>): SewConfig {
       DEFAULTS.folderPasswordRememberMinutes,
     ),
     scanFolders: pickScanFolders(user.scanFolders),
-    maxLiveTabs: pickMaxLiveTabs(user.maxLiveTabs),
+    maxLiveTabs: pickMaxLiveTabs(user.maxLiveTabs, DEFAULTS.maxLiveTabs),
   }
-}
-
-/** Бюджет живых гостей: целое >= 1. 0 и мусор — дефолт (выгрузка не выключается
- *  битым значением из файла, иначе пользователь молча потеряет экономию памяти). */
-function pickMaxLiveTabs(value: unknown): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULTS.maxLiveTabs ?? 4
-  const whole = Math.floor(value)
-  return whole >= 1 ? whole : DEFAULTS.maxLiveTabs ?? 4
 }
 
 /** Частичное обновление пользовательского конфига с сохранением на диск */
