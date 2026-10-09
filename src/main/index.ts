@@ -34,6 +34,7 @@ import {
 } from './scans'
 import { isAllowedScanTarget, normalizeScanPath, pickedScanPath } from './scans-core'
 import { isAllowedFaviconUrl } from './favicon-core'
+import { isAllowedStockTarget } from './stock-core'
 
 let mainWindow: BrowserWindow | null = null
 // Мониторинг папок HP-софта (по одной на каждую папку из scanFolders в настройках).
@@ -199,6 +200,14 @@ function allowScanTarget(id: unknown): boolean {
   }
   return ok
 }
+
+/**
+ * Файл остатков, выбранный пользователем в диалоге stock:pick-file. manualPath
+ * от гостевой страницы — недоверенный ввод, но штатный ручной ввод пути в
+ * панели sew-inventory легален, поэтому сверяем его с этим реестром и с
+ * расширением xlsx/xls (см. stock-core.ts).
+ */
+const pickedStockPaths = new Set<string>()
 
 /** Собрать все файлы сканов из всех настроенных папок (рекурсивно с подпапками). */
 function collectAllScans(): ScanFile[] {
@@ -408,6 +417,7 @@ function createWindow(): void {
       console.warn('[shell] stock file vanished after dialog:', src)
       return null
     }
+    pickedStockPaths.add(normalizeScanPath(src))
     return src
   })
   // Список системных принтеров для диалога печати. Список одинаков для любого
@@ -1571,6 +1581,10 @@ function createWindow(): void {
     let buffer: Buffer
     let stockName = ''
     if (manualPath) {
+      if (!isAllowedStockTarget(manualPath, pickedStockPaths)) {
+        console.warn('[shell] stock: путь вне xlsx и вне выбранных в диалоге — отказ:', manualPath)
+        return { ok: false, error: 'укажите файл остатков .xlsx или выберите его кнопкой «…»' }
+      }
       if (!existsSync(manualPath)) return { ok: false, error: 'файл остатков не найден на диске: ' + manualPath }
       try {
         buffer = readFileSync(manualPath)
