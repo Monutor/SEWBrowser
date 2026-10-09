@@ -1,9 +1,6 @@
 // Content script for SEW Templates Extension
 // Handles Angular forms by dispatching input, change, blur events with bubbles: true
 
-let fabElement = null;
-let fabPanelOpen = false;
-
 function handleStorageError(err) {
     if (err && /context\s*invalidated/i.test(err.message)) {
         showContextRestartToast();
@@ -19,15 +16,6 @@ function showContextRestartToast() {
     t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:2147483647;background:#323232;color:#fff;padding:12px 16px;border-radius:8px;font:500 14px/1.4 Roboto,sans-serif;box-shadow:0 4px 12px rgba(0,0,0,.3)';
     document.body.appendChild(t);
     setTimeout(() => { if (t.parentNode) t.parentNode.removeChild(t); }, 3000);
-}
-
-// Плагин стартует из did-finish-load оболочки, а DOMContentLoaded к этому
-// моменту уже прошёл: кнопка, висящая только на событии, в DOM не появлялась
-// никогда. Тот же приём, что у sew-inventory/main.js. Сам вызов — в конце файла,
-// где объявлены currentModalElement и fabElement (иначе обращение до инициализации).
-function initFAB() {
-    injectFAB();
-    updateFABVisibility();
 }
 
 // Listen for messages from popup or other parts of the extension
@@ -309,11 +297,10 @@ function startObserving() {
 
     observer = new MutationObserver((mutations) => {
         mutations.forEach((mutation) => {
-            // Check for removed nodes to clear modal tracking and show FAB
+            // Check for removed nodes to clear modal tracking
             mutation.removedNodes.forEach((node) => {
                 if (currentModalElement && node === currentModalElement) {
                     currentModalElement = null;
-                    updateFABVisibility();
                 }
                 _injectedElements.delete(node);
             });
@@ -336,7 +323,6 @@ function startObserving() {
                 // Clear stale modal reference if it's no longer in the document
                 if (currentModalElement && !document.body.contains(currentModalElement)) {
                     currentModalElement = null;
-                    updateFABVisibility();
                 }
 
                 // Check if this is a drawer/dialog/modal or contains one
@@ -358,124 +344,6 @@ function startObserving() {
         attributes: true,
         attributeFilter: ['class']
     });
-}
-
-function injectFAB() {
-    if (fabElement) return;
-
-    fabElement = document.createElement('button');
-    fabElement.className = 'sew-fab';
-    fabElement.textContent = 'Шаблоны';
-    fabElement.setAttribute('title', 'Открыть шаблоны');
-
-    // Inject outside Angular rendering zones
-    document.body.appendChild(fabElement);
-
-    fabElement.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (fabPanelOpen) {
-            closeFABPanel();
-        } else {
-            openFABPanel();
-        }
-    });
-}
-
-function openFABPanel() {
-    closeFABPanel(); // clear any existing panel first
-
-    const overlay = document.createElement('div');
-    overlay.className = 'sew-fab-panel-overlay';
-    overlay.id = 'sewFabPanelOverlay';
-
-    const panel = document.createElement('div');
-    panel.className = 'sew-fab-panel';
-    panel.id = 'sewFabPanel';
-
-    const header = document.createElement('div');
-    header.className = 'sew-fab-panel-header';
-    header.textContent = 'Выберите шаблон';
-
-    const list = document.createElement('div');
-    list.className = 'sew-fab-panel-list';
-    list.id = 'sewFabPanelList';
-
-    panel.appendChild(header);
-    panel.appendChild(list);
-    overlay.appendChild(panel);
-    document.body.appendChild(overlay);
-
-    fabPanelOpen = true;
-
-    try {
-        chrome.storage.local.get(['sew_templates'], (result) => {
-            if (chrome.runtime.lastError) { handleStorageError(chrome.runtime.lastError); return; }
-            const templates = result.sew_templates || [];
-            list.innerHTML = '';
-
-            if (templates.length === 0) {
-                const empty = document.createElement('div');
-                empty.className = 'sew-fab-panel-empty';
-                empty.textContent = 'Нет шаблонов. Откройте настройки для создания.';
-                list.appendChild(empty);
-                return;
-            }
-
-            templates.forEach(template => {
-                const item = document.createElement('div');
-                item.className = 'sew-fab-panel-item';
-                item.textContent = template.name || 'Без имени';
-                item.addEventListener('click', () => {
-                    applyTemplate(template.id);
-                    closeFABPanel();
-                });
-                list.appendChild(item);
-            });
-        });
-    } catch (e) {
-        // Extension context invalidated — ignore
-    }
-
-    overlay.addEventListener('click', (e) => {
-        if (e.target === overlay) {
-            closeFABPanel();
-        }
-    });
-}
-
-function closeFABPanel() {
-    const overlay = document.getElementById('sewFabPanelOverlay');
-    if (overlay) {
-        overlay.remove();
-    }
-    fabPanelOpen = false;
-}
-
-function updateFABVisibility() {
-    if (!fabElement) return;
-    if (currentModalElement) {
-        fabElement.style.display = 'none';
-    } else {
-        fabElement.style.display = 'flex';
-    }
-}
-
-// Override injectTemplateSelector to also update FAB visibility
-const originalInjectTemplateSelector = injectTemplateSelector;
-injectTemplateSelector = function(modalElement) {
-    currentModalElement = modalElement;
-    updateFABVisibility();
-    return originalInjectTemplateSelector.apply(this, arguments);
-};
-
-// FAB: если документ ещё грузится — дожидаемся DOMContentLoaded, иначе (плагин
-// пришёл из did-finish-load оболочки) событие уже прошло и кнопка не появилась бы.
-// Инициализация до startObserving: кнопка не должна зависеть от того, удалось ли
-// вотчеру подписаться на document.body.
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initFAB);
-} else {
-    initFAB();
 }
 
 // Start observing when content script is loaded
