@@ -6,34 +6,50 @@
  */
 
 /** Канал моста = одна очередь гостя */
-export type BridgeChannel = 'bff' | 'scans' | 'inv'
+export type BridgeChannel = 'bff' | 'scans' | 'inv' | 'store'
 
 /** Глобаль гостя, в котором плагин кладёт запросы по каналу */
 const QUEUE_GLOBALS: Record<BridgeChannel, string> = {
   bff: '__sewHelperBffReq',
   scans: '__sewScansReq',
   inv: '__sewInventoryReq',
+  store: '__shellStoreReq',
 }
 
-/** Плагин, чьё включение в настройках разрешает опрашивать канал */
-export const BRIDGE_PLUGIN: Record<BridgeChannel, string> = {
+/**
+ * Плагин, чьё включение в настройках разрешает опрашивать канал. У канала store
+ * владельца нет: в него пишет любой плагин (chrome.storage.local), поэтому он
+ * опрашивается, когда включён хоть один.
+ */
+export const BRIDGE_PLUGIN: Partial<Record<BridgeChannel, string>> = {
   bff: 'sew-helper',
   scans: 'scans-block',
   inv: 'sew-inventory',
 }
 
-export const BRIDGE_CHANNELS: BridgeChannel[] = ['bff', 'scans', 'inv']
+export const BRIDGE_CHANNELS: BridgeChannel[] = ['bff', 'scans', 'inv', 'store']
+
+/** Каналы, которые есть смысл опрашивать при текущем наборе включённых плагинов */
+export function enabledChannels(enabledPlugins: readonly string[]): BridgeChannel[] {
+  if (enabledPlugins.length === 0) return []
+  const names = new Set(enabledPlugins)
+  return BRIDGE_CHANNELS.filter((channel) => {
+    const owner = BRIDGE_PLUGIN[channel]
+    return owner === undefined || names.has(owner)
+  })
+}
 
 /** Забранные очереди; отсутствующий или битый канал — пустой массив */
 export interface TakenQueues {
   bff: unknown[]
   scans: unknown[]
   inv: unknown[]
+  store: unknown[]
 }
 
 /** Пустая разборка — безопасное состояние по умолчанию */
 export function emptyQueues(): TakenQueues {
-  return { bff: [], scans: [], inv: [] }
+  return { bff: [], scans: [], inv: [], store: [] }
 }
 
 /** Типы запросов, которые открывают модальный диалог выбора файла на диске. */
@@ -93,7 +109,9 @@ export function parseTakeResult(raw: unknown): TakenQueues {
 
 /** Есть ли в разборе хоть один запрос — по этому держим быстрый интервал */
 export function anyRequest(queues: TakenQueues): boolean {
-  return queues.bff.length > 0 || queues.scans.length > 0 || queues.inv.length > 0
+  return (
+    queues.bff.length > 0 || queues.scans.length > 0 || queues.inv.length > 0 || queues.store.length > 0
+  )
 }
 
 export interface BffRequest {

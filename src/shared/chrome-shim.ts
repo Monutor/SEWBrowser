@@ -51,6 +51,18 @@ if (!window.__shellChromeShim) {
     function hasBridge() {
       return !!(window.shell && typeof window.shell.pluginDataGet === 'function');
     }
+    // Очередь записи в plugin-data для гостя без preload (у <webview> нет
+    // window.shell): оболочка забирает её общим опросом мостов. Потолок — чтобы
+    // страница, которая пишет в цикле, не съела память гостя, пока опрос встал.
+    var STORE_QUEUE_MAX = 200;
+    function queueStoreReq(req) {
+      try {
+        var q = window.__shellStoreReq;
+        if (!Array.isArray(q)) { q = []; window.__shellStoreReq = q; }
+        q.push(req);
+        while (q.length > STORE_QUEUE_MAX) q.shift();
+      } catch (e) {}
+    }
     function storeGet(plugin, keys) {
       var k = normKeys(keys);
       if (hasBridge()) {
@@ -68,8 +80,10 @@ if (!window.__shellChromeShim) {
       if (window.shell && typeof window.shell.pluginDataSet === 'function') {
         return window.shell.pluginDataSet(plugin, data);
       }
-      return Promise.resolve(true);
-    }
+      // Гость без preload: отдаём запись оболочке через очередь мостов, иначе
+      // снапшот из main (pushPluginStores) затрёт её на следующем же обновлении.
+      queueStoreReq({ plugin: plugin, op: 'set', data: data });
+      return Promise.resolve(true);    }
     function storeRemove(plugin, keys) {
       var list = normKeys(keys) || [];
       try {
@@ -82,6 +96,7 @@ if (!window.__shellChromeShim) {
       if (window.shell && typeof window.shell.pluginDataRemove === 'function') {
         return window.shell.pluginDataRemove(plugin, list);
       }
+      if (list.length > 0) queueStoreReq({ plugin: plugin, op: 'remove', keys: list });
       return Promise.resolve(true);
     }
     // getPlugin — thunk: глобальный стор резолвит имя лениво (как раньше),

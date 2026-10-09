@@ -7,6 +7,7 @@ import {
   asScansReqs,
   buildTakeScript,
   emptyQueues,
+  enabledChannels,
   isInteractiveRequest,
   nextPollDelay,
   parseTakeResult,
@@ -169,5 +170,41 @@ describe('nextPollDelay', () => {
   it('в простое не превышает потолок', () => {
     assert.equal(nextPollDelay(4000, false, opts), 4000)
     assert.equal(nextPollDelay(3900, false, opts), 4000)
+  })
+})
+
+describe('канал store — запись chrome.storage.local из гостя', () => {
+  it(' очередь записи входит в общий take', () => {
+    assert.match(buildTakeScript(['store']), /__shellStoreReq/)
+  })
+
+  it('очередь записи разбирается вместе с остальными', () => {
+    const parsed = parseTakeResult(
+      JSON.stringify({ bff: [], scans: [], inv: [], store: [{ plugin: 'a', op: 'set', data: {} }] }),
+    )
+    assert.equal(parsed.store.length, 1)
+  })
+
+  it('запись в очереди хранилища считается работой — держим быстрый интервал', () => {
+    assert.equal(anyRequest({ ...emptyQueues(), store: [{ plugin: 'a', op: 'set', data: {} }] }), true)
+  })
+
+  it('канал включается, когда включён хоть один плагин', () => {
+    // ни один из «мостовых» плагинов не включён, но tasks-notify пишет seen
+    assert.deepEqual(enabledChannels(['tasks-notify']), ['store'])
+  })
+
+  it('выключенный плагин не тянет свой канал', () => {
+    assert.deepEqual(enabledChannels(['identity']), ['store'])
+    assert.deepEqual(enabledChannels(['sew-helper']), ['bff', 'store'])
+    assert.deepEqual(enabledChannels(['scans-block', 'sew-inventory']), ['scans', 'inv', 'store'])
+  })
+
+  it('без включённых плагинов каналов нет — опрос не крутится вхолостую', () => {
+    assert.deepEqual(enabledChannels([]), [])
+  })
+
+  it('дубль имени плагина не дублирует канал', () => {
+    assert.deepEqual(enabledChannels(['sew-helper', 'sew-helper']), ['bff', 'store'])
   })
 })

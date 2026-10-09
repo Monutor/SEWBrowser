@@ -8,15 +8,15 @@ import {
   asInvReqs,
   asScansReqs,
   anyRequest,
-  BRIDGE_CHANNELS,
-  BRIDGE_PLUGIN,
   buildTakeScript,
+  enabledChannels,
   isInteractiveRequest,
   nextPollDelay,
   parseTakeResult,
   type BridgeChannel,
   type ScansRequest,
 } from './bridges-core.ts'
+import { asStoreReqs } from '../../shared/store-req.ts'
 
 /**
  * Мосты гостевой страницы: BFF sew-helper, сканы HP, остатки и tasks-notify.
@@ -81,10 +81,12 @@ export function startPollBridge(): void {
   setTimeout(tick, POLL_DELAY_OPTS.work)
 }
 
-/** Каналы, чей плагин включён в настройках и чью очередь есть смысла опрашивать. */
-function enabledChannels(): BridgeChannel[] {
-  const names = deps.plugins().map((p) => p.name)
-  return BRIDGE_CHANNELS.filter((channel) => names.includes(BRIDGE_PLUGIN[channel]))
+/**
+ * Каналы, чей плагин включён в настройках и чью очередь есть смысла опрашивать.
+ * Список каналов и правило включения — в bridges-core (там же тесты).
+ */
+function enabledBridgeChannels(): BridgeChannel[] {
+  return enabledChannels(deps.plugins().map((p) => p.name))
 }
 
 /**
@@ -92,7 +94,7 @@ function enabledChannels(): BridgeChannel[] {
  * работа: по этому адаптивный таймер держит быстрый интервал.
  */
 export async function pumpPollBridge(): Promise<boolean> {
-  const channels = enabledChannels()
+  const channels = enabledBridgeChannels()
   if (channels.length === 0) return false
   let hadWork = false
   const takeScript = buildTakeScript(channels)
@@ -126,6 +128,7 @@ export async function pumpPollBridge(): Promise<boolean> {
     for (const req of asBffReqs(queues.bff)) await answerBff(tab, req)
     for (const req of asScansReqs(queues.scans)) await answerRequest('scans', req, () => answerScans(tab, req))
     for (const req of asInvReqs(queues.inv)) await answerRequest('inv', req, () => answerInventory(tab, req))
+    await answerStore(queues.store)
   }
   return hadWork
 }
@@ -269,6 +272,26 @@ async function answerInventory(
     )
   } catch {
     // вкладка могла закрыться между опросом и ответом — гость повторит запрос сам
+  }
+}
+
+/**
+ * Мост записи chrome.storage.local из гостя. У <webview> нет preload, поэтому
+ * window.shell в странице отсутствует и шим складывает записи в очередь
+ * window.__shellStoreReq вместо IPC (см. src/shared/chrome-shim.ts). Здесь очередь
+ * разбирается asStoreReqs (проверка имени плагина и размера — на стороне оболочки)
+ * и применяется отсюда, где window.shell есть.
+ *
+ * Ответа гостю нет и не нужно: шим отдаёт промис сразу, а данные уже на диске.
+ */
+async function answerStore(items: unknown[]): Promise<void> {
+  for (const req of asStoreReqs(items)) {
+    try {
+      if (req.op === 'set') await window.shell.pluginDataSet(req.plugin, req.data)
+      else await window.shell.pluginDataRemove(req.plugin, req.keys)
+    } catch (err) {
+      console.warn(`[store-bridge] ${req.op} ${req.plugin} failed:`, err)
+    }
   }
 }
 

@@ -2,10 +2,11 @@ import { BrowserWindow, shell } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { CHROME_SHIM } from '../shared/chrome-shim'
+import { asStoreReqs } from '../shared/store-req'
 import { bffFetch } from './bff'
 import { getConfig } from './config'
 import { loadPlugins } from './plugins/loader'
-import { getPluginData } from './plugins/store'
+import { getPluginData, removePluginData, setPluginData } from './plugins/store'
 
 /**
  * «Открыть вкладку в новом окне» (Ctrl+ЛКМ по вкладке или пункт контекстного
@@ -29,6 +30,13 @@ const openWindows = new Set<BrowserWindow>()
 
 /** Забрать очередь BFF-запросов из страницы. IIFE обязана звать себя: `()()`. */
 const BFF_TAKE = `(function(){try{var q=window.__sewHelperBffReq;if(!Array.isArray(q))return "[]";try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})()`
+
+/**
+ * Забрать очередь записей chrome.storage.local из страницы (шим складывает их
+ * туда, т.к. window.shell в этом окне нет — см. src/shared/chrome-shim.ts).
+ * Ответа гостю не нужно: запись идёт на диск, данные страница уже обновила у себя.
+ */
+const STORE_TAKE = `(function(){try{var q=window.__shellStoreReq;if(!Array.isArray(q))return "[]";try{return JSON.stringify(q.splice(0))}catch(e){return "[]"}}catch(e){return "[]"}})()`
 
 /** Положить ответ BFF в страницу. Результат — structured-cloneable. */
 function bffWrite(id: string, payload: unknown): string {
@@ -141,6 +149,43 @@ function startBffPump(win: BrowserWindow): void {
   setTimeout(() => void tick(), 500)
 }
 
+/**
+ * Насос записи chrome.storage.local для окна: preload здесь нет, поэтому плагины
+ * шлют изменения сторов в очередь, а не в IPC. Без насоса настройки плагинов
+ * (темп автоподсчёта, выбор полки, кэш БД, seen уведомлений) жили бы только до
+ * перезагрузки страницы.
+ */
+function startStorePump(win: BrowserWindow): void {
+  let busy = false
+  const tick = async (): Promise<void> => {
+    if (win.isDestroyed() || win.webContents.isDestroyed()) return
+    if (!busy && win.isVisible()) {
+      busy = true
+      try {
+        const raw = (await win.webContents.executeJavaScript(STORE_TAKE)) as unknown
+        let items: unknown[] = []
+        try {
+          const parsed: unknown = JSON.parse(typeof raw === 'string' ? raw : '[]')
+          if (Array.isArray(parsed)) items = parsed
+        } catch {
+          items = []
+        }
+        for (const req of asStoreReqs(items)) {
+          if (req.op === 'set') setPluginData(req.plugin, req.data)
+          else removePluginData(req.plugin, req.keys)
+        }
+      } catch (err) {
+        console.warn('[page-window] store pump failed:', err)
+      } finally {
+        busy = false
+      }
+    }
+    if (win.isDestroyed()) return
+    setTimeout(() => void tick(), 500)
+  }
+  setTimeout(() => void tick(), 500)
+}
+
 export interface PageWindowDeps {
   /** Серверная копия allowlist-проверки (та же, что у гостевых вкладок). */
   isAllowed: (url: string) => boolean
@@ -208,6 +253,7 @@ export function openPageWindow(rawUrl: unknown, rawTitle: unknown, deps: PageWin
     void injectPlugins(win)
   })
   startBffPump(win)
+  startStorePump(win)
   void win.loadURL(url).catch((err) => console.warn('[page-window] load failed:', err))
   return true
 }
