@@ -32,6 +32,7 @@ import {
   type ScanFile,
   type ScanFileContent,
 } from './scans'
+import { isAllowedScanTarget, normalizeScanPath, pickedScanPath } from './scans-core'
 
 let mainWindow: BrowserWindow | null = null
 // Мониторинг папок HP-софта (по одной на каждую папку из scanFolders в настройках).
@@ -178,6 +179,25 @@ function isAllowedUrl(url: string): boolean {
 }
 
 /** Пересоздать вотчер папки сканов из актуального конфига и слать 'scans:changed' в shell-UI */
+
+/**
+ * Файлы, которые пользователь САМ выбрал в диалоге scans:pick. Их полные пути
+ * лежат вне папок сканов, но трогать их разрешаем — и только их.
+ * Гость не может дописать сюда путь: наполняется только из scans:pick.
+ */
+const pickedScanPaths = new Set<string>()
+
+/**
+ * Разрешить ли операцию с путём, пришедшим от renderer/гостевой страницы.
+ * Всё вне настроенных папок сканов и вне реестра picked — отказ.
+ */
+function allowScanTarget(id: unknown): boolean {
+  const ok = isAllowedScanTarget(id, getConfig().scanFolders, pickedScanPaths)
+  if (!ok && typeof id === 'string' && id) {
+    console.warn('[shell] scans: путь вне папок сканов — отказ:', id)
+  }
+  return ok
+}
 
 /** Собрать все файлы сканов из всех настроенных папок (рекурсивно с подпапками). */
 function collectAllScans(): ScanFile[] {
@@ -892,14 +912,14 @@ function createWindow(): void {
     ipcMain.handle('scans:list', () => collectAllScans())
     ipcMain.handle('scans:folders', () => getConfig().scanFolders)
     ipcMain.handle('scans:delete', (_event, id: unknown) => {
-      if (typeof id !== 'string') return []
-      deleteScanFile(id)
+      if (!allowScanTarget(id)) return []
+      deleteScanFile(pickedScanPath(id as string))
       return collectAllScans()
     })
     ipcMain.handle('scans:open', async (_event, filePath: unknown) => {
-      if (typeof filePath !== 'string') return false
+      if (!allowScanTarget(filePath)) return false
       try {
-        const err = await shell.openPath(filePath)
+        const err = await shell.openPath(pickedScanPath(filePath as string))
         return err === ''
       } catch (err) {
         console.warn('[shell] scans:open failed:', err)
@@ -907,9 +927,9 @@ function createWindow(): void {
       }
     })
     ipcMain.handle('scans:show', (_event, filePath: unknown) => {
-      if (typeof filePath !== 'string') return false
+      if (!allowScanTarget(filePath)) return false
       try {
-        shell.showItemInFolder(filePath)
+        shell.showItemInFolder(pickedScanPath(filePath as string))
         return true
       } catch (err) {
         console.warn('[shell] scans:show failed:', err)
@@ -918,8 +938,8 @@ function createWindow(): void {
     })
     // Читать содержимое файла в base64 — для предосмотра и drag-n-drop в госте.
     ipcMain.handle('scans:read', (_event, id: unknown) => {
-      if (typeof id !== 'string') return null
-      const content = readScanFile(id)
+      if (!allowScanTarget(id)) return null
+      const content = readScanFile(pickedScanPath(id as string))
       if (!content) console.warn('[shell] scans:read failed for:', id)
       return content
     })
@@ -937,6 +957,9 @@ function createWindow(): void {
       if (!Array.isArray(paths) || paths.length === 0) return null
       const content = readScanFile(paths[0])
       if (!content) return null
+      // Пользователь выбрал этот файл в диалоге — разрешаем оперировать им,
+      // даже если он лежит вне папок сканов. Гость дописать сюда путь не может.
+      pickedScanPaths.add(normalizeScanPath(content.path))
       // Метка «picked» отличает выбранный с диска файл от файла из папки HP.
       return { ...content, id: 'picked::' + content.path }
     })
