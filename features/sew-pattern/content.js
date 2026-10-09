@@ -21,10 +21,14 @@ function showContextRestartToast() {
     setTimeout(() => { if (t.parentNode) t.parentNode.removeChild(t); }, 3000);
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+// Плагин стартует из did-finish-load оболочки, а DOMContentLoaded к этому
+// моменту уже прошёл: кнопка, висящая только на событии, в DOM не появлялась
+// никогда. Тот же приём, что у sew-inventory/main.js. Сам вызов — в конце файла,
+// где объявлены currentModalElement и fabElement (иначе обращение до инициализации).
+function initFAB() {
     injectFAB();
     updateFABVisibility();
-});
+}
 
 // Listen for messages from popup or other parts of the extension
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -463,6 +467,16 @@ injectTemplateSelector = function(modalElement) {
     updateFABVisibility();
     return originalInjectTemplateSelector.apply(this, arguments);
 };
+
+// FAB: если документ ещё грузится — дожидаемся DOMContentLoaded, иначе (плагин
+// пришёл из did-finish-load оболочки) событие уже прошло и кнопка не появилась бы.
+// Инициализация до startObserving: кнопка не должна зависеть от того, удалось ли
+// вотчеру подписаться на document.body.
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initFAB);
+} else {
+    initFAB();
+}
 
 // Start observing when content script is loaded
 startObserving();
