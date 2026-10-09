@@ -1896,6 +1896,12 @@ body {
   gap: 12px;
 }
 
+/* Собственный display:flex выше по специфичности, чем UA-стиль [hidden], а без
+   этого правила форма папки видна в оверлее «Вкладки» поверх скрытых форм. */
+#folder-form[hidden] {
+  display: none;
+}
+
 .settings-row {
   display: flex;
   flex-direction: column;
