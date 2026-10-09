@@ -67,7 +67,8 @@ document.addEventListener('DOMContentLoaded', () => {
         templateList.insertAdjacentHTML('beforeend', '<div class="drag-hint">Перетащите карточку, чтобы изменить порядок</div>');
         templates.forEach((template, i) => {
             const fieldCount = template.fields ? Object.keys(template.fields).length : 0;
-            const presetName = template.preset === 'trn' ? 'ТрН' : (template.preset || 'ТрН');
+            // preset приходит из импортированного JSON — экранируем, как name.
+            const presetName = escapeHtml(template.preset === 'trn' ? 'ТрН' : (template.preset || 'ТрН'));
 
             const card = document.createElement('div');
             card.className = 'template-card';
@@ -294,8 +295,12 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     function isValidTpl(t) {
-        return !!t && typeof t === 'object' && typeof t.id === 'string' && t.id &&
-               typeof t.name === 'string' && t.fields && typeof t.fields === 'object';
+        if (!t || typeof t !== 'object' || typeof t.id !== 'string' || !t.id ||
+            typeof t.name !== 'string' || !t.fields || typeof t.fields !== 'object') return false;
+        // preset из файла не доверяем: принимаем только строковый идентификатор
+        // вида 'trn'. Иначе в карточку уйдёт произвольная разметка (XSS).
+        if (t.preset !== undefined && (typeof t.preset !== 'string' || !/^[a-z0-9_-]{1,16}$/i.test(t.preset))) return false;
+        return true;
     }
 
     function exportTemplates() {
