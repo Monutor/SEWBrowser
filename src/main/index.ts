@@ -36,6 +36,7 @@ import { isAllowedScanTarget, normalizeScanPath, pickedScanPath } from './scans-
 import { isAllowedFaviconUrl } from './favicon-core'
 import { isAllowedStockTarget } from './stock-core'
 import { sanitizeTaskNotifications, TASKS_DEFAULT_PATH } from './tasks-core'
+import { isPermissionCheckAllowed } from './permissions-core'
 
 let mainWindow: BrowserWindow | null = null
 // Мониторинг папок HP-софта (по одной на каждую папку из scanFolders в настройках).
@@ -1833,6 +1834,17 @@ function createWindow(): void {
     geolocation: 'геолокация',
     'clipboard-read': 'чтение буфера обмена',
   }
+  session.defaultSession.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) => {
+    if (isPermissionCheckAllowed(permission)) return true
+    // Всё остальное — false: Chromium после отказа check сам сделает permission
+    // request, и его разберёт setPermissionRequestHandler ниже (диалог или отказ).
+    // Часть разрешений (openExternal, local-network, midi, hid, serial, usb…)
+    // request за собой не тянет, поэтому без этого хендлера они выдавались гостю
+    // молча — без диалога и без записи в лог.
+    const from = details.requestingUrl ?? requestingOrigin
+    console.log(`[permissions] check denied: ${permission}${from ? ` (${from})` : ''}`)
+    return false
+  })
   session.defaultSession.setPermissionRequestHandler((wc, permission, callback, details) => {
     if (SAFE_PERMISSIONS.has(permission)) {
       callback(true)
