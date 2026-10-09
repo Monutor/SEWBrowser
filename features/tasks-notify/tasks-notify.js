@@ -4,6 +4,7 @@
 var __tnBearer = null;
 var __tnTimer = null;
 var __tnBusy = false;
+var __tnIntervalSec = 0;
 
 function __tnGetSettings(cb) {
   try {
@@ -11,11 +12,11 @@ function __tnGetSettings(cb) {
       var s = (res && res.settings) || {};
       cb({
         objectId: typeof s.objectId === 'string' && s.objectId ? s.objectId : 'S187',
-        intervalSec: typeof s.intervalSec === 'number' && s.intervalSec >= 15 ? s.intervalSec : 60,
+        intervalSec: tnIntervalSec(s.intervalSec),
         sound: s.sound !== false,
       });
     });
-  } catch (e) { cb({ objectId: 'S187', intervalSec: 60, sound: true }); }
+  } catch (e) { cb({ objectId: 'S187', intervalSec: TN_INTERVAL_DEFAULT_SEC, sound: true }); }
 }
 
 /**
@@ -184,11 +185,15 @@ function __tnTick() {
 
 /**
  * Arm опроса: ставит перехват Bearer, готовит очередь и включает таймер.
- * Идемпотентен (window.__tnArmed) — без второго setInterval.
  * Вызывается дважды: на старте вкладки (__tnInit) и снаружи из take-скрипта
  * оболочки (window.__tnArmTasksNotify), когда вкладка становится первой:
  * код плагина повторно не инжектится, а __tnInit в непривилегированной
  * вкладке уже отработал и вышел.
+ *
+ * Поэтому arm не только «поднимает» опрос, но и сверяет период с настройками
+ * при каждом вызове: иначе новая «Интервал проверки заданий» ждала бы
+ * перезагрузки страницы. Пересоздаётся таймер только при реальной смене
+ * периода (tnIntervalChanged) — иначе отсчёт сбрасывался бы на каждом опросе.
  */
 function __tnArm() {
   // Перехват Bearer ставим ВСЕМ вкладкам и ДО гвардов хоста: он пассивен
@@ -196,15 +201,25 @@ function __tnArm() {
   // него promoted-вкладка осталась бы без Bearer — к моменту, когда оболочка
   // проставит ей флаг, SPA давно отгрузила данные и перехватывать нечего.
   __tnHookAuth();
-  if (window.__tnArmed) return;                // идемпотентно: без двойного таймера
   if (window.__shellPollHost === false) return; // не хост: только перехват, опрос не поднимаем
-  window.__tnArmed = 1;
-  window.__tasksNotifyReq = window.__tasksNotifyReq || [];
-  window.__tasksNotifyState = window.__tasksNotifyState || { lastTick: '', lastCount: 0, lastError: '' };
+  if (!window.__tnArmed) {
+    window.__tnArmed = 1;
+    window.__tasksNotifyReq = window.__tasksNotifyReq || [];
+    window.__tasksNotifyState = window.__tasksNotifyState || { lastTick: '', lastCount: 0, lastError: '' };
+    __tnGetSettings(function (st) {
+      try { if (__tnTimer) clearInterval(__tnTimer); } catch (e) {}
+      __tnTick();
+      __tnIntervalSec = st.intervalSec;
+      __tnTimer = setInterval(__tnTick, __tnIntervalSec * 1000);
+    });
+    return;
+  }
+  // Уже armed: период в настройках мог смениться — обновляем таймер.
   __tnGetSettings(function (st) {
+    if (!tnIntervalChanged(__tnIntervalSec, st.intervalSec)) return;
     try { if (__tnTimer) clearInterval(__tnTimer); } catch (e) {}
-    __tnTick();
-    __tnTimer = setInterval(__tnTick, st.intervalSec * 1000);
+    __tnIntervalSec = st.intervalSec;
+    __tnTimer = setInterval(__tnTick, __tnIntervalSec * 1000);
   });
 }
 
