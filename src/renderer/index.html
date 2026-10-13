@@ -157,7 +157,7 @@
         <path style="fill:#222" d="m 55,45 3,-2 0,-2 -1,-2 25,4 2,3 0,2 -3,2 z" />
       </svg></button>
     <button id="btn-stock" title="Скачать остатков товаров (xlsx)">&#128202;</button>
-    <button id="btn-pricetags" title="Ценники: вбить артикулы и собрать PDF (Ctrl+Shift+P)">🏷️</button>
+    <button id="btn-pricetags" title="Штрихи: вбить коды товара и собрать лист PDF (Ctrl+Shift+P)">🏷️</button>
     <button id="btn-inventory" title="Показать панель «Автоподсчёт ЛП»" aria-pressed="false">&#128203;</button>
     <button id="btn-templates" title="Шаблоны SEW (Ctrl+Shift+T)">&#128196;</button>
     <button id="btn-help" title="Справочник (F1)" aria-label="Справочник">?</button>
@@ -672,79 +672,34 @@
       </div>
     </div>
   </div>
-    <!-- Оверлей «Ценники»: список SKU → позиции → один многостраничный PDF -->
+    <!-- Оверлей печати штрихов: список SKU → позиции из локальной базы → PDF.
+         Печать ценников через SEW снята, путь печати один и от SEW не зависит. -->
     <div id="pricetags-overlay" hidden>
       <div class="settings-card pricetags-card">
-        <div class="settings-title">Ценники</div>
-
-        <!-- Два независимых пути печати. «Штрихи локально» нужен потому, что
-             подсистема ценников SEW периодически лежит (503), а штрих-коды
-             лежат в локальной базе db.json: печать от SEW не зависит вовсе. -->
-        <div class="settings-row">
-          <label for="pricetags-mode">Режим</label>
-          <select id="pricetags-mode">
-            <option value="sew">Ценники SEW — с ценами</option>
-            <option value="local">Штрихи локально — без SEW</option>
-          </select>
-        </div>
-
-        <div id="pricetags-sew-only">
-        <div class="settings-row">
-          <label for="pricetags-store">Магазин</label>
-          <select id="pricetags-store"></select>
-        </div>
-        <div class="settings-row">
-          <label for="pricetags-template">Шаблон</label>
-          <select id="pricetags-template"></select>
-        </div>
-        <div class="settings-row">
-          <label for="pricetags-username">Логин SEW (табельный номер)</label>
-          <input id="pricetags-username" type="text" spellcheck="false" autocomplete="off" placeholder="напр. 181165" />
-        </div>
-        <!-- Логин живой сессии SEW: подсистема ценников работает от x-username, и
-             при входе под другим сотрудником SEW отвечает «Access Denied». -->
-        <div id="pricetags-login-hint" class="pricetags-login-hint" hidden>
-          <span id="pricetags-login-hint-text"></span>
-          <button id="pricetags-login-fix" type="button" class="pricetags-login-fix">подставить</button>
-        </div>
-        <div class="settings-row">
-          <label for="pricetags-paper">Бумага</label>
-          <select id="pricetags-paper">
-            <option value="1">Белая</option>
-            <option value="2">Жёлтая</option>
-            <option value="3">Розовая</option>
-          </select>
-        </div>
-        <div class="settings-row">
-          <label for="pricetags-copies">Копий каждого</label>
-          <input id="pricetags-copies" type="number" min="1" max="999" value="1" />
-        </div>
-        </div>
+        <div class="settings-title">Штрихи</div>
 
         <!-- Локальная база штрихов: состояние, обновление и копии. -->
-        <div id="pricetags-local-only" hidden>
-          <div class="settings-row">
-            <label>База штрихов (db.json)</label>
-            <span id="barcodes-db-status" class="barcodes-db-status">—</span>
-          </div>
-          <div class="settings-row">
-            <label for="barcodes-copies">Копий каждого</label>
-            <input id="barcodes-copies" type="number" min="1" max="999" value="1" />
-          </div>
-          <div class="settings-actions">
-            <button id="barcodes-refresh" type="button">Обновить базу</button>
-          </div>
+        <div class="settings-row">
+          <label>База штрихов (db.json)</label>
+          <span id="barcodes-db-status" class="barcodes-db-status">—</span>
+        </div>
+        <div class="settings-row">
+          <label for="barcodes-copies">Копий каждого</label>
+          <input id="barcodes-copies" type="number" min="1" max="999" value="1" />
+        </div>
+        <div class="settings-actions">
+          <button id="barcodes-refresh" type="button">Обновить базу</button>
         </div>
 
         <div class="settings-row pricetags-sku-row">
-          <label for="pricetags-sku">Артикулы (Enter — добавить, можно вставить список из буфера)</label>
+          <label for="pricetags-sku">Коды товара (Enter — добавить, можно вставить список из буфера)</label>
           <input id="pricetags-sku" spellcheck="false" autocomplete="off" placeholder="4258653" />
         </div>
         <div id="pricetags-chips" class="pricetags-chips"></div>
 
         <div class="settings-actions">
-          <button id="pricetags-find">Найти</button>
-          <button id="pricetags-build" disabled>Собрать PDF</button>
+          <button id="pricetags-find">Найти в базе</button>
+          <button id="pricetags-build" disabled>Собрать PDF штрихов</button>
         </div>
 
         <div id="pricetags-rows" class="pricetags-rows"></div>

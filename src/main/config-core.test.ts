@@ -3,86 +3,64 @@ import assert from 'node:assert/strict'
 import { PRICETAG_KEYS, VALIDATORS, dropInvalidPricetags, pickPricetagConfig } from './config-core.ts'
 
 /**
- * Дефолты фичи «Ценники» — те же значения, что в DEFAULTS (config.ts).
- * Дублируем намеренно: config.ts импортирует electron и под `node --test`
- * физически не грузится, поэтому тестать приходится сам модуль config-core.ts.
+ * Дефолты фичи печати — те же значения, что в DEFAULTS (config.ts). Дублируем
+ * намеренно: config.ts импортирует electron и под `node --test` физически не
+ * грузится, поэтому тестать приходится сам модуль config-core.ts.
+ *
+ * После снятия печати ценников через SEW от фичи остался один ключ —
+ * pricetagCopies (число копий на листе штрихов). Тесты на два пути отказа
+ * (merge файла и патч config:set) сохранены: именно они ловят значения,
+ * «похожие на правильные, но не годные».
  */
 const DEFAULTS = {
-  pricetagObjectId: 'S187',
-  pricetagTemplateId: 89,
-  pricetagPaperColorId: 1,
   pricetagCopies: 1,
-  pricetagBarcodeWidth: 100,
 }
 
 describe('pickPricetagConfig — merge пользовательского config.json', () => {
-  it('битое значение из файла заменяется дефолтом, а не мусором уходит в SEW', () => {
-    // Каждый ключ со своим видом мусора из config.json: правильный JSON,
-    // но значения нет (пользователь правил руками).
-    assert.deepEqual(pickPricetagConfig({ pricetagObjectId: 187 }, DEFAULTS), DEFAULTS)
-    assert.deepEqual(pickPricetagConfig({ pricetagTemplateId: '89' }, DEFAULTS), DEFAULTS)
-    assert.deepEqual(pickPricetagConfig({ pricetagPaperColorId: null }, DEFAULTS), DEFAULTS)
+  it('битое значение из файла заменяется дефолтом, а не мусором уходит в печать', () => {
+    // Правильный JSON, но значения нет (пользователь правил руками).
     assert.deepEqual(pickPricetagConfig({ pricetagCopies: {} }, DEFAULTS), DEFAULTS)
     assert.deepEqual(pickPricetagConfig({ pricetagCopies: [] }, DEFAULTS), DEFAULTS)
+    assert.deepEqual(pickPricetagConfig({ pricetagCopies: '3' }, DEFAULTS), DEFAULTS)
+    assert.deepEqual(pickPricetagConfig({ pricetagCopies: null }, DEFAULTS), DEFAULTS)
   })
 
   it('отсутствующие в файле ключи берутся из дефолтов', () => {
     assert.deepEqual(pickPricetagConfig({}, DEFAULTS), DEFAULTS)
     // Явно undefined — тоже «нет значения», не тихо протаскиваем undefined дальше.
-    assert.deepEqual(pickPricetagConfig({ pricetagTemplateId: undefined }, DEFAULTS), DEFAULTS)
+    assert.deepEqual(pickPricetagConfig({ pricetagCopies: undefined }, DEFAULTS), DEFAULTS)
   })
 
-  it('число вне диапазона заменяется дефолтом', () => {
-    assert.deepEqual(pickPricetagConfig({ pricetagTemplateId: 0 }, DEFAULTS), DEFAULTS)
-    assert.deepEqual(pickPricetagConfig({ pricetagTemplateId: -89 }, DEFAULTS), DEFAULTS)
-    assert.deepEqual(pickPricetagConfig({ pricetagTemplateId: 89.5 }, DEFAULTS), DEFAULTS)
-    assert.deepEqual(pickPricetagConfig({ pricetagPaperColorId: 0 }, DEFAULTS), DEFAULTS)
-    assert.deepEqual(pickPricetagConfig({ pricetagPaperColorId: 4 }, DEFAULTS), DEFAULTS)
-    assert.deepEqual(pickPricetagConfig({ pricetagCopies: 0 }, DEFAULTS), DEFAULTS)
-    assert.deepEqual(pickPricetagConfig({ pricetagCopies: 1000 }, DEFAULTS), DEFAULTS)
-    assert.deepEqual(pickPricetagConfig({ pricetagCopies: 2.5 }, DEFAULTS), DEFAULTS)
-  })
-
-  it('код магазина с пробелом, точкой, .. или длиннее 16 символов — дефолт', () => {
-    // objectId уходит в query-параметр SEW и в имя файла, поэтому фильтр строгий.
-    for (const bad of ['S 187', 'S.187', '..', '../S187', 'S187/../x', '', 'A'.repeat(17)]) {
-      assert.deepEqual(pickPricetagConfig({ pricetagObjectId: bad }, DEFAULTS), DEFAULTS, `код ${JSON.stringify(bad)} должен отбрасываться`)
+  it('число вне диапазона или не целое заменяется дефолтом', () => {
+    // Копии множатся на листе: 0 и дробь печатать нельзя, 1000 — опечатка.
+    for (const bad of [0, -1, 1000, 2.5, NaN, Infinity]) {
+      assert.deepEqual(pickPricetagConfig({ pricetagCopies: bad }, DEFAULTS), DEFAULTS, `копии ${bad} должны отбрасываться`)
     }
   })
 
   it('валидные значения из файла сохраняются без изменения', () => {
     const user = {
-      pricetagObjectId: 'S012',
-      pricetagTemplateId: 96,
-      pricetagPaperColorId: 3,
-      pricetagCopies: 999,
-      // намеренно не дефолтное 100: тест обязан доказать, что значение взято
+      // намеренно не дефолтная 1: тест обязан доказать, что значение взято
       // из файла, а не подставлено дефолтом
-      pricetagBarcodeWidth: 250,
+      pricetagCopies: 999,
     }
     assert.deepEqual(pickPricetagConfig(user, DEFAULTS), user)
   })
 
-  it('валидное значение одного магазина не мешает остальным ключам', () => {
-    assert.deepEqual(pickPricetagConfig({ pricetagObjectId: 'S012', pricetagCopies: '3' }, DEFAULTS), {
-      ...DEFAULTS,
-      pricetagObjectId: 'S012',
-    })
+  it('границы диапазона валидны', () => {
+    assert.equal(pickPricetagConfig({ pricetagCopies: 1 }, DEFAULTS).pricetagCopies, 1)
+    assert.equal(pickPricetagConfig({ pricetagCopies: 999 }, DEFAULTS).pricetagCopies, 999)
   })
 })
 
 describe('dropInvalidPricetags — патч config:set', () => {
   it('невалидные ключи выбрасываются из патча, чтобы не затереть значение в файле', () => {
-    assert.deepEqual(dropInvalidPricetags({ pricetagObjectId: 'S 187' }), {})
-    assert.deepEqual(dropInvalidPricetags({ pricetagTemplateId: '89' }), {})
-    assert.deepEqual(dropInvalidPricetags({ pricetagPaperColorId: 4 }), {})
     assert.deepEqual(dropInvalidPricetags({ pricetagCopies: 0 }), {})
+    assert.deepEqual(dropInvalidPricetags({ pricetagCopies: 2.5 }), {})
+    assert.deepEqual(dropInvalidPricetags({ pricetagCopies: '3' }), {})
   })
 
   it('валидные значения остаются в патче как есть', () => {
-    assert.deepEqual(dropInvalidPricetags({ pricetagObjectId: 'S012' }), { pricetagObjectId: 'S012' })
-    assert.deepEqual(dropInvalidPricetags({ pricetagTemplateId: 96 }), { pricetagTemplateId: 96 })
-    assert.deepEqual(dropInvalidPricetags({ pricetagPaperColorId: 2 }), { pricetagPaperColorId: 2 })
     assert.deepEqual(dropInvalidPricetags({ pricetagCopies: 999 }), { pricetagCopies: 999 })
   })
 
@@ -91,12 +69,6 @@ describe('dropInvalidPricetags — патч config:set', () => {
     // «сбросить в дефолт», поле в файле должно остаться как было.
     assert.deepEqual(dropInvalidPricetags({}), {})
     assert.deepEqual(dropInvalidPricetags({ stockObjectId: 'S012' }), { stockObjectId: 'S012' })
-  })
-
-  it('валидный ключ переживает невалидный сосед в том же патче', () => {
-    assert.deepEqual(dropInvalidPricetags({ pricetagCopies: 5, pricetagPaperColorId: '2' }), {
-      pricetagCopies: 5,
-    })
   })
 
   it('неизвестные и чужие ключи патча не трогаются', () => {
@@ -111,36 +83,34 @@ describe('dropInvalidPricetags — патч config:set', () => {
   })
 
   it('аргумент патча не мутируется — возвращается новый объект', () => {
-    const patch = { pricetagCopies: 0, pricetagObjectId: 'S012' }
+    const patch = { pricetagCopies: 0 }
     const cleaned = dropInvalidPricetags(patch)
-    assert.deepEqual(patch, { pricetagCopies: 0, pricetagObjectId: 'S012' })
+    assert.deepEqual(patch, { pricetagCopies: 0 })
     assert.notEqual(cleaned, patch)
   })
 
   it('тот же невалидный ключ отбрасывается обоими путями', () => {
     // Правила валидации не должны разъезжаться между merge и патчем, иначе
     // значение, отброшенное в патче, снова всплывёт из файла при следующем чтении.
-    for (const value of ['S.187', 'S 187', 'A'.repeat(17)]) {
-      assert.deepEqual(pickPricetagConfig({ pricetagObjectId: value }, DEFAULTS).pricetagObjectId, 'S187')
-      assert.equal('pricetagObjectId' in dropInvalidPricetags({ pricetagObjectId: value }), false)
+    for (const value of [0, 1000, '3', null]) {
+      assert.deepEqual(pickPricetagConfig({ pricetagCopies: value }, DEFAULTS).pricetagCopies, 1)
+      assert.equal('pricetagCopies' in dropInvalidPricetags({ pricetagCopies: value }), false)
     }
   })
 })
 
 describe('ключи патч-пути и валидаторы не разъезжаются', () => {
   it('патч-путь обходит ровно те ключи, для которых заведён валидатор', () => {
-    // Пока список ключей можно было написать руками, добавление пятого ключа
-    // ценников могло забыться именно в нём: typecheck проходил бы
-    // (Record исчерпывающе типизирован, а массив строк — нет), патч-путь
-    // config:set молча потерял бы санитайз, и битое значение доехало бы до
-    // config.json. Сортировка — сравниваем множества, порядок тут не значит.
+    // Пока список ключей можно было написать руками, добавление нового ключа
+    // могло забыться именно в нём: typecheck проходил бы (Record исчерпывающе
+    // типизирован, а массив строк — нет), патч-путь config:set молча потерял бы
+    // санитайз, и битое значение доехало бы до config.json. Сортировка —
+    // сравниваем множества, порядок тут не значит.
     assert.deepEqual([...PRICETAG_KEYS].sort(), Object.keys(VALIDATORS).sort())
   })
 
   it('невалидное значение выбрасывается из патча для каждого ключа из VALIDATORS', () => {
-    // null невалиден сразу для всех пяти проверок: код магазина ждёт строку,
-    // остальные четыре — число, а null не то и не другое. Ключи берём из
-    // VALIDATORS, поэтому новый ключ ценников попадает в проверку сам.
+    // Ключи берём из VALIDATORS, поэтому новый ключ попадает в проверку сам.
     for (const key of Object.keys(VALIDATORS)) {
       assert.deepEqual(dropInvalidPricetags({ [key]: null }), {}, `ключ ${key} должен выбрасываться из патча`)
     }

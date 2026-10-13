@@ -89,41 +89,7 @@ interface StockInventoryResult {
   error?: string
 }
 
-interface PricetagStoresResult {
-  ok: boolean
-  stores: { id: string; name: string }[]
-  current?: string
-  /** Логин живой сессии SEW (перехват x-username) — для сверки с полем логина */
-  sessionUsername?: string
-  error?: string
-}
-
-interface PricetagPrepareResult {
-  ok: boolean
-  result?: {
-    items: { sku: string; name: string; price: number }[]
-    missing: string[]
-    templates: { id: number; name: string; width?: number; height?: number }[]
-    warning?: string
-  }
-  error?: string
-}
-
-interface PricetagBuildInput {
-  objectId: string
-  items: { sku: string; name: string; price: number }[]
-  templateId: number
-  paperColorId: number
-  copies: number
-}
-
-interface PricetagBuildResult {
-  ok: boolean
-  pdfName?: string
-  error?: string
-}
-
-/** Состояние локальной базы штрихов (db.json). Печать штрихов от SEW не зависит. */
+/** Состояние локальной базы штрихов (db.json). Единственный путь печати штрихов. */
 interface BarcodeDbStatusLike {
   state: 'empty' | 'building' | 'ready' | 'error'
   stage?: 'download' | 'index'
@@ -448,14 +414,6 @@ const api = {
   /** Скачать отчёт об остатках по коду магазина; objectId — код из настроек */
   downloadStock: (objectId?: string): Promise<StockDownloadResult> =>
     ipcRenderer.invoke('stock:download', objectId),
-  /** Список магазинов сотрудника SEW (профиль) */
-  pricetagsStores: (): Promise<PricetagStoresResult> => ipcRenderer.invoke('pricetags:stores'),
-  /** Позиции и шаблоны ценников по списку SKU */
-  pricetagsPrepare: (objectId: string, skus: string[]): Promise<PricetagPrepareResult> =>
-    ipcRenderer.invoke('pricetags:prepare', objectId, skus),
-  /** Собрать PDF ценников и показать в просмотрщике */
-  pricetagsBuild: (input: PricetagBuildInput): Promise<PricetagBuildResult> =>
-    ipcRenderer.invoke('pricetags:build', input),
   /** Состояние локальной базы штрихов (db.json) */
   barcodesStatus: (): Promise<BarcodeDbStatusLike> => ipcRenderer.invoke('barcodes:status'),
   /** Скачать/обновить базу, если её ещё нет или она протухла */

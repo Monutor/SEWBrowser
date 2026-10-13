@@ -51,7 +51,7 @@ test('Ctrl+Shift+T остаётся шаблонами, а не новой вк�
   assert.equal(shortcutFromEvent(ev('T', { code: 'KeyT', ctrlKey: true })), 'new-tab')
 })
 
-test('Ctrl+Shift+P — окно ценников', () => {
+test('Ctrl+Shift+P — окно печати штрихов', () => {
   assert.equal(shortcutFromEvent(ev('P', { code: 'KeyP', ctrlKey: true, shiftKey: true })), 'pricetags')
 })
 

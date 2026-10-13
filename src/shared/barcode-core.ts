@@ -216,6 +216,24 @@ export function symbologyName(symbology: BarcodeSymbology): string {
   return symbology === 'ean13' ? 'EAN-13' : 'Code 128'
 }
 
+const SKU_RE = /^[\w-]*\d[\w-]*$/
+
+/** SKU из буфера/строки ввода: переводы строк, табуляции, запятые, точки с
+ *  запятой; мусор отбрасываем, дубли схлопываем с сохранением порядка.
+ *  Переехал сюда из pricetags-core вместе со снятием ценников SEW: разбор
+ *  списка артикулов нужен печати штрихов, а подсистеме ценников SEW больше нет. */
+export function parseSkuInput(text: string): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const raw of String(text ?? '').split(/[\s,;]+/)) {
+    const value = raw.trim()
+    if (!value || !SKU_RE.test(value) || seen.has(value)) continue
+    seen.add(value)
+    out.push(value)
+  }
+  return out
+}
+
 export interface BarcodeSvgOptions {
   /** Ширина одного модуля в пикселях. */
   moduleWidth?: number
