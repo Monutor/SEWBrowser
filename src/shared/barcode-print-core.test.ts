@@ -126,9 +126,12 @@ test('renderBarcodeSheet: наименование с разметкой экр�
 
 test('renderBarcodeSheet: штрих тянется на всю ширину этикетки', () => {
   // Иначе 18-значный код уехал бы за край и не читался бы — ради него и
-  // выбрана широкая этикетка.
+  // выбрана широкая этикетка. Ширина задаётся в мм, а не `width:100%`:
+  // у абсолютно позиционированного <svg> `width:auto` не растягивается между
+  // left и right, это собственная ширина, и полоса обрезалась краем этикетки.
   const html = renderBarcodeSheet(sample)
-  assert.match(html, /\.label svg\{width:100%;/)
+  const innerMm = SHEET_LAYOUT.labelWidthMm - 2 * 2 // минус отступы слева и справа
+  assert.match(html, new RegExp(`\\.label svg\\{position:absolute;left:2mm;width:${innerMm}mm;`))
 })
 
 test('renderBarcodeSheet: высота полосы задана явно, а не выведена из пропорции', () => {
@@ -138,7 +141,7 @@ test('renderBarcodeSheet: высота полосы задана явно, а н
   // overflow:hidden, и подпись уезжала тем ниже, чем длиннее код.
   const html = renderBarcodeSheet(sample)
   assert.doesNotMatch(html, /\.label svg\{width:100%;height:auto/)
-  const mm = html.match(/\.label svg\{width:100%;height:(\d+(?:\.\d+)?)mm/)
+  const mm = html.match(/\.label svg\{[^}]*height:(\d+(?:\.\d+)?)mm/)
   assert.ok(mm, 'высота полосы должна быть задана в мм')
   // Полоса плюс обе строки подписи должны помещаться в этикетку. Подпись — это
   // отдельный ряд грида, поэтому считаем обе строки целиком: .sku задаёт свой
@@ -153,6 +156,22 @@ test('renderBarcodeSheet: высота полосы задана явно, а н
   // preserveAspectRatio=none держит полосу во всю ширину: без него SVG вписался
   // бы по высоте и оставил бы этикетку пустой по бокам.
   assert.match(html, /preserveAspectRatio="none"/)
+})
+
+test('renderBarcodeSheet: полоса по центру этикетки, подпись внизу', () => {
+  // Полоса вне потока и центрируется сдвигом на половину своей высоты: в
+  // потоке она центрировалась бы в остатке после подписи и уезжала выше
+  // середины. Подпись — единственное, что держит поток, и прижата к низу.
+  const html = renderBarcodeSheet(sample)
+  assert.match(html, /\.label svg\{position:absolute;/)
+  assert.match(html, /top:50%;transform:translateY\(-50%\)/)
+  assert.match(html, /justify-content:flex-end/)
+  // Ширина задана в мм, а не через left/right: у абсолютного <svg> `width:auto`
+  // не растягивается между ними — это собственная ширина, и полоса обрезалась
+  // краем этикетки.
+  assert.match(html, /\.label svg\{position:absolute;left:2mm;width:91mm;/)
+  // Подпись центрируется под полосой: без align-items колонка уводила её влево.
+  assert.match(html, /align-items:center;justify-content:flex-end/)
 })
 
 test('renderBarcodeSheet: этикетка не рвётся между страницами', () => {
