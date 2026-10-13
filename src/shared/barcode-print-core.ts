@@ -161,18 +161,21 @@ export function renderBarcodeSheet(items: readonly BarcodeItem[], options: Sheet
     `.sheet{display:grid;grid-template-columns:repeat(${SHEET_LAYOUT.columns},${SHEET_LAYOUT.labelWidthMm}mm);` +
     `gap:${SHEET_LAYOUT.gapMm}mm;align-content:start}` +
     `.label{width:${SHEET_LAYOUT.labelWidthMm}mm;height:${SHEET_LAYOUT.labelHeightMm}mm;` +
-    // Центрируем блок целиком — полосу И подпись. Полоска по центру сама по
-    // себе давала «не по середине»: её центр совпадал с центром этикетки, но
-    // центр всего блока уезжал на 4 мм вниз — сверху оставалось 10 мм пустоты,
-    // снизу 2 мм. В потоке с justify-content:center поля делятся поровну.
-    'padding:2mm;border:1px dashed #bbb;display:flex;flex-direction:column;' +
+    // Штрих — единственный потокющий элемент внутри рамки, поэтому
+    // justify-content:center ставит его ровно по центру по вертикали. Подпись
+    // абсолютно спозиционирована у низа: если держать её в потоке, она «тянула»
+    // бы центр блока вниз и штрих уезжал вверх — именно так штрих и стоял выше
+    // середины рамки. Теперь штрих по середине, а текст — футером у низа.
+    'padding:2mm;border:1px dashed #bbb;position:relative;display:flex;flex-direction:column;' +
     'align-items:center;justify-content:center;break-inside:avoid;page-break-inside:avoid;overflow:hidden}' +
     // Ширина фиксирована по этикетке, `height:auto` держит пропорцию viewBox —
     // полоса масштабируется целиком, а не растягивается по одной оси.
     `.label svg{width:${BARCODE_BOX.widthMm}mm;height:auto;max-height:${BARCODE_BOX.maxHeightMm}mm;display:block}` +
-    // Под полосой — сам штрих-код: его вводят руками, если сканер не взял.
-    '.code{font:700 13px/1.1 Consolas,"Courier New",monospace}' +
-    '.name{font-size:9px;color:#333;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+    // Подпись прижата к низу рамки и по центру: штрих остаётся по середине, а
+    // цифры и наименование не сдвигают его вверх. `.code` выше (bottom:6mm),
+    // `.name` ниже (bottom:2mm) — читаются сверху вниз.
+    '.code{position:absolute;left:0;right:0;bottom:6mm;text-align:center;font:700 13px/1.1 Consolas,"Courier New",monospace}' +
+    '.name{position:absolute;left:0;right:0;bottom:2mm;text-align:center;font-size:9px;color:#333;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
     '.bad{font-size:9px;color:#a00}' +
     '</style></head><body>' +
     `${title}<div class="sheet">${labels}</div>` +
