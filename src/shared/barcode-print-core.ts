@@ -88,27 +88,40 @@ export function escapeHtml(value: string): string {
   return String(value ?? '').replace(/[&<>"']/g, (char) => HTML_ESCAPES[char] ?? char)
 }
 
-/** Высота полосы внутри этикетки, в мм. Считается от высоты этикетки за вычетом
- *  отступов и нижнего ряда с подписью: раньше ширина задавалась как
- *  `width:100%`, и высота SVG выводилась из пропорции viewBox — у EAN-13
- *  (117 модулей против 64 по высоте) это 49.8 мм при доступных 41 мм, из-за
- *  чего полоса вытесняла .sku и .name под `overflow:hidden` и подпись
- *  обрезалась. Чем длиннее код, тем ниже уезжал текст, поэтому этикетки в
- *  одном листе выглядели по-разному. */
-const BARCODE_HEIGHT_MM = 16
+/** Рамка, в которую этикетка вписывает штрих, в мм. Аналог
+ *  `.print-label svg { max-width: 80mm; max-height: 30mm }` в
+ *  Monutor/warehouse-barcode-generator; ширина здесь берётся по этикетке
+ *  (95 мм за вычетом отступов), высота ограничена, чтобы полоса не съедала
+ *  подпись. */
+const BARCODE_BOX = {
+  widthMm: SHEET_LAYOUT.labelWidthMm - 4,
+  heightMm: 24,
+} as const
 
-/** Одна этикетка. Высота полосы задана явно (`height` в атрибутах SVG), ширина
- *  остаётся 100%: полоса тянется во всю ширину и не вытесняет подпись. */
+/** Одна этикетка.
+ *
+ *  Под полосой печатается сам штрих-код, а под ним наименование — так же, как в
+ *  Monutor/warehouse-barcode-generator (`JsBarcode` с `displayValue: true`,
+ *  где цифры кода выводятся под полосами, а `.print-label-name` несёт
+ *  название). Прежде здесь стоял артикул товара: он для переборки бесполезен —
+ *  в сканер вводится штрих, и если он не берётся, человек вводит руками цифры
+ *  именно с этикетки.
+ *
+ *  Сама полоса не растягивается: SVG сохраняет пропорцию viewBox, а этикетка
+ *  вписывает её в рамку `max-width/max-height` (как `.print-label svg` в том
+ *  проекте). Раньше полоса растягивалась на всю ширину этикетки через
+ *  `preserveAspectRatio=none`, и короткий код получал непропорционально
+ *  толстые полосы. */
 function renderLabel(item: BarcodeItem): string {
   let svg = ''
   try {
-    svg = barcodeSvg(item.barcode, { moduleWidth: 2, height: 64, heightMm: BARCODE_HEIGHT_MM })
+    svg = barcodeSvg(item.barcode, { moduleWidth: 2, height: 64 })
   } catch {
     svg = '<div class="bad">код не печатается</div>'
   }
   return (
     `<div class="label">${svg}` +
-    `<div class="sku">${escapeHtml(item.sku)}</div>` +
+    `<div class="code">${escapeHtml(item.barcode)}</div>` +
     `<div class="name">${escapeHtml(item.name)}</div>` +
     '</div>'
   )
@@ -146,21 +159,17 @@ export function renderBarcodeSheet(items: readonly BarcodeItem[], options: Sheet
     // уезжал на ~3.5 мм выше середины этикетки.
     'padding:2mm;border:1px dashed #bbb;position:relative;display:flex;flex-direction:column;' +
     'align-items:center;justify-content:flex-end;break-inside:avoid;page-break-inside:avoid;overflow:hidden}' +
-    // Полоса вне потока и ровно по центру этикетки (top:50% + сдвиг на половину
-    // своей высоты). Ширину задаём в мм явно: у абсолютного <svg> `width:auto`
-    // не растягивается между left/right (для заменяемых элементов это
-    // собственная ширина), и полоса обрезалась краем этикетки.
-    // Высота в мм задана явно же: `height:auto` перебил бы атрибут у <svg>, и
-    // браузер вернулся бы к пропорции viewBox — у EAN-13 (117 модулей против 64
-    // по высоте) это 49.8 мм при доступных 41 мм, и полоса выдавливала подпись
-    // под overflow:hidden.
-    // preserveAspectRatio=none растягивает полосу по высоте, но модули по
-    // горизонтали масштабируются равномерно — штрих остаётся читаемым.
-    `.label svg{position:absolute;left:2mm;width:${SHEET_LAYOUT.labelWidthMm - 4}mm;top:50%;` +
-    `transform:translateY(-50%);height:${BARCODE_HEIGHT_MM}mm;display:block}` +
-    // Подпись — нижний ряд этикетки, отступ сверху ей не нужен: раньше он
-    // отодвигал её от полосы во флексе, в гриде ряды их разделят сами.
-    '.sku{font:700 13px/1.1 Consolas,"Courier New",monospace}' +
+    // Полоса вне потока и ровно по центру этикетки (left/top 50% и сдвиг на
+    // половину своих размеров). Размеры не задаём — `width:auto; height:auto`
+    // оставляют пропорцию viewBox, а max-width/max-height вписывают полосу в
+    // рамку: так же, как `.print-label svg` в warehouse-barcode-generator.
+    // Раньше здесь стоял `height:16mm` с preserveAspectRatio=none — полоса
+    // растягивалась на всю ширину этикетки, и короткий код выходил с
+    // непропорционально толстыми полосами.
+    `.label svg{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);` +
+    `width:auto;height:auto;max-width:${BARCODE_BOX.widthMm}mm;max-height:${BARCODE_BOX.heightMm}mm;display:block}` +
+    // Под полосой — сам штрих-код: его вводят руками, если сканер не взял.
+    '.code{font:700 13px/1.1 Consolas,"Courier New",monospace}' +
     '.name{font-size:9px;color:#333;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
     '.bad{font-size:9px;color:#a00}' +
     '</style></head><body>' +
