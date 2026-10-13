@@ -678,17 +678,11 @@
       <div class="settings-card pricetags-card">
         <div class="settings-title">Штрихи</div>
 
-        <!-- Локальная база штрихов: состояние, обновление и копии. -->
-        <div class="settings-row">
-          <label>База штрихов (db.json)</label>
+        <!-- Состояние базы и обновление — одной строкой: раньше блок занимал
+             три полосы во всю ширину и отодвигал главное поле ввода вниз. -->
+        <div class="barcodes-db-row">
           <span id="barcodes-db-status" class="barcodes-db-status">—</span>
-        </div>
-        <div class="settings-row">
-          <label for="barcodes-copies">Копий каждого</label>
-          <input id="barcodes-copies" type="number" min="1" max="999" value="1" />
-        </div>
-        <div class="settings-actions">
-          <button id="barcodes-refresh" type="button">Обновить базу</button>
+          <button id="barcodes-refresh" type="button" class="barcodes-refresh">Обновить базу</button>
         </div>
 
         <div class="settings-row pricetags-sku-row">
@@ -697,9 +691,15 @@
         </div>
         <div id="pricetags-chips" class="pricetags-chips"></div>
 
+        <!-- Кнопки действий и число копий в одну строку: копии относятся к
+             печати и держать их на отдельной полосе незачем. -->
         <div class="settings-actions">
           <button id="pricetags-find">Найти в базе</button>
           <button id="pricetags-build" disabled>Собрать PDF штрихов</button>
+          <label class="barcodes-copies-row">
+            Копий
+            <input id="barcodes-copies" type="number" min="1" max="999" value="1" />
+          </label>
         </div>
 
         <div id="pricetags-rows" class="pricetags-rows"></div>

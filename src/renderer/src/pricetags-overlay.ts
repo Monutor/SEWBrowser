@@ -151,7 +151,9 @@ function renderBarcodeRows(rows: readonly BarcodeItem[], missing: readonly strin
         sku.className = 'sku'
         sku.textContent = item.sku
         const name = document.createElement('span')
+        name.className = 'name'
         name.textContent = item.name
+        name.title = item.name
         const code = document.createElement('span')
         code.className = 'price'
         code.textContent = `${item.barcode} · ${symbologyName(item.symbology)}`

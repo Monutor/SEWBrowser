@@ -3433,9 +3433,105 @@ body {
 }
 
 .pricetags-card {
-  width: min(760px, 92vw);
+  width: min(680px, 92vw);
   max-height: 86vh;
   overflow: auto;
+}
+/* Оверлей — рабочий инструмент с одним полем ввода, а не форма настроек,
+   поэтому внутри карточки переопределяем идиому .settings-row/.settings-actions:
+   без этого кнопки растягиваются во всю ширину (flex: 1 в общих стилях) и
+   читаются как заголовки, а подпись и контрол разъезжаются по вертикали. */
+.pricetags-card .settings-row {
+  gap: 5px;
+  margin-top: 2px;
+}
+.pricetags-card .settings-actions {
+  justify-content: flex-start;
+  margin: 10px 0 4px;
+}
+.pricetags-card .settings-actions button {
+  flex: 0 0 auto;
+  padding: 7px 14px;
+  background: #26282e;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+.pricetags-card .settings-actions button:hover:not(:disabled) {
+  background: #2f323a;
+  border-color: #43474f;
+}
+.pricetags-card .settings-actions button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+/* Главное действие диалога — единственное с акцентом. */
+#pricetags-build {
+  background: var(--accent);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 600;
+}
+#pricetags-build:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.1);
+  border-color: transparent;
+}
+/* Состояние базы и кнопка обновления — одной строкой: раньше подпись,
+   значение и кнопка занимали три полосы во всю ширину. */
+.barcodes-db-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.barcodes-db-row .barcodes-db-status {
+  flex: 1 1 auto;
+  text-align: left;
+  min-width: 0;
+}
+.barcodes-refresh {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.barcodes-refresh:hover:not(:disabled) {
+  color: var(--text);
+  background: #26282e;
+}
+.barcodes-refresh:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+/* Число копий прижато вправо: относится к печати, но действием не является. */
+.barcodes-copies-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--text-dim);
+  cursor: default;
+}
+.barcodes-copies-row input {
+  width: 68px;
+  /* Поле вынесено из .settings-row, поэтому базовые стили инпутов к нему не
+     достают — без своих правил оно отрисовалось бы белым дефолтом браузера. */
+  background: #1a1b1e;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 10px;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  user-select: text;
+}
+.barcodes-copies-row input:focus {
+  border-color: var(--accent);
 }
 .pricetags-sku-row input {
   flex: 1 1 auto;
@@ -3468,15 +3564,21 @@ body {
 }
 .pricetags-rows {
   margin: 8px 0;
-  max-height: 240px;
-  overflow: auto;
+  max-height: 260px;
+  overflow-y: auto;
+  overflow-x: hidden;
   border: 1px solid var(--border);
   border-radius: 6px;
 }
+/* Колонка штриха по содержимому, наименование сжимается и обрезается. Раньше
+   ширина штриха была фиксированной (110px) с white-space: nowrap — длинный
+   код вылезал за колонку и список получал горизонтальную прокрутку, а имя
+   товара не помещалось на экране. */
 .pricetags-row {
   display: grid;
-  grid-template-columns: 110px 1fr 110px;
-  gap: 8px;
+  grid-template-columns: 96px minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 10px;
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
   font-size: 13px;
@@ -3486,6 +3588,13 @@ body {
 }
 .pricetags-row .sku {
   color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.pricetags-row .name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .pricetags-row .price {
   text-align: right;
@@ -3505,7 +3614,7 @@ body {
 .barcodes-db-status {
   font-size: 12px;
   color: #9aa4b2;
-  text-align: right;
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
 }
