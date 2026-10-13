@@ -132,11 +132,15 @@ test('renderBarcodeSheet: штрих вписывается в этикетку,
   // его в этикетку, как `.print-label svg` в warehouse-barcode-generator.
   const html = renderBarcodeSheet(sample)
   assert.doesNotMatch(html, /preserveAspectRatio/)
-  assert.doesNotMatch(html, /\.label svg\{[^}]*width:100%/)
+  // Ширина фиксирована по этикетке, а не ограничена сверху: `max-width` с
+  // `width:auto` никогда не увеличивал полосу, и EAN-13 рисовался 62 мм при
+  // доступных 91 мм.
   const innerMm = SHEET_LAYOUT.labelWidthMm - 2 * 2 // минус отступы слева и справа
-  assert.match(html, new RegExp(`max-width:${innerMm}mm`))
-  assert.match(html, /max-height:\d+mm/)
-  // Подпись должна помещаться под полосой: рамка по высоте не может съедать её.
+  assert.match(html, new RegExp(`width:${innerMm}mm;height:auto;`))
+  assert.doesNotMatch(html, /\.label svg\{[^}]*max-width/)
+  // Высота остаётся пропорциональной и упирается в страховку, не залезая под
+  // подпись. На текущей базе (самый длинный код — 18 знаков) полоса занимает
+  // 17.6 мм, до предела не доходит.
   const PX_MM = 25.4 / 96
   const boxMm = Number(html.match(/max-height:(\d+(?:\.\d+)?)mm/)![1])
   const contentMm = SHEET_LAYOUT.labelHeightMm - 2 * 2
