@@ -237,8 +237,15 @@ export function parseSkuInput(text: string): string[] {
 export interface BarcodeSvgOptions {
   /** Ширина одного модуля в пикселях. */
   moduleWidth?: number
-  /** Высота полос в пикселях. */
+  /** Высота полос в пикселях (viewBox, определяет пропорцию). */
   height?: number
+  /**
+   * Высота полосы на этикетке в миллиметрах. Задаётся атрибутом `height` у
+   * `<svg>`: без него браузер выводит высоту из пропорции viewBox, и при
+   * `width:100%` полоса у EAN-13 (117 модулей в ширину против 64 в высоту)
+   * занимает 49.8 мм — больше, чем есть в этикетке, и выдавливает подпись.
+   */
+  heightMm?: number
   /** Тихая зона слева/справа в модулях (минимум спецификации). */
   quietZone?: number
 }
@@ -280,9 +287,18 @@ export function barcodeSvg(code: string, options: BarcodeSvgOptions = {}): strin
     }
   }
 
+  const heightAttr = options.heightMm ?? height
+  // По умолчанию SVG сохраняет пропорцию viewBox (xMidYMid meet). Вызывающий,
+  // который задал физическую высоту, хочет полосу на всю ширину этикетки:
+  // preserveAspectRatio=none растягивает её по вертикали, а по горизонтали
+  // масштаб остаётся равномерным, поэтому ширина модулей одинаковая и сканер
+  // код берёт. Без этой строки полоса уместилась бы по высоте и потеряла
+  // большую часть ширины этикетки.
+  const aspect = options.heightMm === undefined ? '' : ' preserveAspectRatio="none"'
+
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" class="bc-svg" viewBox="0 0 ${totalModules} ${height}" ` +
-    `width="${totalModules * moduleWidth}" height="${height}" shape-rendering="crispEdges" ` +
+    `width="${totalModules * moduleWidth}" height="${heightAttr}"${aspect} shape-rendering="crispEdges" ` +
     `role="img" aria-label="Штрих-код ${escapeXml(code)}">` +
     `<path fill="#000" d="${bars.join('')}"/></svg>`
   )

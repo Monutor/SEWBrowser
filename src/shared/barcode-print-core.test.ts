@@ -128,7 +128,28 @@ test('renderBarcodeSheet: штрих тянется на всю ширину э�
   // Иначе 18-значный код уехал бы за край и не читался бы — ради него и
   // выбрана широкая этикетка.
   const html = renderBarcodeSheet(sample)
-  assert.match(html, /\.label svg\{width:100%;height:auto/)
+  assert.match(html, /\.label svg\{width:100%;/)
+})
+
+test('renderBarcodeSheet: высота полосы задана явно, а не выведена из пропорции', () => {
+  // Регресс: при width:100% и height:auto браузер считал высоту по пропорции
+  // viewBox, и EAN-13 (117 модулей в ширину против 64 в высоту) занимал
+  // 49.8 мм при доступных 41 мм — полоса выдавливала .sku и .name под
+  // overflow:hidden, и подпись уезжала тем ниже, чем длиннее код.
+  const html = renderBarcodeSheet(sample)
+  assert.doesNotMatch(html, /\.label svg\{width:100%;height:auto/)
+  const mm = html.match(/\.label svg\{width:100%;height:(\d+(?:\.\d+)?)mm/)
+  assert.ok(mm, 'высота полосы должна быть задана в мм')
+  // Полоса плюс обе строки подписи должны помещаться в этикетку.
+  const contentMm = SHEET_LAYOUT.labelHeightMm - 2 * 2
+  const textMm = 13 * 0.75 + 1.5 + 9 * 0.75 // .sku с отступом + .name, px→мм
+  assert.ok(
+    Number(mm[1]) + textMm < contentMm,
+    `полоса ${mm[1]}мм + подпись ${textMm.toFixed(1)}мм должны влезать в ${contentMm}мм`,
+  )
+  // preserveAspectRatio=none держит полосу во всю ширину: без него SVG вписался
+  // бы по высоте и оставил бы этикетку пустой по бокам.
+  assert.match(html, /preserveAspectRatio="none"/)
 })
 
 test('renderBarcodeSheet: этикетка не рвётся между страницами', () => {
