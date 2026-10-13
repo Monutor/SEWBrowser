@@ -1,4 +1,5 @@
 import { PAPER_COLORS, parseSkuInput } from '../../shared/pricetags-core'
+import { symbologyName } from '../../shared/barcode-core'
 import { setStatus } from './status-ui'
 
 export interface PricetagsOverlayDeps {
@@ -20,6 +21,16 @@ let items: Item[] = []
 /** Предупреждение SEW из последнего поиска — оно про поиск, а не про чипы,
  *  поэтому при сужении списка сохраняется. */
 let warning: string | undefined
+
+/** Режим печати. `sew` — ценники с ценами через SEW, `local` — штрихи из
+ *  локальной базы db.json без SEW вовсе. Живёт только внутри сессии окна:
+ *  режим — ответ на «что сейчас настроено», а не пользовательская настройка,
+ *  и после закрытия оверлея правильнее открыть то же, что открывали вчера. */
+type PrintMode = 'sew' | 'local'
+let mode: PrintMode = 'sew'
+
+/** Позиции, найденные в локальной базе штрихов (у них нет цены). */
+let barcodeItems: BarcodeItem[] = []
 
 function el(id: string): HTMLElement | null {
   return document.getElementById(id)
@@ -56,10 +67,76 @@ function visibleItems(): Item[] {
   return items.filter((item) => skus.includes(item.sku))
 }
 
-/** Рисуем строки и «не найдены» по текущему набору чипов. Запрос в SEW не нужен:
- *  данные по оставшимся артикулам уже в `items`, поэтому убранный артикул
- *  исчезает сразу, без повторного нажатия «Найти». */
+/** То же для локальной базы штрихов — у позиций нет цены, но набор чипов
+ *  сужает список так же, иначе убранный артикул ушёл бы в PDF как лишний. */
+function visibleBarcodeItems(): BarcodeItem[] {
+  return barcodeItems.filter((item) => skus.includes(item.sku))
+}
+
+/**
+ * Показать/спрятать блоки, относящиеся к одному режиму. Иначе в режиме
+ * локальных штрихов оверлей требовал бы магазин, шаблон и логин SEW, которых
+ * для печати штрихов не существует, и «Собрать PDF» оставалась бы заблокированной.
+ */
+function applyMode(): void {
+  const local = mode === 'local'
+  const sewBox = el('pricetags-sew-only')
+  if (sewBox) sewBox.hidden = local
+  const localBox = el('pricetags-local-only')
+  if (localBox) localBox.hidden = !local
+  const find = button('pricetags-find')
+  if (find) find.textContent = local ? 'Найти в базе' : 'Найти в SEW'
+  const build = button('pricetags-build')
+  if (build) build.textContent = local ? 'Собрать PDF штрихов' : 'Собрать PDF ценников'
+  const skuField = el('pricetags-sku')
+  const skuLabel = skuField?.previousElementSibling
+  if (skuLabel) {
+    skuLabel.textContent = local
+      ? 'Коды товара (Enter — добавить, можно вставить список из буфера)'
+      : 'Артикулы (Enter — добавить, можно вставить список из буфера)'
+  }
+  // Результаты двух режимов несовместимы: оставить на экране строки от другой
+  // базы нельзя — пользователь напечатал бы не то, что видит.
+  renderResult()
+}
+
+/** Человекочитаемое состояние базы штрихов для строки в оверлее. */
+function renderDbStatus(status?: BarcodeDbStatus): void {
+  const box = el('barcodes-db-status')
+  if (!box) return
+  if (!status) {
+    box.textContent = '—'
+    return
+  }
+  if (status.state === 'building') {
+    box.textContent = status.stage === 'index' ? 'разбираем базу…' : 'качаем базу…'
+    return
+  }
+  if (status.state === 'error') {
+    box.textContent = `недоступна: ${status.error ?? 'причина неизвестна'}`
+    return
+  }
+  if (status.state === 'empty') {
+    box.textContent = 'не скачана — нажмите «Обновить базу»'
+    return
+  }
+  const count = status.items ? `позиций: ${new Intl.NumberFormat('ru-RU').format(status.items)}` : ''
+  const when = status.updatedAt ? `обновлена ${new Date(status.updatedAt).toLocaleString('ru-RU')}` : ''
+  box.textContent = [count, when, status.stale ? 'устарела' : ''].filter(Boolean).join(' · ')
+}
+
+/** Рисуем строки и «не найдены» по текущему набору чипов. Запрос ни в SEW, ни в
+ *  базу не нужен: данные по оставшимся артикулам уже в `items`, поэтому убранный
+ *  артикул исчезает сразу, без повторного нажатия «Найти». */
 function renderResult(): void {
+  if (mode === 'local') {
+    renderBarcodeRows(
+      visibleBarcodeItems(),
+      skus.filter((sku) => !barcodeItems.some((item) => item.sku === sku)),
+    )
+    refreshButtons()
+    return
+  }
   renderRows(visibleItems(), skus.filter((sku) => !items.some((item) => item.sku === sku)), warning)
   refreshButtons()
 }
@@ -67,8 +144,11 @@ function renderResult(): void {
 /** Кнопки живут по состоянию, а не по флажкам. */
 function refreshButtons(): void {
   const build = button('pricetags-build')
-  const template = select('pricetags-template')
-  if (build) build.disabled = visibleItems().length === 0 || !template?.value
+  if (!build) return
+  build.disabled =
+    mode === 'local'
+      ? visibleBarcodeItems().length === 0
+      : visibleItems().length === 0 || !select('pricetags-template')?.value
 }
 
 function renderChips(): void {
@@ -143,6 +223,38 @@ function renderRows(rows: readonly Item[], missing: readonly string[], warningTe
   if (warningText) parts.push(warningText)
   miss.textContent = parts.join(' · ')
   miss.hidden = parts.length === 0
+}
+
+/**
+ * Строки результата локального поиска. Вместо цены показываем сам штрих-код и
+ * чем он нарисован: у 13-значных кодов это EAN-13, у остальных (в базе их
+ * ~142 тыс., длиной 2…18 знаков) — Code 128. Пользователь видит, что именно
+ * уйдёт на бумагу, ещё до печати.
+ */
+function renderBarcodeRows(rows: readonly BarcodeItem[], missing: readonly string[]): void {
+  const box = el('pricetags-rows')
+  if (box) {
+    box.replaceChildren(
+      ...rows.map((item) => {
+        const row = document.createElement('div')
+        row.className = 'pricetags-row'
+        const sku = document.createElement('span')
+        sku.className = 'sku'
+        sku.textContent = item.sku
+        const name = document.createElement('span')
+        name.textContent = item.name
+        const code = document.createElement('span')
+        code.className = 'price'
+        code.textContent = `${item.barcode} · ${symbologyName(item.symbology)}`
+        row.append(sku, name, code)
+        return row
+      }),
+    )
+  }
+  const miss = el('pricetags-missing')
+  if (!miss) return
+  miss.textContent = missing.length > 0 ? `не найдены в базе: ${missing.join(', ')}` : ''
+  miss.hidden = missing.length === 0
 }
 
 function fillSelect(
@@ -247,21 +359,62 @@ export async function openPricetags(): Promise<void> {
   node.hidden = false
   skus = []
   items = []
+  barcodeItems = []
   warning = undefined
   renderChips()
   renderResult()
   fillPaper()
   const copies = el('pricetags-copies') as HTMLInputElement | null
   if (copies) copies.value = String(deps.config()?.pricetagCopies ?? 1)
+  const bcopies = el('barcodes-copies') as HTMLInputElement | null
+  if (bcopies) bcopies.value = String(deps.config()?.pricetagCopies ?? 1)
   const username = el('pricetags-username') as HTMLInputElement | null
   if (username) username.value = deps.config()?.sewUsername ?? ''
   fillSelect(select('pricetags-template'), [], '')
-  refreshButtons()
-  await loadStores()
+  applyMode()
+  // Список магазинов нужен только режиму SEW: в режиме локальных штрихов его
+  // запрос всё равно упал бы с 503 и только запустовал статус ошибкой.
+  if (mode === 'sew') await loadStores()
+  else renderDbStatus(await window.shell.barcodesStatus())
   el('pricetags-sku')?.focus()
 }
 
+/** Поиск в локальной базе штрихов. Бaza обновляется при первом обращении —
+ *  пустой индекс иначе выглядел бы как «ничего не найдено». */
+async function findBarcodeItems(): Promise<void> {
+  const input = el('pricetags-sku') as HTMLInputElement | null
+  if (input) addFromInput(input)
+  if (skus.length === 0) {
+    setStatus('введите хотя бы один код товара')
+    return
+  }
+  const find = button('pricetags-find')
+  if (find) find.disabled = true
+  const known = await window.shell.barcodesStatus()
+  renderDbStatus(known)
+  if (known.state !== 'ready' || known.stale) setStatus('обновляем базу штрихов, это до минуты…')
+  else setStatus('ищу в локальной базе…')
+  try {
+    const res = await window.shell.barcodesLookup(skus)
+    renderDbStatus(res.status)
+    if (!res.ok || !res.items) {
+      barcodeItems = []
+      renderResult()
+      setStatus(res.error ?? 'база штрихов не ответила')
+      return
+    }
+    barcodeItems = res.items
+    renderResult()
+    const lost = res.missing && res.missing.length > 0 ? `, не найдено: ${res.missing.length}` : ''
+    setStatus(`найдено позиций: ${barcodeItems.length}${lost}`)
+  } finally {
+    if (find) find.disabled = false
+    refreshButtons()
+  }
+}
+
 async function findItems(): Promise<void> {
+  if (mode === 'local') return findBarcodeItems()
   const input = el('pricetags-sku') as HTMLInputElement | null
   if (input) addFromInput(input)
   if (skus.length === 0) {
@@ -296,7 +449,66 @@ async function findItems(): Promise<void> {
   }
 }
 
+/** Лист штрихов локально: позиции и копии — всё, что нужно, SEW не участвует. */
+async function buildBarcodePdf(): Promise<void> {
+  const build = button('pricetags-build')
+  if (build) build.disabled = true
+  const itemsToPrint = visibleBarcodeItems()
+  if (itemsToPrint.length === 0) {
+    setStatus('сначала найдите позиции')
+    refreshButtons()
+    return
+  }
+  const copiesRaw = (el('barcodes-copies') as HTMLInputElement | null)?.value ?? '1'
+  const copies = Number(copiesRaw)
+  if (!Number.isInteger(copies) || copies < 1) {
+    setStatus('сколько копий — целое число от 1')
+    refreshButtons()
+    return
+  }
+  setStatus(`собираю лист: ${itemsToPrint.length} позиций × ${copies}…`)
+  try {
+    const res = await window.shell.barcodesBuild(
+      itemsToPrint.map((item) => item.sku),
+      copies,
+    )
+    setStatus(
+      res.ok
+        ? 'PDF готов — он открыт в отдельном окне, там можно сохранить и напечатать'
+        : (res.error ?? 'PDF не собран'),
+    )
+  } finally {
+    refreshButtons()
+  }
+}
+
+/** Принудительное обновление базы: пользователь сам обновляет db.json, поэтому
+ *  кнопка нужна — ждать 12 часов ради его правки незачем. */
+async function refreshDb(): Promise<void> {
+  const refresh = el('barcodes-refresh')
+  if (refresh) (refresh as HTMLButtonElement).disabled = true
+  renderDbStatus({ state: 'building', stage: 'download' })
+  setStatus('качаю базу штрихов…')
+  try {
+    const status = await window.shell.barcodesReload()
+    renderDbStatus(status)
+    // Результаты старого поиска после обновления могут быть неполны: индекс
+    // мог обновиться новыми позициями. Сбрасываем строки, чтобы в PDF не ушёл
+    // список по базе вчерашней.
+    barcodeItems = []
+    renderResult()
+    setStatus(
+      status.state === 'ready'
+        ? `база обновлена: ${new Intl.NumberFormat('ru-RU').format(status.items ?? 0)} позиций`
+        : (status.error ?? 'база не обновилась'),
+    )
+  } finally {
+    if (refresh) (refresh as HTMLButtonElement).disabled = false
+  }
+}
+
 async function buildPdf(): Promise<void> {
+  if (mode === 'local') return buildBarcodePdf()
   const build = button('pricetags-build')
   if (build) build.disabled = true
   setStatus('SEW рендерит ценники, это до минуты…')
@@ -316,6 +528,18 @@ setStatus(res.ok ? 'PDF готов — он открыт в отдельном �
 
 export function wirePricetags(next: PricetagsOverlayDeps): void {
   deps = next
+  // Переключение режима сбрасывает найденное: позиции из SEW и позиции из
+  // локальной базы — разные данные, и оставить на экране строки от другой
+  // базы значит показать не то, что уйдёт в PDF.
+  select('pricetags-mode')?.addEventListener('change', (event) => {
+    mode = (event.target as HTMLSelectElement).value === 'local' ? 'local' : 'sew'
+    items = []
+    barcodeItems = []
+    warning = undefined
+    applyMode()
+    setStatus(mode === 'local' ? 'штрихи из локальной базы, SEW не нужен' : 'ценники из SEW')
+  })
+  el('barcodes-refresh')?.addEventListener('click', () => void refreshDb())
   const sku = el('pricetags-sku') as HTMLInputElement | null
   // Enter — добавить артикул и сразу найти позиции
   sku?.addEventListener('keydown', (event) => {
@@ -341,6 +565,11 @@ el('pricetags-close')?.addEventListener('click', closePricetags)
     void persist({ pricetagPaperColorId: Number((event.target as HTMLSelectElement).value) }, 'цвет бумаги')
   })
   el('pricetags-copies')?.addEventListener('change', (event) => {
+    void persist({ pricetagCopies: Number((event.target as HTMLInputElement).value) }, 'число копий')
+  })
+  // Копии штрихов живут в одном поле с копиями ценников: это одно и то же
+  // число, просто два режима, и держать две настройки незачем.
+  el('barcodes-copies')?.addEventListener('change', (event) => {
     void persist({ pricetagCopies: Number((event.target as HTMLInputElement).value) }, 'число копий')
   })
 el('pricetags-template')?.addEventListener('change', (event) => {

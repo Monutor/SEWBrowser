@@ -3524,3 +3524,14 @@ body {
 .pricetags-login-fix:hover {
   background: rgba(224, 168, 60, 0.12);
 }
+
+/* Состояние локальной базы штрихов: сколько позиций, когда обновляли и
+   протухла ли она. Мелко и приглушённо — это справочная строка, а не ошибка;
+   тревожный цвет остаётся за реальной недоступностью базы. */
+.barcodes-db-status {
+  font-size: 12px;
+  color: #9aa4b2;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

@@ -677,6 +677,18 @@
       <div class="settings-card pricetags-card">
         <div class="settings-title">Ценники</div>
 
+        <!-- Два независимых пути печати. «Штрихи локально» нужен потому, что
+             подсистема ценников SEW периодически лежит (503), а штрих-коды
+             лежат в локальной базе db.json: печать от SEW не зависит вовсе. -->
+        <div class="settings-row">
+          <label for="pricetags-mode">Режим</label>
+          <select id="pricetags-mode">
+            <option value="sew">Ценники SEW — с ценами</option>
+            <option value="local">Штрихи локально — без SEW</option>
+          </select>
+        </div>
+
+        <div id="pricetags-sew-only">
         <div class="settings-row">
           <label for="pricetags-store">Магазин</label>
           <select id="pricetags-store"></select>
@@ -706,6 +718,22 @@
         <div class="settings-row">
           <label for="pricetags-copies">Копий каждого</label>
           <input id="pricetags-copies" type="number" min="1" max="999" value="1" />
+        </div>
+        </div>
+
+        <!-- Локальная база штрихов: состояние, обновление и копии. -->
+        <div id="pricetags-local-only" hidden>
+          <div class="settings-row">
+            <label>База штрихов (db.json)</label>
+            <span id="barcodes-db-status" class="barcodes-db-status">—</span>
+          </div>
+          <div class="settings-row">
+            <label for="barcodes-copies">Копий каждого</label>
+            <input id="barcodes-copies" type="number" min="1" max="999" value="1" />
+          </div>
+          <div class="settings-actions">
+            <button id="barcodes-refresh" type="button">Обновить базу</button>
+          </div>
         </div>
 
         <div class="settings-row pricetags-sku-row">
