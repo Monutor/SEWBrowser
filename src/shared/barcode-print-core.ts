@@ -161,18 +161,15 @@ export function renderBarcodeSheet(items: readonly BarcodeItem[], options: Sheet
     `.sheet{display:grid;grid-template-columns:repeat(${SHEET_LAYOUT.columns},${SHEET_LAYOUT.labelWidthMm}mm);` +
     `gap:${SHEET_LAYOUT.gapMm}mm;align-content:start}` +
     `.label{width:${SHEET_LAYOUT.labelWidthMm}mm;height:${SHEET_LAYOUT.labelHeightMm}mm;` +
-    // position:relative — база для центрирования полосы; поток держит только
-    // подпись, прижатую к низу (justify-content:flex-end). Раньше полоса была
-    // в потоке и центрировалась в остатке после подписи, из-за чего её центр
-    // уезжал на ~3.5 мм выше середины этикетки.
-    'padding:2mm;border:1px dashed #bbb;position:relative;display:flex;flex-direction:column;' +
-    'align-items:center;justify-content:flex-end;break-inside:avoid;page-break-inside:avoid;overflow:hidden}' +
-    // Полоса вне потока и ровно по центру этикетки: left/top 50% и сдвиг на
-    // половину своих размеров. Ширина фиксирована по этикетке, `height:auto`
-    // держит пропорцию viewBox — полоса масштабируется целиком, а не
-    // растягивается по одной оси.
-    `.label svg{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);` +
-    `width:${BARCODE_BOX.widthMm}mm;height:auto;max-height:${BARCODE_BOX.maxHeightMm}mm;display:block}` +
+    // Центрируем блок целиком — полосу И подпись. Полоска по центру сама по
+    // себе давала «не по середине»: её центр совпадал с центром этикетки, но
+    // центр всего блока уезжал на 4 мм вниз — сверху оставалось 10 мм пустоты,
+    // снизу 2 мм. В потоке с justify-content:center поля делятся поровну.
+    'padding:2mm;border:1px dashed #bbb;display:flex;flex-direction:column;' +
+    'align-items:center;justify-content:center;break-inside:avoid;page-break-inside:avoid;overflow:hidden}' +
+    // Ширина фиксирована по этикетке, `height:auto` держит пропорцию viewBox —
+    // полоса масштабируется целиком, а не растягивается по одной оси.
+    `.label svg{width:${BARCODE_BOX.widthMm}mm;height:auto;max-height:${BARCODE_BOX.maxHeightMm}mm;display:block}` +
     // Под полосой — сам штрих-код: его вводят руками, если сканер не взял.
     '.code{font:700 13px/1.1 Consolas,"Courier New",monospace}' +
     '.name{font-size:9px;color:#333;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +

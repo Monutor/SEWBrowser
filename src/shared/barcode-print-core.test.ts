@@ -151,15 +151,16 @@ test('renderBarcodeSheet: штрих вписывается в этикетку,
   )
 })
 
-test('renderBarcodeSheet: полоса по центру этикетки, подпись внизу', () => {
-  // Полоса вне потока и центрируется сдвигом на половину своих размеров: в
-  // потоке она центрировалась бы в остатке после подписи и уезжала выше
-  // середины. Подпись — единственное, что держит поток, и прижата к низу.
+test('renderBarcodeSheet: блок «полоса + подпись» по центру этикетки', () => {
+  // Центрируется весь блок, а не полоса отдельно. Полоса по центру при
+  // подписи, прижатой к низу, давала «не по середине»: центр блока уезжал на
+  // 4 мм вниз — 10 мм пустоты сверху против 2 мм снизу. Регресс: возврат к
+  // position:absolute у полосы и flex-end у колонки ломает симметрию.
   const html = renderBarcodeSheet(sample)
-  assert.match(html, /\.label svg\{position:absolute;left:50%;top:50%;/)
-  assert.match(html, /transform:translate\(-50%,-50%\)/)
-  assert.match(html, /justify-content:flex-end/)
+  assert.match(html, /justify-content:center/)
   assert.match(html, /align-items:center/)
+  assert.doesNotMatch(html, /\.label svg\{position:absolute/)
+  assert.doesNotMatch(html, /justify-content:flex-end/)
 })
 
 test('renderBarcodeSheet: наименование с разметкой экранируется', () => {
