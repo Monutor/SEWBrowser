@@ -17,6 +17,8 @@ import { appendDownloadRecord, clearDownloadHistory, loadDownloadHistory, remove
 import { isValidObjectId, parseStockReport, stockFileName, stockReportUrl } from './downloads/stockReport'
 import { createSewApi } from './sew-api'
 import { createPricetags } from './pricetags'
+import { createBarcodeDb } from './barcode-db'
+import { createBarcodePrint } from './barcode-print'
 import type { PrepareItem } from '../shared/pricetags-core'
 import { readStockBalance } from './inventory/xlsx-core'
 import { screenshotFileName } from './screenshot'
@@ -1443,8 +1445,23 @@ function createWindow(): void {
       pricetags.build(input),
   )
 
-  // Выход приложения: временный PDF ценника удаляем (лежит в tempWorkDir).
-  app.on('before-quit', () => pricetags.disposePdf())
+  // Штрихи локально: база db.json и печать листа. Живёт отдельно от ценников
+  // и не ходит в SEW — пока подсистема ценников лежит с 503, печать штрихов
+  // остаётся рабочей. Индекс базы ленивый: скачивание начинается при первом
+  // обращении из оверлея, а не на старте приложения.
+  const barcodes = createBarcodePrint({ db: createBarcodeDb(), openPdfViewer })
+
+  ipcMain.handle('barcodes:status', () => barcodes.status())
+  ipcMain.handle('barcodes:ensure', () => barcodes.ensure())
+  ipcMain.handle('barcodes:reload', () => barcodes.reload())
+  ipcMain.handle('barcodes:lookup', (_e, skus: string[]) => barcodes.lookup(skus))
+  ipcMain.handle('barcodes:build', (_e, input: { skus: string[]; copies: number }) => barcodes.build(input))
+
+  // Выход приложения: временные PDF (ценники и штрихи) удаляем.
+  app.on('before-quit', () => {
+    pricetags.disposePdf()
+    barcodes.disposePdf()
+  })
 
   // Отчёт об остатках по кнопке тулбара. Ответ SEW — не файл, а JSON-конверт
   // с base64 внутри, поэтому качаем JSON целиком и распаковываем в Node: одна

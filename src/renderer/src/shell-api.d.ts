@@ -295,6 +295,37 @@ interface PricetagBuildResult {
   error?: string
 }
 
+/** Состояние локальной базы штрихов (db.json). Печать штрихов от SEW не зависит:
+ *  подсистема ценников может лежать с 503, а база штрихов — на диске у нас. */
+interface BarcodeDbStatus {
+  state: 'empty' | 'building' | 'ready' | 'error'
+  stage?: 'download' | 'index'
+  items?: number
+  updatedAt?: number
+  sourceBytes?: number
+  error?: string
+  stale?: boolean
+}
+/** Позиция из локальной базы: symbology выбрана из самого кода. */
+interface BarcodeItem {
+  sku: string
+  name: string
+  barcode: string
+  symbology: 'ean13' | 'code128'
+}
+interface BarcodeLookupResult {
+  ok: boolean
+  items?: BarcodeItem[]
+  missing?: string[]
+  status?: BarcodeDbStatus
+  error?: string
+}
+interface BarcodeBuildResult {
+  ok: boolean
+  pdfName?: string
+  error?: string
+}
+
 /** Позиция остатков, собранная из выгрузки для плагина `sew-inventory` */
 interface StockInventoryRow {
   sku: string
@@ -529,6 +560,16 @@ interface ShellApi {
   pricetagsPrepare(objectId: string, skus: string[]): Promise<PricetagPrepareResult>
   /** Собрать PDF ценников и открыть просмотрщик */
   pricetagsBuild(input: PricetagBuildInput): Promise<PricetagBuildResult>
+  /** Состояние локальной базы штрихов */
+  barcodesStatus(): Promise<BarcodeDbStatus>
+  /** Скачать/обновить базу штрихов, если её нет или она протухла */
+  barcodesEnsure(): Promise<BarcodeDbStatus>
+  /** Обновить базу штрихов принудительно */
+  barcodesReload(): Promise<BarcodeDbStatus>
+  /** Позиции по кодам товара из локальной базы (без SEW) */
+  barcodesLookup(skus: string[]): Promise<BarcodeLookupResult>
+  /** Собрать лист A4 со штрихами и открыть просмотрщик */
+  barcodesBuild(skus: string[], copies: number): Promise<BarcodeBuildResult>
   /** Сохранить последний собранный PDF на диск */
 
   /** Напечатать последний собранный PDF на системном принтере */
