@@ -8,12 +8,14 @@ let shelfList = null;
 let dbStatus = { loaded: false, error: null, loading: true };
 let _dbReady = loadBarcodeDb();
 
-// SEWBrowser: db.json в DataBaseProducts теперь лежит gzip'ом — отдаётся как
+// SEWBrowser: db.json в DataBaseProducts лежит gzip'ом — отдаётся как
 // application/octet-stream БЕЗ заголовка Content-Encoding, поэтому браузер сам
-// его не распакует и response.json() падает. Распаковываем нативным
-// DecompressionStream по магии 1F 8B в первых двух байтах; обычный JSON читаем
-// как раньше. Отличие от исходного расширения SEW-Helper — правку не переносить
-// оттуда дословно.
+// его не распакует и response.json() падает. Формат зафиксирован: gzip поверх
+// JSON-массива, обратно переворачивать не планируем. Распаковываем нативным
+// DecompressionStream по магии 1F 8B в первых двух байтах. Ветка без gzip —
+// страховка на случай, если db.json пересоберут скриптом и зальют без сжатия.
+// Отличие от исходного расширения SEW-Helper — правку не переносить оттуда
+// дословно.
 function isGzip(bytes) {
   return bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
 }
