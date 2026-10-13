@@ -1,7 +1,7 @@
 {
   "name": "sew-helper",
   "version": "0.6.0",
-  "description": "Порт Chrome-расширения SEW-Helper 0.6.0: кнопка «Информация о товаре» — фото товаров M.Video, ШК по артикулу, зоны. lib/db-loader/background/content/css — дословно из J:/Front-end-projects/AIDevelops/web-extension/SEW-Helper, обновления переносить оттуда; адаптер под оболочку — bridge.js, наши правки распознавания полок — shelf-match.js.",
+  "description": "Порт Chrome-расширения SEW-Helper 0.6.0: кнопка «Информация о товаре» — фото товаров M.Video, ШК по артикулу, зоны. lib/background/content/css — дословно из J:/Front-end-projects/AIDevelops/web-extension/SEW-Helper, обновления переносить оттуда; адаптер под оболочку — bridge.js, наши правки распознавания полок — shelf-match.js, распаковка gzip db.json — db-loader.js (формат базы зафиксирован, переносить оттуда дословно нельзя).",
   "renderer": [
     "./bridge.js",
     "./lib.js",

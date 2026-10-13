@@ -5,6 +5,8 @@ release/
 .DS_Store
 *.tsbuildinfo
 docs/
+# Артефакт ручного стенда scripts/test-barcode-preview.mjs
+scripts/barcode-preview.html
 
 # AI assistants — локальные конфиги, сессии, кэш; AGENTS.md больше не коммитим
 .opencode/

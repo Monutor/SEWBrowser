@@ -3,10 +3,10 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { normalizeRememberMinutes } from './credentials/folderUnlock'
 import { DEFAULT_OBJECT_ID, isValidObjectId } from './downloads/stockReport'
-// Санитайз четырёх ключей фичи «Ценники» вынесен в модуль без electron: сам
-// config.ts под `node --test` не грузится, а тихих путей отказа у ключей два
-// (чтение config.json и патч config:set). Валидаторы config-core.ts берёт те
-// же, из shared/stockReport, — свои правила не дублируются.
+// Санитайз ключа фичи печати вынесен в модуль без electron: сам config.ts под
+// `node --test` не грузится, а тихих путей отказа у ключа два (чтение
+// config.json и патч config:set). pickMaxLiveTabs приехал из merge: разбор
+// maxLiveTabs тоже обязан быть без electron, иначе тест конфига не грузится.
 import { dropInvalidPricetags, pickMaxLiveTabs, pickPricetagConfig } from './config-core'
 // Валидатор логина SEW живёт в ./sew-api — том же electron-free модуле, где
 // сам заголовок x-username собирается. Правило проверки и правило отправки не
@@ -92,18 +92,10 @@ export interface SewConfig {
   sewUsername: string;
   /** Код магазина для отчёта об остатках (objectId в запросе) */
   stockObjectId: string;
-  /** Код магазина для ценников (напр. S187) — по умолчанию тот же, что у остатков:
-   *  отдельный ключ нужен, чтобы печать ценников не ломалась у другого магазина. */
-  pricetagObjectId: string;
-  /** id шаблона печати ценника (89 = А6 ПРОМО, 96 = ШТРИХ-КОД 24, …) */
-  pricetagTemplateId: number;
-  /** 1 — белая, 2 — жёлтая, 3 — розовая */
-  pricetagPaperColorId: number;
-  /** Сколько копий каждого ценника */
+  /** Сколько копий каждой позиции печатать на листе штрихов. Имя ключа сохранено
+   *  от фичи ценников SEW: оно лежит в config.json, переименование обнулило бы
+   *  настройку. Печать ценников через SEW снята, других ключей у фичи нет. */
   pricetagCopies: number;
-  /** Ширина штрих-кода на ценнике (1..999). У SEW поля ширины нет — ключ
-   *  проходит санитайз и хранится, но в задание печати пока не уходит. */
-  pricetagBarcodeWidth: number;
    /** Автоочистка при выходе: 'none' | 'cache' (только HTTP-кэш) | 'all' (кэш + все хранилища) */
   clearOnExit: 'none' | 'cache' | 'all';
    tabs: NavTab[];
@@ -153,11 +145,7 @@ const DEFAULTS: SewConfig = {
   stockObjectId: DEFAULT_OBJECT_ID,
   // Пусто = заголовок x-username не уходит вовсе (см. isValidSewUsername).
   sewUsername: '',
-  pricetagObjectId: DEFAULT_OBJECT_ID,
-  pricetagTemplateId: 89,
-  pricetagPaperColorId: 1,
   pricetagCopies: 1,
-  pricetagBarcodeWidth: 100,
     scanFolders: [],
   maxLiveTabs: 4,
 }
@@ -312,8 +300,7 @@ function sanitizeConfig(user: Partial<SewConfig>): SewConfig {
     // заголовок пустую строку всё равно не выпустит: см. sewHeaders.
     sewUsername:
       user.sewUsername === '' || isValidSewUsername(user.sewUsername) ? user.sewUsername : DEFAULTS.sewUsername,
-    // Ценники: битое значение из config.json -> дефолт, иначе запрос уйдёт
-    // в SEW с несуществующим шаблоном/цветом бумаги и вернёт 500.
+    // Число копий: битое значение из config.json -> дефолт.
     ...pickPricetagConfig(user, DEFAULTS),
     clearOnExit: user.clearOnExit === 'cache' || user.clearOnExit === 'all' ? user.clearOnExit : 'none',
     folders,

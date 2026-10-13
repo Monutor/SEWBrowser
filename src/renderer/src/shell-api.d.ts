@@ -176,18 +176,10 @@ interface ShellConfig {
   /** Логин SEW (личный табельный номер) — уходит в заголовок x-username.
    *  Пусто = заголовок не отправляется. */
   sewUsername: string
-  /** Код магазина для ценников (напр. S187) — по умолчанию тот же, что у остатков:
-   *  отдельный ключ нужен, чтобы печать ценников не ломалась у другого магазина. */
-  pricetagObjectId: string
-  /** id шаблона печати ценника (89 = А6 ПРОМО, 96 = ШТРИХ-КОД 24, …) */
-  pricetagTemplateId: number
-  /** 1 — белая, 2 — жёлтая, 3 — розовая */
-  pricetagPaperColorId: number
-  /** Сколько копий каждого ценника */
+  /** Сколько копий каждой позиции печатать на листе штрихов. Имя ключа сохранено
+   *  от фичи ценников SEW — оно лежит в config.json. Печать ценников снята,
+   *  других ключей у фичи нет. */
   pricetagCopies: number
-  /** Ширина штрих-кода на ценнике (1..999). У SEW поля ширины нет — значение
-   *  проходит санитайз и хранится, но в задание печати пока не уходит. */
-  pricetagBarcodeWidth: number
   clearOnExit: 'none' | 'cache' | 'all'
   tabs: NavTab[]
   folders: NavFolder[]
@@ -264,32 +256,32 @@ interface StockDownloadResult {
   error?: string
 }
 
-interface PricetagStoresResult {
+/** Состояние локальной базы штрихов (db.json). Единственный путь печати штрихов:
+ *  подсистема ценников SEW снята, база штрихов лежит на диске у нас. */
+interface BarcodeDbStatus {
+  state: 'empty' | 'building' | 'ready' | 'error'
+  stage?: 'download' | 'index'
+  items?: number
+  updatedAt?: number
+  sourceBytes?: number
+  error?: string
+  stale?: boolean
+}
+/** Позиция из локальной базы: symbology выбрана из самого кода. */
+interface BarcodeItem {
+  sku: string
+  name: string
+  barcode: string
+  symbology: 'ean13' | 'code128'
+}
+interface BarcodeLookupResult {
   ok: boolean
-  stores: { id: string; name: string }[]
-  current?: string
-  /** Логин живой сессии SEW (перехват x-username) — для сверки с полем логина */
-  sessionUsername?: string
+  items?: BarcodeItem[]
+  missing?: string[]
+  status?: BarcodeDbStatus
   error?: string
 }
-interface PricetagPrepareResult {
-  ok: boolean
-  result?: {
-    items: { sku: string; name: string; price: number }[]
-    missing: string[]
-    templates: { id: number; name: string; width?: number; height?: number }[]
-    warning?: string
-  }
-  error?: string
-}
-interface PricetagBuildInput {
-  objectId: string
-  items: { sku: string; name: string; price: number }[]
-  templateId: number
-  paperColorId: number
-  copies: number
-}
-interface PricetagBuildResult {
+interface BarcodeBuildResult {
   ok: boolean
   pdfName?: string
   error?: string
@@ -523,12 +515,16 @@ interface ShellApi {
   pickDownloadsDir(): Promise<string | null>
   /** Скачать отчёт об остатках SEW (xlsx) в папку остатков; objectId — код магазина */
   downloadStock(objectId?: string): Promise<StockDownloadResult>
-  /** Список магазинов сотрудника SEW (для выпадающего списка) */
-  pricetagsStores(): Promise<PricetagStoresResult>
-  /** Позиции и шаблоны ценников по списку SKU */
-  pricetagsPrepare(objectId: string, skus: string[]): Promise<PricetagPrepareResult>
-  /** Собрать PDF ценников и открыть просмотрщик */
-  pricetagsBuild(input: PricetagBuildInput): Promise<PricetagBuildResult>
+  /** Состояние локальной базы штрихов */
+  barcodesStatus(): Promise<BarcodeDbStatus>
+  /** Скачать/обновить базу штрихов, если её нет или она протухла */
+  barcodesEnsure(): Promise<BarcodeDbStatus>
+  /** Обновить базу штрихов принудительно */
+  barcodesReload(): Promise<BarcodeDbStatus>
+  /** Позиции по кодам товара из локальной базы (без SEW) */
+  barcodesLookup(skus: string[]): Promise<BarcodeLookupResult>
+  /** Собрать лист A4 со штрихами и открыть просмотрщик */
+  barcodesBuild(skus: string[], copies: number): Promise<BarcodeBuildResult>
   /** Сохранить последний собранный PDF на диск */
 
   /** Напечатать последний собранный PDF на системном принтере */

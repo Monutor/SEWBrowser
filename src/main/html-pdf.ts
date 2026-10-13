@@ -9,7 +9,8 @@ import { pathToFileURL } from 'node:url'
  *  начнёт падать на живом, но уже недостижимом webContents. */
 const htmlPdfWindows = new Set<BrowserWindow>()
 
-/** Общая папка для временных артефактов ценников. */
+/** Общая папка для временных PDF (листы штрихов). Имя папки историческое — от
+ *  подсистемы ценников SEW, путь в tmpdir на пользователя не влияет. */
 export function tempWorkDir(): string {
   const base = join(tmpdir(), 'sewbrowser-pricetags')
   mkdirSync(base, { recursive: true })
@@ -18,7 +19,7 @@ export function tempWorkDir(): string {
 
 /**
  * HTML → PDF через скрытое окно. Образец — `printPdfDocument`
- * (src/main/index.ts:1292). Шрифты ценников приезжают инлайном (@font-face с
+ * (src/main/index.ts:1292). Шрифты в разметке приезжают инлайном (@font-face с
  * data-URI), поэтому перед снимком дожидаемся `document.fonts.ready`: иначе
  * `printToPDF` рисует fallback-гарнитуры.
  *
@@ -44,11 +45,12 @@ export async function htmlToPdf(html: string, timeoutMs = 45_000): Promise<Buffe
     })
     const win = created
     htmlPdfWindows.add(win)
-    // HTML ценников приходит из сети (сервер SEW), а дефолт Electron разрешает
-    // и `window.open`/`target="_blank"` (из скрытого окна вылезет видимое окно с
-    // дефолтными prefs), и самонавигацию через `location.href`/`<meta refresh>`.
-    // Без этих двух строк не-`file:` навигацию проглатывал бы guard в onLoaded,
-    // и вместо ошибки пользователь получал висок до таймаута.
+    // Разметка собирается у нас (src/shared/barcode-print-core.ts), но окно всё
+    // равно закрываем: дефолт Electron разрешает `window.open`/`target="_blank"`
+    // (из скрытого окна вылезет видимое окно с дефолтными prefs) и самонавигацию
+    // через `location.href`/`<meta refresh>`. Без этих двух строк не-`file:`
+    // навигацию проглатывал бы guard в onLoaded, и вместо ошибки пользователь
+    // получал висок до таймаута.
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     win.webContents.on('will-navigate', (event) => event.preventDefault())
     const pdf = await new Promise<Buffer>((resolve, reject) => {

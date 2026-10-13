@@ -16,8 +16,8 @@ import { getAccountSecrets, getLastUsedAccountId, listAccounts, removeAccount, s
 import { appendDownloadRecord, clearDownloadHistory, loadDownloadHistory, removeDownloadRecord } from './downloads/history'
 import { isValidObjectId, parseStockReport, stockFileName, stockReportUrl } from './downloads/stockReport'
 import { createSewApi } from './sew-api'
-import { createPricetags } from './pricetags'
-import type { PrepareItem } from '../shared/pricetags-core'
+import { createBarcodeDb } from './barcode-db'
+import { createBarcodePrint } from './barcode-print'
 import { readStockBalance } from './inventory/xlsx-core'
 import { screenshotFileName } from './screenshot'
 import { clearSoundFile, mimeForSoundExt, readSoundFile, saveSoundFile } from './sounds/store'
@@ -1042,9 +1042,8 @@ function createWindow(): void {
   // клиенте electron нет, иначе его не проверить через node --test).
   const sewApi = createSewApi({
     guestIds: () => attachedGuests,
-    // Геттер, а не значение: логин SEW меняется из renderer через config:set
-    // (пользователь вписал его в оверлее ценников), и захваченная копия
-    // осталась бы пустой до перезапуска приложения.
+    // Геттер, а не значение: логин SEW меняется из renderer через config:set,
+    // и захваченная копия осталась бы пустой до перезапуска приложения.
     // Именно getConfig(), а не локальный `config`: тот — снимок на момент
     // создания окна, а config:set подменяет объект только в файле и в
     // ответе IPC. Со снимком заголовок уходил бы пустым, и SEW отвечал 403
@@ -1474,27 +1473,22 @@ function createWindow(): void {
     void win.loadURL(pathToFileURL(htmlPath).toString())
   }
 
-  // Сервис ценников: оркестрация фичи в main (см. pricetags.ts). Все 4
-  // зависимости доступны в scope createWindow() — sewApi, openPdfViewer,
-  // config и getConfig (логин для расшифровки отказа по правам).
-  const pricetags = createPricetags({
-    api: sewApi,
-    openPdfViewer,
-    fallbackObjectId: () =>
-      isValidObjectId(config.pricetagObjectId) ? config.pricetagObjectId : config.stockObjectId,
-    sewUsername: () => getConfig().sewUsername,
+  // Штрихи локально: база db.json и печать листа. Путь печати единственный —
+  // подсистема ценников SEW снята, штрихи строятся локально из db.json.
+  // Индекс базы ленивый: скачивание начинается при первом обращении из
+  // оверлея, а не на старте приложения.
+  const barcodes = createBarcodePrint({ db: createBarcodeDb(), openPdfViewer })
+
+  ipcMain.handle('barcodes:status', () => barcodes.status())
+  ipcMain.handle('barcodes:ensure', () => barcodes.ensure())
+  ipcMain.handle('barcodes:reload', () => barcodes.reload())
+  ipcMain.handle('barcodes:lookup', (_e, skus: string[]) => barcodes.lookup(skus))
+  ipcMain.handle('barcodes:build', (_e, input: { skus: string[]; copies: number }) => barcodes.build(input))
+
+  // Выход приложения: временные PDF (листы штрихов) удаляем.
+  app.on('before-quit', () => {
+    barcodes.disposePdf()
   })
-
-  ipcMain.handle('pricetags:stores', () => pricetags.stores())
-  ipcMain.handle('pricetags:prepare', (_e, objectId: string, skus: string[]) => pricetags.prepare(objectId, skus))
-  ipcMain.handle(
-    'pricetags:build',
-    (_e, input: { objectId: string; items: PrepareItem[]; templateId: number; paperColorId: number; copies: number }) =>
-      pricetags.build(input),
-  )
-
-  // Выход приложения: временный PDF ценника удаляем (лежит в tempWorkDir).
-  app.on('before-quit', () => pricetags.disposePdf())
 
   // Отчёт об остатках по кнопке тулбара. Ответ SEW — не файл, а JSON-конверт
   // с base64 внутри, поэтому качаем JSON целиком и распаковываем в Node: одна

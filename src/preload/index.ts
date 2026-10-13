@@ -89,35 +89,33 @@ interface StockInventoryResult {
   error?: string
 }
 
-interface PricetagStoresResult {
+/** Состояние локальной базы штрихов (db.json). Единственный путь печати штрихов. */
+interface BarcodeDbStatusLike {
+  state: 'empty' | 'building' | 'ready' | 'error'
+  stage?: 'download' | 'index'
+  items?: number
+  updatedAt?: number
+  sourceBytes?: number
+  error?: string
+  stale?: boolean
+}
+
+interface BarcodeItemLike {
+  sku: string
+  name: string
+  barcode: string
+  symbology: 'ean13' | 'code128'
+}
+
+interface BarcodeLookupResultLike {
   ok: boolean
-  stores: { id: string; name: string }[]
-  current?: string
-  /** Логин живой сессии SEW (перехват x-username) — для сверки с полем логина */
-  sessionUsername?: string
+  items?: BarcodeItemLike[]
+  missing?: string[]
+  status?: BarcodeDbStatusLike
   error?: string
 }
 
-interface PricetagPrepareResult {
-  ok: boolean
-  result?: {
-    items: { sku: string; name: string; price: number }[]
-    missing: string[]
-    templates: { id: number; name: string; width?: number; height?: number }[]
-    warning?: string
-  }
-  error?: string
-}
-
-interface PricetagBuildInput {
-  objectId: string
-  items: { sku: string; name: string; price: number }[]
-  templateId: number
-  paperColorId: number
-  copies: number
-}
-
-interface PricetagBuildResult {
+interface BarcodeBuildResultLike {
   ok: boolean
   pdfName?: string
   error?: string
@@ -421,14 +419,18 @@ const api = {
   /** Скачать отчёт об остатках по коду магазина; objectId — код из настроек */
   downloadStock: (objectId?: string): Promise<StockDownloadResult> =>
     ipcRenderer.invoke('stock:download', objectId),
-  /** Список магазинов сотрудника SEW (профиль) */
-  pricetagsStores: (): Promise<PricetagStoresResult> => ipcRenderer.invoke('pricetags:stores'),
-  /** Позиции и шаблоны ценников по списку SKU */
-  pricetagsPrepare: (objectId: string, skus: string[]): Promise<PricetagPrepareResult> =>
-    ipcRenderer.invoke('pricetags:prepare', objectId, skus),
-  /** Собрать PDF ценников и показать в просмотрщике */
-  pricetagsBuild: (input: PricetagBuildInput): Promise<PricetagBuildResult> =>
-    ipcRenderer.invoke('pricetags:build', input),
+  /** Состояние локальной базы штрихов (db.json) */
+  barcodesStatus: (): Promise<BarcodeDbStatusLike> => ipcRenderer.invoke('barcodes:status'),
+  /** Скачать/обновить базу, если её ещё нет или она протухла */
+  barcodesEnsure: (): Promise<BarcodeDbStatusLike> => ipcRenderer.invoke('barcodes:ensure'),
+  /** Обновить базу принудительно (кнопка «Обновить базу») */
+  barcodesReload: (): Promise<BarcodeDbStatusLike> => ipcRenderer.invoke('barcodes:reload'),
+  /** Позиции по кодам товара из локальной базы — SEW тут не участвует */
+  barcodesLookup: (skus: string[]): Promise<BarcodeLookupResultLike> =>
+    ipcRenderer.invoke('barcodes:lookup', skus),
+  /** Собрать PDF листа со штрихами и показать в просмотрщике */
+  barcodesBuild: (skus: string[], copies: number): Promise<BarcodeBuildResultLike> =>
+    ipcRenderer.invoke('barcodes:build', { skus, copies }),
   /** Сохранить последний PDF на диск */
 
   /** Напечатать последний PDF */
