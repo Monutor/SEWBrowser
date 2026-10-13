@@ -140,9 +140,12 @@ test('renderBarcodeSheet: высота полосы задана явно, а н
   assert.doesNotMatch(html, /\.label svg\{width:100%;height:auto/)
   const mm = html.match(/\.label svg\{width:100%;height:(\d+(?:\.\d+)?)mm/)
   assert.ok(mm, 'высота полосы должна быть задана в мм')
-  // Полоса плюс обе строки подписи должны помещаться в этикетку.
+  // Полоса плюс обе строки подписи должны помещаться в этикетку. Подпись — это
+  // отдельный ряд грида, поэтому считаем обе строки целиком: .sku задаёт свой
+  // line-height 1.1, .name наследует 1.25 от body. 1px при 96dpi = 0.2646 мм.
+  const PX_MM = 25.4 / 96
   const contentMm = SHEET_LAYOUT.labelHeightMm - 2 * 2
-  const textMm = 13 * 0.75 + 1.5 + 9 * 0.75 // .sku с отступом + .name, px→мм
+  const textMm = (13 * 1.1 + 9 * 1.25) * PX_MM
   assert.ok(
     Number(mm[1]) + textMm < contentMm,
     `полоса ${mm[1]}мм + подпись ${textMm.toFixed(1)}мм должны влезать в ${contentMm}мм`,

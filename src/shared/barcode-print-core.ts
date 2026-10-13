@@ -88,14 +88,14 @@ export function escapeHtml(value: string): string {
   return String(value ?? '').replace(/[&<>"']/g, (char) => HTML_ESCAPES[char] ?? char)
 }
 
-/** Геометрия полосы внутри этикетки, в мм. Высота считается от высоты этикетки
- *  за вычетом отступов, полосы и двух строк подписи — раньше ширина задавалась
- *  как `width:100%`, и высота SVG выводилась из пропорции viewBox: у EAN-13
+/** Высота полосы внутри этикетки, в мм. Считается от высоты этикетки за вычетом
+ *  отступов и нижнего ряда с подписью: раньше ширина задавалась как
+ *  `width:100%`, и высота SVG выводилась из пропорции viewBox — у EAN-13
  *  (117 модулей против 64 по высоте) это 49.8 мм при доступных 41 мм, из-за
  *  чего полоса вытесняла .sku и .name под `overflow:hidden` и подпись
  *  обрезалась. Чем длиннее код, тем ниже уезжал текст, поэтому этикетки в
  *  одном листе выглядели по-разному. */
-const BARCODE_HEIGHT_MM = 22
+const BARCODE_HEIGHT_MM = 28
 
 /** Одна этикетка. Высота полосы задана явно (`height` в атрибутах SVG), ширина
  *  остаётся 100%: полоса тянется во всю ширину и не вытесняет подпись. */
@@ -140,15 +140,21 @@ export function renderBarcodeSheet(items: readonly BarcodeItem[], options: Sheet
     `.sheet{display:grid;grid-template-columns:repeat(${SHEET_LAYOUT.columns},${SHEET_LAYOUT.labelWidthMm}mm);` +
     `gap:${SHEET_LAYOUT.gapMm}mm;align-content:start}` +
     `.label{width:${SHEET_LAYOUT.labelWidthMm}mm;height:${SHEET_LAYOUT.labelHeightMm}mm;` +
-    'padding:2mm;border:1px dashed #bbb;display:flex;flex-direction:column;align-items:center;' +
-    'justify-content:center;break-inside:avoid;page-break-inside:avoid;overflow:hidden}' +
+    // Грид из двух рядов: полоса занимает верхний (1fr) и центрируется в нём, а
+    // подпись прижата к нижнему краю этикетки своим рядом (auto). На флексе с
+    // justify-content:center подпись висела под полосой общим блоком, и полоса
+    // уезжала вверх от середины этикетки.
+    'padding:2mm;border:1px dashed #bbb;display:grid;grid-template-rows:1fr auto;' +
+    'justify-items:center;align-items:center;break-inside:avoid;page-break-inside:avoid;overflow:hidden}' +
     // Высота полосы задана в мм явно: `height:auto` перебил бы атрибут у <svg> и
     // браузер вернулся бы к пропорции viewBox, из-за чего EAN-13 занимал 49.8 мм
     // при доступных 41 мм и выдавливал .sku/.name под overflow:hidden.
     // preserveAspectRatio=none растягивает полосу по высоте, но модули по
     // горизонтали масштабируются равномерно — штрих остаётся читаемым.
     `.label svg{width:100%;height:${BARCODE_HEIGHT_MM}mm;display:block}` +
-    '.sku{font:700 13px/1.1 Consolas,"Courier New",monospace;margin-top:1.5mm}' +
+    // Подпись — нижний ряд этикетки, отступ сверху ей не нужен: раньше он
+    // отодвигал её от полосы во флексе, в гриде ряды их разделят сами.
+    '.sku{font:700 13px/1.1 Consolas,"Courier New",monospace}' +
     '.name{font-size:9px;color:#333;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
     '.bad{font-size:9px;color:#a00}' +
     '</style></head><body>' +
