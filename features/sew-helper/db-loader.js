@@ -8,6 +8,34 @@ let shelfList = null;
 let dbStatus = { loaded: false, error: null, loading: true };
 let _dbReady = loadBarcodeDb();
 
+// SEWBrowser: db.json в DataBaseProducts теперь лежит gzip'ом — отдаётся как
+// application/octet-stream БЕЗ заголовка Content-Encoding, поэтому браузер сам
+// его не распакует и response.json() падает. Распаковываем нативным
+// DecompressionStream по магии 1F 8B в первых двух байтах; обычный JSON читаем
+// как раньше. Отличие от исходного расширения SEW-Helper — правку не переносить
+// оттуда дословно.
+function isGzip(bytes) {
+  return bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+}
+
+async function parseDbBytes(bytes) {
+  if (!isGzip(bytes)) return JSON.parse(new TextDecoder().decode(bytes));
+  if (typeof DecompressionStream !== 'function') {
+    throw new Error('db.json в gzip, но в браузере нет DecompressionStream');
+  }
+  dbStatus = { loaded: false, error: null, loading: true, stage: 'unpack' };
+  const unpacked = new Response(bytes).body.pipeThrough(new DecompressionStream('gzip'));
+  return JSON.parse(await new Response(unpacked).text());
+}
+
+async function readDbPayload(response) {
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const gzipped = isGzip(bytes);
+  dbStatus = { loaded: false, error: null, loading: true, stage: 'parse' };
+  console.log('[SEW-Helper] Barcode DB: ' + (gzipped ? 'gzip ' : '') + bytes.length + ' bytes');
+  return await parseDbBytes(bytes);
+}
+
 async function loadBarcodeDb() {
   dbStatus = { loaded: false, error: null, loading: true };
   try {
@@ -16,7 +44,7 @@ async function loadBarcodeDb() {
     const response = await fetch(BARCODE_DB_URL, { signal: controller.signal });
     clearTimeout(timeoutId);
     if (!response.ok) throw new Error('HTTP ' + response.status);
-    const data = await response.json();
+    const data = await readDbPayload(response);
     barcodeIndex = new Map();
     const shelfMap = new Map();
     for (const item of data) {
