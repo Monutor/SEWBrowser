@@ -6,7 +6,7 @@
  */
 
 /** Канал моста = одна очередь гостя */
-export type BridgeChannel = 'bff' | 'scans' | 'inv' | 'store'
+export type BridgeChannel = 'bff' | 'scans' | 'inv' | 'store' | 'barcode'
 
 /** Глобаль гостя, в котором плагин кладёт запросы по каналу */
 const QUEUE_GLOBALS: Record<BridgeChannel, string> = {
@@ -14,6 +14,7 @@ const QUEUE_GLOBALS: Record<BridgeChannel, string> = {
   scans: '__sewScansReq',
   inv: '__sewInventoryReq',
   store: '__shellStoreReq',
+  barcode: '__sewHelperBarcodeReq',
 }
 
 /**
@@ -25,9 +26,10 @@ export const BRIDGE_PLUGIN: Partial<Record<BridgeChannel, string>> = {
   bff: 'sew-helper',
   scans: 'scans-block',
   inv: 'sew-inventory',
+  barcode: 'sew-helper',
 }
 
-export const BRIDGE_CHANNELS: BridgeChannel[] = ['bff', 'scans', 'inv', 'store']
+export const BRIDGE_CHANNELS: BridgeChannel[] = ['bff', 'scans', 'inv', 'store', 'barcode']
 
 /** Каналы, которые есть смысл опрашивать при текущем наборе включённых плагинов */
 export function enabledChannels(enabledPlugins: readonly string[]): BridgeChannel[] {
@@ -45,11 +47,12 @@ export interface TakenQueues {
   scans: unknown[]
   inv: unknown[]
   store: unknown[]
+  barcode: unknown[]
 }
 
 /** Пустая разборка — безопасное состояние по умолчанию */
 export function emptyQueues(): TakenQueues {
-  return { bff: [], scans: [], inv: [], store: [] }
+  return { bff: [], scans: [], inv: [], store: [], barcode: [] }
 }
 
 /** Типы запросов, которые открывают модальный диалог выбора файла на диске. */
@@ -110,7 +113,11 @@ export function parseTakeResult(raw: unknown): TakenQueues {
 /** Есть ли в разборе хоть один запрос — по этому держим быстрый интервал */
 export function anyRequest(queues: TakenQueues): boolean {
   return (
-    queues.bff.length > 0 || queues.scans.length > 0 || queues.inv.length > 0 || queues.store.length > 0
+    queues.bff.length > 0 ||
+    queues.scans.length > 0 ||
+    queues.inv.length > 0 ||
+    queues.store.length > 0 ||
+    queues.barcode.length > 0
   )
 }
 
@@ -133,6 +140,19 @@ export interface InvRequest {
   skus?: string[]
   /** Ручной режим: путь к файлу остатков на диске вместо скачивания из SEW */
   manualPath?: string
+}
+
+/**
+ * Запрос плагина sew-helper к локальной базе штрихов в main: 'lookup' — штрих
+ * по коду товара, 'status' — состояние индекса, 'reload' — пересобрать индекс.
+ * Отвечает оболочка (barcodes:*), потому что у гостя нет IPC, а db.json лежит
+ * на диске у main и в гостя 116 МБ распакованного JSON грузить нельзя.
+ */
+export interface BarcodeRequest {
+  id: string
+  type: 'lookup' | 'status' | 'reload'
+  /** Код товара; обязателен для 'lookup' */
+  sku?: string
 }
 
 /** Отсечь битые записи очереди: без id ответ не положить, url/zone приводим к строке */
@@ -174,6 +194,25 @@ export function asInvReqs(items: unknown[]): InvRequest[] {
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
+}
+
+const BARCODE_TYPES: readonly string[] = ['lookup', 'status', 'reload']
+
+/** Запросы базы штрихов: тип из белого списка, lookup без кода товара отбрасываем.
+ *  Код товара подрезаем: гость присылает строку как есть, а в индексе базы
+ *  кода без пробелов — « 1234 » иначе просто не нашёлся бы. */
+export function asBarcodeReqs(items: unknown[]): BarcodeRequest[] {
+  const out: BarcodeRequest[] = []
+  for (const item of items) {
+    const rec = asRecord(item)
+    if (!rec || typeof rec.id !== 'string' || typeof rec.type !== 'string') continue
+    if (!BARCODE_TYPES.includes(rec.type)) continue
+    const type = rec.type as BarcodeRequest['type']
+    const sku = typeof rec.sku === 'string' && rec.sku.trim() ? rec.sku.trim() : undefined
+    if (type === 'lookup' && !sku) continue
+    out.push({ id: rec.id, type, sku })
+  }
+  return out
 }
 
 export interface PollDelayOptions {

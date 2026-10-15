@@ -58,7 +58,7 @@ function renderDbStatus(status?: BarcodeDbStatus): void {
     return
   }
   if (status.state === 'building') {
-    box.textContent = status.stage === 'index' ? 'разбираем базу…' : 'качаем базу…'
+    box.textContent = status.stage === 'index' ? 'разбираем базу…' : 'читаем базу…'
     return
   }
   if (status.state === 'error') {
@@ -66,7 +66,7 @@ function renderDbStatus(status?: BarcodeDbStatus): void {
     return
   }
   if (status.state === 'empty') {
-    box.textContent = 'не скачана — нажмите «Обновить базу»'
+    box.textContent = 'не собрана — нажмите «Обновить базу»'
     return
   }
   const count = status.items ? `позиций: ${new Intl.NumberFormat('ru-RU').format(status.items)}` : ''
@@ -279,13 +279,13 @@ async function buildBarcodePdf(): Promise<void> {
   }
 }
 
-/** Принудительное обновление базы: пользователь сам обновляет db.json, поэтому
- *  кнопка нужна — ждать 12 часов ради его правки незачем. */
+/** Обновление базы: db.json едет с обновлением приложения, поэтому кнопка
+ *  пересобирает индекс, если файл новее прежнего (иначе — ничего не делает). */
 async function refreshDb(): Promise<void> {
   const refresh = button('barcodes-refresh')
   if (refresh) refresh.disabled = true
-  renderDbStatus({ state: 'building', stage: 'download' })
-  setStatus('качаю базу штрихов…')
+  renderDbStatus({ state: 'building', stage: 'read' })
+  setStatus('собираю базу штрихов…')
   try {
     const status = await window.shell.barcodesReload()
     renderDbStatus(status)

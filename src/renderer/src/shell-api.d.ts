@@ -260,7 +260,7 @@ interface StockDownloadResult {
  *  подсистема ценников SEW снята, база штрихов лежит на диске у нас. */
 interface BarcodeDbStatus {
   state: 'empty' | 'building' | 'ready' | 'error'
-  stage?: 'download' | 'index'
+  stage?: 'read' | 'index'
   items?: number
   updatedAt?: number
   sourceBytes?: number

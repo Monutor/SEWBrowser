@@ -3,22 +3,19 @@
  *
  * Файл едет с приложением (electron-builder: `src/database` -> resources/database),
  * в dev лежит в исходниках. Пользователь его не правит — обновление приходит
- * новой версией SEWBrowser, поэтому копия в %APPDATA% не нужна (в отличие от
- * базы штрихов db.json, которую пользователь докачивает).
+ * новой версией SEWBrowser. Путь даёт общий database-paths: базы полок и
+ * штрихов лежат рядом и резолвятся одинаково.
  *
  * Файл читается ОДИН раз за жизнь процесса и держится в памяти: он весит
  * 1.3 МБ, а инжект с полками уходит в гостя на каждую загрузку вкладки.
  */
-import { app } from 'electron'
 import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { parseShelvesFile, type ShelvesPayload } from './shelves-core'
+import { getDatabaseFile } from './database-paths'
 
 /** shelves.json в dev — в src/ рядом с проектом; в prod — в resources/ */
 export function getShelvesFilePath(): string {
-  if (app.isPackaged) return join(process.resourcesPath, 'database', 'shelves.json')
-  // dev: __dirname = <proj>/out/main → два уровня вверх = корень проекта
-  return join(__dirname, '..', '..', 'src', 'database', 'shelves.json')
+  return getDatabaseFile('shelves.json')
 }
 
 export interface ShelvesService {

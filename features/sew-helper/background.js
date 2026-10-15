@@ -203,10 +203,11 @@ async function getProductImages(sku) {
 
 chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   if (msg.type === 'getBarcode') {
-    _dbReady.then(function () {
-      sendResponse({ barcode: getBarcode(String(msg.sku)) });
-    }, function () {
-      sendResponse({ barcode: getBarcode(String(msg.sku)) });
+    // Ответ приходит из моста базы штрихов, поэтому он всегда асинхронный
+    getBarcode(String(msg.sku)).then(function (barcode) {
+      sendResponse({ barcode: barcode });
+    }, function (err) {
+      sendResponse({ barcode: null, error: String(err) });
     });
     return true;
   }
@@ -217,12 +218,20 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
     return true;
   }
   if (msg.type === 'getDbStatus') {
-    sendResponse(getDbStatus());
+    getDbStatus().then(function (status) {
+      sendResponse(status);
+    }, function (err) {
+      sendResponse({ loaded: false, error: String(err), loading: false, cached: false });
+    });
     return true;
   }
   if (msg.type === 'reloadBarcodeDb') {
-    reloadBarcodeDb();
-    sendResponse({ ok: true });
+    // Ждём пересборки индекса: вызывающий сразу повторяет запрос штриха
+    reloadBarcodeDb().then(function () {
+      sendResponse({ ok: true });
+    }, function (err) {
+      sendResponse({ ok: false, error: String(err) });
+    });
     return true;
   }
   if (!msg || msg.type !== 'getProductImages') {

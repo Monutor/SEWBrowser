@@ -4,6 +4,7 @@ import { formatTaskAlertText, getTaskAlertUrls, type TaskAlertController } from 
 import { setStatus } from './status-ui'
 import { hostOf, normalizeUrl } from './util'
 import {
+  asBarcodeReqs,
   asBffReqs,
   asInvReqs,
   asScansReqs,
@@ -13,6 +14,7 @@ import {
   isInteractiveRequest,
   nextPollDelay,
   parseTakeResult,
+  type BarcodeRequest,
   type BridgeChannel,
   type ScansRequest,
 } from './bridges-core.ts'
@@ -128,6 +130,7 @@ export async function pumpPollBridge(): Promise<boolean> {
     for (const req of asBffReqs(queues.bff)) await answerBff(tab, req)
     for (const req of asScansReqs(queues.scans)) await answerRequest('scans', req, () => answerScans(tab, req))
     for (const req of asInvReqs(queues.inv)) await answerRequest('inv', req, () => answerInventory(tab, req))
+    await answerBarcode(tab, asBarcodeReqs(queues.barcode))
     await answerStore(queues.store)
   }
   return hadWork
@@ -148,6 +151,51 @@ async function answerRequest(
     return
   }
   await answer()
+}
+
+/**
+ * Мост к локальной базе штрихов db.json: гость (sew-helper) больше не качает
+ * 116 МБ сам и не держит индекс в памяти — спрашивает оболочку, она ходит в
+ * main (barcodes:*) и кладёт ответ в window.__sewHelperBarcodeRes[id].
+ * Ответы 'status'/'reload' нужны окну товара: индекс может ещё собираться.
+ */
+async function answerBarcode(tab: ShellTab, reqs: BarcodeRequest[]): Promise<void> {
+  for (const req of reqs) {
+    let res: unknown
+    try {
+      switch (req.type) {
+        case 'lookup': {
+          const found = await window.shell.barcodesLookup(req.sku ? [req.sku] : [])
+          const item = found && Array.isArray(found.items) ? found.items[0] : null
+          res = { barcode: item && item.barcode ? item.barcode : null }
+          break
+        }
+        case 'status':
+          res = await window.shell.barcodesStatus()
+          break
+        case 'reload':
+          res = await window.shell.barcodesReload()
+          break
+      }
+    } catch (err) {
+      console.warn(`[barcode-bridge] ${req.type} failed:`, err)
+      res = { error: String((err as Error)?.message ?? err) }
+    }
+    try {
+      await guestJS<boolean>(
+        tab,
+        'barcode-write',
+        '(function(id,payload){try{(window.__sewHelperBarcodeRes = window.__sewHelperBarcodeRes || {})[id]=payload;return true}catch(e){return false}})' +
+          '(' +
+          JSON.stringify(req.id) +
+          ',' +
+          JSON.stringify(res ?? { error: 'empty answer' }) +
+          ')',
+      )
+    } catch {
+      // вкладка закрылась — гость повторит запрос сам (retry)
+    }
+  }
 }
 
 /**

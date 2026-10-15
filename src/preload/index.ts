@@ -92,7 +92,7 @@ interface StockInventoryResult {
 /** Состояние локальной базы штрихов (db.json). Единственный путь печати штрихов. */
 interface BarcodeDbStatusLike {
   state: 'empty' | 'building' | 'ready' | 'error'
-  stage?: 'download' | 'index'
+  stage?: 'read' | 'index'
   items?: number
   updatedAt?: number
   sourceBytes?: number

@@ -1,53 +1,25 @@
 // db-loader.js
-// SEWBrowser: список полок больше НЕ берётся из сети. Оболочка кладёт его в
-// window.__shellShelves при инжекте плагинов (локальный src/database/shelves.json
-// разбирает main — у гостя нет ни диска, ни IPC). Формат: { version, zones[],
-// rows[] }, где rows[i] = "индексЗоны\tячейка\tштрих полки".
+// SEWBrowser: и полки, и штрихи товара приходят в гость из оболочки — сам он
+// больше ничего не качает.
 //
-// Второе назначение db-loader'а — индекс «ШК товара по коду товара»
-// (кнопка «ШК по артикулу» в окне товара). Он, в отличие от полок, тянется из
-// db.json DataBaseProducts: локальной копии базы в гостях нет, а самой базы на
-// GitHub больше нет, поэтому работает только кэш plugin-data. К полкам это не
-// относится: их список собирается синхронно из window.__shellShelves и от
-// состояния индекса не зависит.
-const BARCODE_DB_URL = 'https://raw.githubusercontent.com/Monutor/DataBaseProducts/main/db.json';
-const DB_INDEX_KEY = 'barcodeDbIndex';
-const DB_INDEX_BUDGET_BYTES = 4 * 1024 * 1024;
-const DB_TIMEOUT_MS = 15000;
-let barcodeIndex = null;
+// 1) Полки склада. Оболочка кладёт список в window.__shellShelves при инжекте
+//    плагинов (локальный src/database/shelves.json разбирает main — у гостя
+//    нет ни диска, ни IPC). Формат: { version, zones[], rows[] }, где
+//    rows[i] = "индексЗоны\tячейка\tштрих полки".
+//
+// 2) Штрих товара по коду («ШК по артикулу» в окне товара). Локальный db.json
+//    в распакованном виде — 116 МБ и 272 тыс. позиций; грузить его в гостя
+//    нельзя (и раньше это стоило 116 МБ на КАЖДУЮ вкладку). Индекс базы живёт
+//    в main (%APPDATA%/SEWBrowser/barcode-db/index.txt) и опрашивается мостом:
+//    гость кладёт запрос в window.__sewHelperBarcodeReq, оболочка отвечает в
+//    window.__sewHelperBarcodeRes[id]. Мост общий с BFF/сканами/остатками,
+//    поэтому ответ может прийти через несколько секунд простоя — свой таймаут
+//    гостя держим больше шимного (20 с не проходит, здесь ждать можно).
+const BARCODE_REQ_QUEUE = '__sewHelperBarcodeReq';
+const BARCODE_RES_GLOBAL = '__sewHelperBarcodeRes';
+const BARCODE_TIMEOUT_MS = 30000;
+const BARCODE_POLL_MS = 250;
 let shelfList = null;
-let dbStatus = { loaded: false, error: null, loading: true };
-let _dbReady = loadBarcodeDb();
-
-// SEWBrowser: db.json в DataBaseProducts лежит gzip'ом — отдаётся как
-// application/octet-stream БЕЗ заголовка Content-Encoding, поэтому браузер сам
-// его не распакует и response.json() падает. Формат зафиксирован: gzip поверх
-// JSON-массива, обратно переворачивать не планируем. Распаковываем нативным
-// DecompressionStream по магии 1F 8B в первых двух байтах. Ветка без gzip —
-// страховка на случай, если db.json пересоберут скриптом и зальют без сжатия.
-// Отличие от исходного расширения SEW-Helper — правку не переносить оттуда
-// дословно.
-function isGzip(bytes) {
-  return bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
-}
-
-async function parseDbBytes(bytes) {
-  if (!isGzip(bytes)) return JSON.parse(new TextDecoder().decode(bytes));
-  if (typeof DecompressionStream !== 'function') {
-    throw new Error('db.json в gzip, но в браузере нет DecompressionStream');
-  }
-  dbStatus = { loaded: false, error: null, loading: true, stage: 'unpack' };
-  const unpacked = new Response(bytes).body.pipeThrough(new DecompressionStream('gzip'));
-  return JSON.parse(await new Response(unpacked).text());
-}
-
-async function readDbPayload(response) {
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  const gzipped = isGzip(bytes);
-  dbStatus = { loaded: false, error: null, loading: true, stage: 'parse' };
-  console.log('[SEW-Helper] Barcode DB: ' + (gzipped ? 'gzip ' : '') + bytes.length + ' bytes');
-  return await parseDbBytes(bytes);
-}
 
 /** Полки из инжекта оболочки. Список уже собран main'ом из shelves.json, здесь
  *  только разбор строк в объекты, которые ждёт комбобокс content.js.
@@ -74,80 +46,90 @@ function readShellShelves() {
 
 readShellShelves();
 
-async function loadBarcodeDb() {
-  dbStatus = { loaded: false, error: null, loading: true };
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(function () { controller.abort(); }, DB_TIMEOUT_MS);
-    const response = await fetch(BARCODE_DB_URL, { signal: controller.signal });
-    clearTimeout(timeoutId);
-    if (!response.ok) throw new Error('HTTP ' + response.status);
-    const data = await readDbPayload(response);
-    barcodeIndex = new Map();
-    for (const item of data) {
-      const sku = item['Код товара'];
-      const barcode = item['ШК товара'];
-      if (sku && barcode) {
-        barcodeIndex.set(String(sku), String(barcode));
-      }
+// ---------------------------------------------------------------- штрихи ----
+
+var barcodeSeq = 0;
+
+/** Запрос к мосту базы штрихов: ответ придёт в BARCODE_RES_GLOBAL[id] */
+function askBarcodeBridge(type, sku) {
+  return new Promise(function (resolve) {
+    var queue = window[BARCODE_REQ_QUEUE];
+    if (!Array.isArray(queue)) queue = [];
+    window[BARCODE_REQ_QUEUE] = queue;
+    var res = window[BARCODE_RES_GLOBAL];
+    if (!res || typeof res !== 'object') {
+      res = {};
+      window[BARCODE_RES_GLOBAL] = res;
     }
-    await cacheBarcodeIndex();
-    dbStatus = { loaded: true, error: null, cached: false };
-    console.log('[SEW-Helper] Barcode DB loaded: ' + barcodeIndex.size + ' items');
-  } catch (e) {
-      const cached = await chrome.storage.local.get(DB_INDEX_KEY);
-      if (cached && cached[DB_INDEX_KEY]) {
-        try {
-          const parsed = JSON.parse(cached[DB_INDEX_KEY]);
-          barcodeIndex = new Map(Object.keys(parsed.index || {}).map(function (k) { return [k, parsed.index[k]]; }));
-          dbStatus = { loaded: true, error: null, cached: true };
-        console.log('[SEW-Helper] Barcode DB loaded from cache: ' + barcodeIndex.size + ' items');
-      } catch (parseErr) {
-        dbStatus = { loaded: false, error: e.message || String(e), cached: false };
-        console.warn('[SEW-Helper] Failed to load barcode DB and cache parse failed:', parseErr);
-        barcodeIndex = new Map();
-      }
-    } else {
-      dbStatus = { loaded: false, error: e.message || String(e), cached: false };
-      console.warn('[SEW-Helper] Failed to load barcode DB:', e);
-      barcodeIndex = new Map();
+    var id = 'b' + (++barcodeSeq) + '-' + Date.now().toString(36);
+    var settled = false;
+    var timer = null;
+    function finish(answer) {
+      if (settled) return;
+      settled = true;
+      if (timer) clearInterval(timer);
+      try { delete res[id]; } catch (e) { res[id] = undefined; }
+      resolve(answer);
     }
+    // Ответ кладут в res[id] оболочка; пока его нет — опрашиваем сами: гостевой
+    // setInterval Chromium душит в фоновой вкладке, а здесь вкладка активная
+    // (окно товара открыто), плюс лаг ответа моста измеряется секундами.
+    timer = setInterval(function () {
+      if (res[id] !== undefined) finish(res[id]);
+    }, BARCODE_POLL_MS);
+    setTimeout(function () {
+      if (settled) return;
+      finish({ error: 'База штрихов не ответила за ' + Math.round(BARCODE_TIMEOUT_MS / 1000) + ' с' });
+    }, BARCODE_TIMEOUT_MS);
+    queue.push(sku ? { id: id, type: type, sku: String(sku) } : { id: id, type: type });
+  });
+}
+
+/** Штрих товара по коду; null — в базе его нет */
+async function getBarcode(sku) {
+  var answer = await askBarcodeBridge('lookup', sku);
+  if (answer && answer.barcode) return String(answer.barcode);
+  if (answer && answer.error) console.warn('[SEW-Helper] Штрих по коду: ' + answer.error);
+  return null;
+}
+
+/**
+ * Состояние базы штрихов в понятных content.js словах. Статус отдаёт main, он
+ * знает и про собирающийся индекс, и про «база старее файла db.json»:
+ * loading — индекс собирается (первый запуск разбирает 116 МБ, это десятки
+ * секунд, раньше это был fetch 15 с), cached — индекс есть, но файл базы новее.
+ */
+async function getDbStatus() {
+  var status = await askBarcodeBridge('status');
+  if (!status || typeof status !== 'object') {
+    return { loaded: false, error: 'База штрихов недоступна', loading: false, cached: false };
   }
+  var state = status.state;
+  return {
+    loaded: state === 'ready' || state === 'building',
+    error: state === 'error' ? String(status.error || 'не удалось прочитать базу штрихов') : null,
+    loading: state === 'building',
+    cached: status.stale === true,
+  };
 }
 
-async function cacheBarcodeIndex() {
-  const indexObj = {};
-  for (const pair of barcodeIndex) { indexObj[pair[0]] = pair[1]; }
-  // Полки в кэш не кладём: они приезжают с инжектом, а лишние ~400 записей
-  // только раздували бы plugin-data на диске.
-  const payload = JSON.stringify({ index: indexObj });
-  if (payload.length >= DB_INDEX_BUDGET_BYTES) return;
-  try {
-    await chrome.storage.local.set({ [DB_INDEX_KEY]: payload });
-  } catch (e) { /* noop: quota or storage unavailable */ }
+/** Пересобрать индекс базы; вызывающий сам решает, когда повторить запрос */
+async function reloadBarcodeDb() {
+  var status = await askBarcodeBridge('reload');
+  if (status && status.state === 'error') {
+    console.warn('[SEW-Helper] Пересборка базы штрихов: ' + (status.error || 'ошибка'));
+  }
+  return status;
 }
 
-function getDbStatus() {
-  return dbStatus;
-}
-
-function reloadBarcodeDb() {
-  dbStatus = { loaded: false, error: null, cached: false, loading: true };
-  _dbReady = loadBarcodeDb();
-  return _dbReady;
-}
-
-function getBarcode(sku) {
-  if (!barcodeIndex) return null;
-  return barcodeIndex.get(String(sku)) || null;
-}
+// ---------------------------------------------------------------- полки ----
 
 function getShelves() {
   return shelfList || [];
 }
 
-/** Список полок больше не зависит от db.json, поэтому и не ждёт его: раньше
- *  здесь стоял await на загрузку базы, и полки появлялись только после неё
+/** Список полок не зависит от базы штрихов, поэтому и не ждёт её: раньше здесь
+ *  стоял await на загрузку db.json, и полки появлялись только после неё
  *  (а с мёртвым URL — не появлялись вовсе). */
 function getShelvesWhenReady() {
   return Promise.resolve(getShelves());

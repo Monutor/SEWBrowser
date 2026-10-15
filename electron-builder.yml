@@ -11,6 +11,11 @@ extraResources:
   # обновляется новой версией SEWBrowser, пользователь его не правит.
   - from: "src/database/shelves.json"
     to: "database/shelves.json"
+  # Локальная база штрихов db.json: источник для печати листов штрихов и для
+  # кнопки «ШК по артикулу» в гостевом плагине. Лежит gzip'ом (11 МБ), в
+  # распакованный вид попадает только в память процесса при сборке индекса.
+  - from: "src/database/db.json"
+    to: "database/db.json"
 win:
   target: nsis
   icon: resources/icon.png

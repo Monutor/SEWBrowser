@@ -684,7 +684,13 @@ function openInfoModal(sku) {
         header.appendChild(fillWrap);
       } else {
         sendMessageWithRetry({ type: 'getDbStatus' }, function (dbResp) {
-          if (dbResp && !dbResp.loaded) {
+          if (dbResp && dbResp.loading) {
+            // Индекс базы штрихов собирается в main (первый раз — разбор
+            // 116 МБ db.json, это десятки секунд). Тост «БД недоступна» тут
+            // врал бы, поэтому просто ждём и повторяем запрос штриха.
+            barcodeEl.textContent = '\u0428\u041A: \u0441\u0431\u043E\u0440\u043A\u0430 \u0431\u0430\u0437\u044B\u2026';
+            setTimeout(loadBarcode, 5000);
+          } else if (dbResp && !dbResp.loaded) {
             showToast(dbResp.error || '\u0411\u0414 \u0448\u0442\u0440\u0438\u0445\u043A\u043E\u0434\u043E\u0432 \u043D\u0435 \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u043B\u0430\u0441\u044C', function () {
               sendMessageWithRetry({ type: 'reloadBarcodeDb' }, function () {
                 setTimeout(loadBarcode, 1500);

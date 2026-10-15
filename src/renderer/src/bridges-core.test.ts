@@ -2,6 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   anyRequest,
+  asBarcodeReqs,
   asBffReqs,
   asInvReqs,
   asScansReqs,
@@ -19,11 +20,12 @@ describe('buildTakeScript', () => {
     assert.ok(script.startsWith('(function()'), 'скрипт обязан быть IIFE')
     assert.ok(script.endsWith('})()'), 'IIFE обязана быть вызвана')
   })
-  it('берёт все три очереди одним скриптом', () => {
-    const script = buildTakeScript(['bff', 'scans', 'inv'])
+  it('берёт все очереди одним скриптом', () => {
+    const script = buildTakeScript(['bff', 'scans', 'inv', 'barcode'])
     assert.match(script, /__sewHelperBffReq/)
     assert.match(script, /__sewScansReq/)
     assert.match(script, /__sewInventoryReq/)
+    assert.match(script, /__sewHelperBarcodeReq/)
   })
 
   it('пустой список каналов даёт скрипт без обращений к очередям', () => {
@@ -134,6 +136,30 @@ describe('asInvReqs', () => {
   })
 })
 
+describe('asBarcodeReqs — канал базы штрихов', () => {
+  it('lookup несёт код товара, status и reload — без него', () => {
+    assert.deepEqual(asBarcodeReqs([{ id: 'a', type: 'lookup', sku: ' 1234 ' }]), [
+      { id: 'a', type: 'lookup', sku: '1234' },
+    ])
+    assert.deepEqual(asBarcodeReqs([{ id: 'b', type: 'status' }]), [{ id: 'b', type: 'status', sku: undefined }])
+    assert.deepEqual(asBarcodeReqs([{ id: 'c', type: 'reload' }]), [{ id: 'c', type: 'reload', sku: undefined }])
+  })
+  it('lookup без кода режется: в базе искать нечего', () => {
+    assert.deepEqual(asBarcodeReqs([{ id: 'a', type: 'lookup' }]), [])
+    assert.deepEqual(asBarcodeReqs([{ id: 'a', type: 'lookup', sku: '' }]), [])
+    assert.deepEqual(asBarcodeReqs([{ id: 'a', type: 'lookup', sku: 7 }]), [])
+  })
+  it('неизвестный тип и запись без id отбрасываются', () => {
+    assert.deepEqual(asBarcodeReqs([{ id: 'a', type: 'drop', sku: '1' }]), [])
+    assert.deepEqual(asBarcodeReqs([{ type: 'status' }]), [])
+    assert.deepEqual(asBarcodeReqs(['мусор', null, 42]), [])
+  })
+  it('запрос барится в общую очередь оболочки', () => {
+    assert.match(buildTakeScript(['barcode']), /__sewHelperBarcodeReq/)
+    assert.equal(anyRequest({ ...emptyQueues(), barcode: [{ id: 'a', type: 'status' }] }), true)
+  })
+})
+
 describe('isInteractiveRequest', () => {
   it('выбор файла сканов — интерактивный: ждёт модальный диалог', () => {
     assert.equal(isInteractiveRequest('scans', { type: 'pick' }), true)
@@ -196,7 +222,7 @@ describe('канал store — запись chrome.storage.local из гостя
 
   it('выключенный плагин не тянет свой канал', () => {
     assert.deepEqual(enabledChannels(['identity']), ['store'])
-    assert.deepEqual(enabledChannels(['sew-helper']), ['bff', 'store'])
+    assert.deepEqual(enabledChannels(['sew-helper']), ['bff', 'store', 'barcode'])
     assert.deepEqual(enabledChannels(['scans-block', 'sew-inventory']), ['scans', 'inv', 'store'])
   })
 
@@ -205,6 +231,6 @@ describe('канал store — запись chrome.storage.local из гостя
   })
 
   it('дубль имени плагина не дублирует канал', () => {
-    assert.deepEqual(enabledChannels(['sew-helper', 'sew-helper']), ['bff', 'store'])
+    assert.deepEqual(enabledChannels(['sew-helper', 'sew-helper']), ['bff', 'store', 'barcode'])
   })
 })
