@@ -250,6 +250,22 @@ function openInputModal() {
   setTimeout(function () { input.focus(); }, 0);
 }
 
+// SEWBrowser: поиск полки по трём написаниям (кириллица / ЙЦУКЕН /
+// транслит) — ввод с английской раскладки тоже находит зону. Логика в
+// shelf-match.js (подключён в manifest.json renderer до content.js).
+// Варианты написания считаем один раз на полку и кладём в общий кэш: полок
+// тысячи, комбобокса в диалоге два, и список им достаётся один и тот же —
+// второй обходится уже без расчёта.
+const SHELF_KEYS = new WeakMap();
+function shelfKeysFor(shelf) {
+  let keys = SHELF_KEYS.get(shelf);
+  if (!keys) {
+    keys = shelfSearchKeys(shelf.zone, shelf.cell);
+    SHELF_KEYS.set(shelf, keys);
+  }
+  return keys;
+}
+
 function createShelfCombobox(labelText, onChange) {
   const wrap = document.createElement('div');
   wrap.className = 'sew-helper-shelf';
@@ -271,7 +287,6 @@ function createShelfCombobox(labelText, onChange) {
   barcodeEl.className = 'sew-helper-shelf-barcode';
 
   let shelves = [];
-  let options = [];
   let currentBarcode = '';
 
   function positionList() {
@@ -307,13 +322,36 @@ function createShelfCombobox(labelText, onChange) {
   window.addEventListener('resize', onReposition);
   document.addEventListener('scroll', onReposition, true);
 
-  // SEWBrowser: поиск полки по трём написаниям (кириллица / ЙЦУКЕН /
-  // транслит) — ввод с английской раскладки тоже находит зону. Логика в
-  // shelf-match.js (подключён в manifest.json renderer до content.js).
+  // SEWBrowser: поиск полки по трём написаниям — см. shelfKeysFor выше.
+  // Полок в базе ~7900 (локальный shelves.json), а не 405, как было от db.json.
+  // Узлы вариантов создаём только под текущий фильтр и не больше MAX_OPTIONS:
+  // иначе каждое открытие диалога строил бы ~16 тыс. DOM-узлов, а ЛП-автоматика
+  // открывает диалог на каждую единицу. Об обрезке честно говорим подсказкой —
+  // молча пропавшие полки выглядели бы как «ячейки не нашлись».
+  const MAX_OPTIONS = 400;
+
   function render(filter) {
-    options.forEach(function (o) {
-      o.el.style.display = shelfMatches(o.keys, filter) ? '' : 'none';
-    });
+    list.innerHTML = '';
+    const query = String(filter == null ? '' : filter);
+    let shown = 0;
+    let i = 0;
+    for (; i < shelves.length; i++) {
+      if (shown >= MAX_OPTIONS) break;
+      const shelf = shelves[i];
+      if (!shelfMatches(shelfKeysFor(shelf), query)) continue;
+      const opt = document.createElement('div');
+      opt.className = 'sew-helper-combo-option';
+      opt.textContent = shelf.zone + ' / ' + shelf.cell;
+      opt.dataset.barcode = shelf.barcode;
+      list.appendChild(opt);
+      shown++;
+    }
+    if (i < shelves.length) {
+      const more = document.createElement('div');
+      more.className = 'sew-helper-combo-more';
+      more.textContent = 'Показано ' + shown + ' из ' + shelves.length + ' — уточните поиск';
+      list.appendChild(more);
+    }
   }
 
   function pick(option) {
@@ -367,29 +405,21 @@ function createShelfCombobox(labelText, onChange) {
   return {
     wrap: wrap,
     setShelves: function (items) {
-      shelves = items;
-      list.innerHTML = '';
-      options = [];
-      items.forEach(function (s) {
-        const opt = document.createElement('div');
-        opt.className = 'sew-helper-combo-option';
-        opt.textContent = s.zone + ' / ' + s.cell;
-        opt.dataset.barcode = s.barcode;
-        list.appendChild(opt);
-        options.push({ el: opt, keys: shelfSearchKeys(s.zone, s.cell) });
-      });
+      shelves = Array.isArray(items) ? items : [];
+      render(input.value);
     },
+    // Восстановление прошлого выбора ищем прямо по данным, а не по узлам
+    // списка: под текущим фильтром нужной полки в DOM может не быть.
     restore: function (value) {
       if (!value) return;
-      for (let i = 0; i < options.length; i++) {
-        const el = options[i].el;
-        if (el.textContent === value) {
-          input.value = el.textContent;
-          currentBarcode = el.dataset.barcode || '';
-          barcodeEl.textContent = '\u0428\u041A \u043F\u043E\u043B\u043A\u0438: ' + el.dataset.barcode;
-          if (onChange) onChange(input.value);
-          break;
-        }
+      for (let i = 0; i < shelves.length; i++) {
+        const shelf = shelves[i];
+        if (shelf.zone + ' / ' + shelf.cell !== value) continue;
+        input.value = value;
+        currentBarcode = shelf.barcode || '';
+        barcodeEl.textContent = '\u0428\u041A \u043F\u043E\u043B\u043A\u0438: ' + shelf.barcode;
+        if (onChange) onChange(input.value);
+        return;
       }
     },
     getBarcode: function () {

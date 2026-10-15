@@ -18,6 +18,7 @@ import { isValidObjectId, parseStockReport, stockFileName, stockReportUrl } from
 import { createSewApi } from './sew-api'
 import { createBarcodeDb } from './barcode-db'
 import { createBarcodePrint } from './barcode-print'
+import { createShelves } from './shelves'
 import { readStockBalance } from './inventory/xlsx-core'
 import { screenshotFileName } from './screenshot'
 import { clearSoundFile, mimeForSoundExt, readSoundFile, saveSoundFile } from './sounds/store'
@@ -1484,6 +1485,12 @@ function createWindow(): void {
   ipcMain.handle('barcodes:reload', () => barcodes.reload())
   ipcMain.handle('barcodes:lookup', (_e, skus: string[]) => barcodes.lookup(skus))
   ipcMain.handle('barcodes:build', (_e, input: { skus: string[]; copies: number }) => barcodes.build(input))
+
+  // Полки склада: локальный shelves.json — единственный источник списка для
+  // плагина sew-helper (сеть для этого не годится, файл едет с приложением).
+  const shelves = createShelves()
+
+  ipcMain.handle('shelves:get', () => shelves.payload())
 
   // Выход приложения: временные PDF (листы штрихов) удаляем.
   app.on('before-quit', () => {

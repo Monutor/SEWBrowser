@@ -115,6 +115,14 @@ interface BarcodeLookupResultLike {
   error?: string
 }
 
+/** Список полок склада из локального shelves.json: зоны словарём, полки —
+ *  строками «индексЗоны\tячейка\tштрих». null — базы нет. */
+interface ShelvesPayloadLike {
+  version: string
+  zones: string[]
+  rows: string[]
+}
+
 interface BarcodeBuildResultLike {
   ok: boolean
   pdfName?: string
@@ -434,6 +442,9 @@ const api = {
   /** Сохранить последний PDF на диск */
 
   /** Напечатать последний PDF */
+
+  /** Полки склада из локального shelves.json (null — базы нет) */
+  getShelves: (): Promise<ShelvesPayloadLike | null> => ipcRenderer.invoke('shelves:get'),
 
   /** Выбор папки для отчёта об остатках; null — отмена */
   pickStockDir: (): Promise<string | null> => ipcRenderer.invoke('stock:pick-dir'),

@@ -7,6 +7,10 @@ files:
 extraResources:
   - from: "features/"
     to: "features/"
+  # Локальная база полок склада: список полок для плагина sew-helper. Файл
+  # обновляется новой версией SEWBrowser, пользователь его не правит.
+  - from: "src/database/shelves.json"
+    to: "database/shelves.json"
 win:
   target: nsis
   icon: resources/icon.png

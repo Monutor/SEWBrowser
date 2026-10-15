@@ -56,9 +56,10 @@ export const LINK_TAKE = '(function(){try{var q=window.__shellNewTabReq;if(!Arra
  * Инжект всех плагинов в гостевую страницу ОДНИМ executeJavaScript.
  *
  * Раньше на каждую загрузку вкладки уходило ~26 последовательных вызовов
- * (снапшот, poll-host, и на каждый плагин — шим, код, чтение ошибки), и шим
- * инжектился по разу на каждый плагин. Теперь всё склеено в один IIFE:
- * снапшот данных → флаг опросного хоста → шим (один раз) → код плагинов (у
+ * (снапшот, полки склада, poll-host, и на каждый плагин — шим, код, чтение
+ * ошибки), и шим инжектился по разу на каждый плагин. Теперь всё склеено в
+ * один IIFE: снапшот данных → полки склада → флаг опросного хоста → шим (один
+ * раз) → код плагинов (у
  * каждого свой IIFE с гостевым try/catch и личным `chrome`) → init → сброс
  * имени. Ошибки возвращаются одной JSON-строкой и печатаются в консоль
  * оболочки поимённо — иначе Electron пишет лишь безликое
@@ -95,8 +96,19 @@ export async function injectPlugins(tab: ShellTab, plugins: PluginInfo[]): Promi
     console.warn('[shell] getAllPluginData failed:', err)
   }
 
+  // Полки склада: локальный shelves.json разбирает main, гость получает готовый
+  // список (у <webview> нет ни диска, ни IPC). Данные не меняются в рантайме —
+  // берём их на каждый инжект, файл в main уже прочитан и держится в памяти.
+  let shelves: ShelvesPayload | null = null
+  try {
+    shelves = await window.shell.getShelves()
+  } catch (err) {
+    console.warn('[shell] getShelves failed:', err)
+  }
+
   const script = buildInjectScript({
     stores,
+    shelves,
     // Хост опроса: только первая вкладка забирает очередь заданий
     // (tasks-notify), иначе при N вкладках придёт N одинаковых уведомлений.
     pollHost: tab.isPrimary,

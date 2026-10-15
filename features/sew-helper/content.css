@@ -464,6 +464,16 @@
   background: #f0e9ff;
 }
 
+/* Подсказка «показано N из M» в списке полок: вариантов не выбрать, только
+   прочитать, поэтому без курсора и заметным фоном. */
+.sew-helper-combo-more {
+  padding: 7px 10px;
+  font-size: 0.78rem;
+  color: #6b6b6b;
+  background: #f6f6f6;
+  cursor: default;
+}
+
 .sew-helper-thumb-img.sew-helper-error,
 img.sew-helper-error {
   opacity: 0.3;

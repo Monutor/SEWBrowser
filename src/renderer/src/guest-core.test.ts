@@ -54,6 +54,26 @@ test('buildInjectScript: снапшот данных и poll-host ставятс
   assert.ok(codeAt > shimAt, 'шим должен идти до кода плагина')
 })
 
+test('buildInjectScript: полки кладутся в window.__shellShelves до кода плагинов', () => {
+  const shelves = { version: '20260706083701', zones: ['Основной склад'], rows: ['0\tА-С01-1\tSTL1'] }
+  const script = buildInjectScript({
+    stores: {},
+    pollHost: false,
+    shim: SHIM,
+    shelves,
+    plugins: [plugin('a', { code: 'var x = 1;' })],
+  })
+  const at = script.indexOf('window.__shellShelves')
+  assert.ok(at >= 0, 'полки должны попасть в инжект')
+  assert.ok(script.indexOf('var x = 1;') > at, 'полки нужны ДО кода плагинов (db-loader читает их на старте)')
+  assert.match(script, /Основной склад/)
+})
+
+test('buildInjectScript: без базы полок в скрипт идёт null, а не пропуск', () => {
+  const script = buildInjectScript({ stores: {}, pollHost: false, shim: SHIM, plugins: [] })
+  assert.match(script, /window\.__shellShelves = null;/)
+})
+
 test('buildInjectScript: pollHost true/false попадает в скрипт', () => {
   const yes = buildInjectScript({ stores: {}, pollHost: true, shim: SHIM, plugins: [] })
   const no = buildInjectScript({ stores: {}, pollHost: false, shim: SHIM, plugins: [] })

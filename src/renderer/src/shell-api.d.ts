@@ -287,6 +287,14 @@ interface BarcodeBuildResult {
   error?: string
 }
 
+/** Список полок склада из локального shelves.json: зоны словарём, полки —
+ *  строками «индексЗоны\tячейка\tштрих». null — базы нет. */
+interface ShelvesPayload {
+  version: string
+  zones: string[]
+  rows: string[]
+}
+
 /** Позиция остатков, собранная из выгрузки для плагина `sew-inventory` */
 interface StockInventoryRow {
   sku: string
@@ -528,6 +536,9 @@ interface ShellApi {
   /** Сохранить последний собранный PDF на диск */
 
   /** Напечатать последний собранный PDF на системном принтере */
+
+  /** Полки склада из локального shelves.json (null — базы нет) */
+  getShelves(): Promise<ShelvesPayload | null>
 
   /** Выбор папки для отчёта об остатках; null — отмена */
   pickStockDir(): Promise<string | null>
