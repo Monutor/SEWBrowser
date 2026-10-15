@@ -266,6 +266,25 @@ interface BarcodeDbStatus {
   sourceBytes?: number
   error?: string
   stale?: boolean
+  /** Сколько позиций приложил пользователь из своих файлов */
+  extra?: number
+  /** Когда приложили последний раз */
+  extraUpdatedAt?: number
+  /** Имя последнего приложенного файла */
+  extraSource?: string
+}
+/** Результат приложения файла пользователя к базе штрихов: что добавилось,
+ *  что перекрыло записи базы, что печатать нельзя. */
+interface BarcodeImportResult {
+  ok: boolean
+  added: number
+  updated: number
+  inBase: number
+  skipped: number
+  total: number
+  source: string
+  error?: string
+  status: BarcodeDbStatus
 }
 /** Позиция из локальной базы: symbology выбрана из самого кода. */
 interface BarcodeItem {
@@ -536,6 +555,9 @@ interface ShellApi {
   barcodesEnsure(): Promise<BarcodeDbStatus>
   /** Обновить базу штрихов принудительно */
   barcodesReload(): Promise<BarcodeDbStatus>
+  /** Приложить позиции из файла пользователя (xlsx или чужой db.json) к базе;
+   *  null — пользователь закрыл диалог выбора файла */
+  barcodesImport(): Promise<BarcodeImportResult | null>
   /** Позиции по кодам товара из локальной базы (без SEW) */
   barcodesLookup(skus: string[]): Promise<BarcodeLookupResult>
   /** Собрать лист A4 со штрихами и открыть просмотрщик */

@@ -6,7 +6,7 @@
 import { unlinkSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { htmlToPdf, tempWorkDir } from './html-pdf'
-import type { BarcodeDbService, BarcodeDbStatus } from './barcode-db'
+import type { BarcodeDbService, BarcodeDbStatus, BarcodeImportResult } from './barcode-db'
 import { barcodeFileName, expandCopies, renderBarcodeSheet, type BarcodeItem } from '../shared/barcode-print-core'
 
 export interface BarcodeLookupResult {
@@ -32,6 +32,8 @@ export interface BarcodePrintService {
   status(): BarcodeDbStatus
   ensure(): Promise<BarcodeDbStatus>
   reload(): Promise<BarcodeDbStatus>
+  /** Приложить позиции из файла пользователя (xlsx или чужой db.json) к базе. */
+  importFile(filePath: string): BarcodeImportResult
   lookup(skus: readonly string[]): Promise<BarcodeLookupResult>
   build(input: { skus: readonly string[]; copies: number }): Promise<BarcodeBuildResult>
   disposePdf(): void
@@ -130,6 +132,7 @@ export function createBarcodePrint(deps: BarcodePrintDeps): BarcodePrintService 
     status: () => deps.db.status(),
     ensure,
     reload: () => deps.db.reload(),
+    importFile: (filePath) => deps.db.importFile(filePath),
     lookup,
     build,
     disposePdf,

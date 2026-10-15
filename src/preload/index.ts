@@ -98,6 +98,22 @@ interface BarcodeDbStatusLike {
   sourceBytes?: number
   error?: string
   stale?: boolean
+  extra?: number
+  extraUpdatedAt?: number
+  extraSource?: string
+}
+
+/** Результат приложения файла пользователя к базе штрихов */
+interface BarcodeImportResultLike {
+  ok: boolean
+  added: number
+  updated: number
+  inBase: number
+  skipped: number
+  total: number
+  source: string
+  error?: string
+  status: BarcodeDbStatusLike
 }
 
 interface BarcodeItemLike {
@@ -439,6 +455,8 @@ const api = {
   barcodesEnsure: (): Promise<BarcodeDbStatusLike> => ipcRenderer.invoke('barcodes:ensure'),
   /** Обновить базу принудительно (кнопка «Обновить базу») */
   barcodesReload: (): Promise<BarcodeDbStatusLike> => ipcRenderer.invoke('barcodes:reload'),
+  /** Приложить позиции из файла пользователя (диалог в main); null — отмена */
+  barcodesImport: (): Promise<BarcodeImportResultLike | null> => ipcRenderer.invoke('barcodes:import'),
   /** Позиции по кодам товара из локальной базы — SEW тут не участвует */
   barcodesLookup: (skus: string[]): Promise<BarcodeLookupResultLike> =>
     ipcRenderer.invoke('barcodes:lookup', skus),

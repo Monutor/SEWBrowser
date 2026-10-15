@@ -224,6 +224,67 @@ function readSharedStrings(index: Map<string, ZipEntry>, data: Buffer): string[]
  * Бросает Error на негодном файле — вызывающий обязан показать это в панели,
  * а не вносить неполный состав.
  */
+/**
+ * Лист книги как строки: столбцы по буквам ячеек, пустые — пустыми строками.
+ *
+ * Зачем при разборе остатков не используется: там нужен отбор по зоне и
+ * агрегация по SKU, а здесь — сырой список для файлов, которые прикладывает
+ * пользователь (приложение позиций к базе штрихов, см.
+ * src/main/barcode-merge-core.ts). Разбор zip'а и ячеек общий — второй такой
+ * же разбор в проекте был бы дублированием, которое разъедется при первом же
+ * чужом xlsx.
+ */
+export function readSheetRows(data: Buffer): string[][] {
+  const index = readZipIndex(data)
+  const sheetName = index.has('xl/worksheets/sheet1.xml') ? 'xl/worksheets/sheet1.xml' : [...index.keys()].find((n) => n.startsWith('xl/worksheets/'))
+  if (!sheetName) throw new Error('xlsx: в файле нет листа')
+  const shared = readSharedStrings(index, data)
+  const xml = readZipText(data, index, sheetName)
+
+  const start = xml.indexOf('<sheetData')
+  const body = start >= 0 ? xml.slice(start) : xml
+  const rows: Array<Map<string, string>> = []
+  // Ширина листа общая, по самой длинной строке: у разных строк набор
+  // колонок разный (хвост пустой), и без дополнения пустыми короткая строка
+  // поехала бы относительно шапки — колонка «Код товара» прочиталась бы из
+  // соседней ячейки.
+  let width = 0
+  ROW_RE.lastIndex = 0
+  for (let m = ROW_RE.exec(body); m; m = ROW_RE.exec(body)) {
+    if (!m[1]) continue
+    const cells = readCells(m[1], shared)
+    for (const column of cells.keys()) width = Math.max(width, columnNumber(column))
+    rows.push(cells)
+  }
+  const out: string[][] = []
+  for (const cells of rows) {
+    const row: string[] = []
+    for (let i = 1; i <= width; i += 1) row.push(cells.get(columnName(i)) ?? '')
+    out.push(row)
+  }
+  return out
+}
+
+/** Буква колонки → номер: A=1 … Z=26, AA=27. */
+function columnNumber(column: string): number {
+  let value = 0
+  for (const char of column) value = value * 26 + (char.charCodeAt(0) - 64)
+  return value
+}
+
+/** Номер колонки → буква — обратное преобразование, чтобы не искать букву
+ *  перебором cells на каждую ячейку строки. */
+function columnName(index: number): string {
+  let out = ''
+  let rest = index
+  while (rest > 0) {
+    const rest0 = (rest - 1) % 26
+    out = String.fromCharCode(65 + rest0) + out
+    rest = (rest - rest0 - 1) / 26
+  }
+  return out
+}
+
 export function readStockBalance(data: Buffer, opts: StockBalanceOptions = {}): StockBalance {
   const index = readZipIndex(data)
   const sheetName = index.has('xl/worksheets/sheet1.xml') ? 'xl/worksheets/sheet1.xml' : [...index.keys()].find((n) => n.startsWith('xl/worksheets/'))

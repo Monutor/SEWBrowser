@@ -1489,6 +1489,29 @@ function createWindow(): void {
   ipcMain.handle('barcodes:reload', () => barcodes.reload())
   ipcMain.handle('barcodes:lookup', (_e, skus: string[]) => barcodes.lookup(skus))
   ipcMain.handle('barcodes:build', (_e, input: { skus: string[]; copies: number }) => barcodes.build(input))
+  // Приложение своих позиций к локальной базе штрихов. Пользователь выбирает
+  // xlsx с артикулами и штрих-кодами (или чужой db.json), дальше main сам
+  // разбирает файл и дописывает позиции в barcode-db/extra.json — пересборки
+  // индекса на 116 МБ при этом нет, новые позиции находятся сразу.
+  // null — пользователь закрыл диалог (не ошибка, оверлей молчит).
+  ipcMain.handle('barcodes:import', async () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return null
+    const picked = await dialog.showOpenDialog(mainWindow, {
+      title: 'Приложить позиции к базе штрихов',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Таблица или база', extensions: ['xlsx', 'json'] },
+        { name: 'Все файлы', extensions: ['*'] },
+      ],
+    })
+    if (!picked || picked.canceled || !Array.isArray(picked.filePaths) || picked.filePaths.length === 0) return null
+    const path = picked.filePaths[0]
+    if (!existsSync(path)) {
+      console.warn('[shell] приложенный файл исчез после диалога:', path)
+      return null
+    }
+    return barcodes.importFile(path)
+  })
 
   // История введённых в генератор кодов товара: пользователь возвращается к
   // списку на следующий день, а обнулять его при каждом запуске нельзя. Отдельный

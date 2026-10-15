@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { deflateRawSync } from 'node:zlib'
-import { parseQty, parseSharedStrings, readStockBalance } from './xlsx-core.ts'
+import { parseQty, parseSharedStrings, readSheetRows, readStockBalance } from './xlsx-core.ts'
 
 /** Минимальный zip-писатель: xlsx в тесте собираем сами, фикстуры в репозитории
  *  держать незачем, а проверять надо и чтение контейнера тоже. */
@@ -118,6 +118,57 @@ describe('parseSharedStrings', () => {
 
   it('пустой sst даёт пустой список', () => {
     assert.deepEqual(parseSharedStrings('<sst count="0" uniqueCount="0"/>'), [])
+  })
+})
+
+describe('readSheetRows', () => {
+  /** Книга с произвольными колонками — приложение позиций читает чужие
+   *  файлы, где шапки и порядок колонок задаёт не SEW. */
+  function makeBook(header: Record<string, string>, rows: Array<Record<string, string>>): Buffer {
+    const body = [sheetRow(header, 1), ...rows.map((r, i) => sheetRow(r, i + 2))]
+    return zip({
+      'xl/workbook.xml': '<workbook/>',
+      'xl/sharedStrings.xml': '<?xml version="1.0" encoding="UTF-8"?><sst count="0" uniqueCount="0"/>',
+      'xl/worksheets/sheet1.xml': SHEET_HEAD + body.join('') + '</sheetData></worksheet>',
+    })
+  }
+
+  it('строки идут по буквам колонок, а не по порядку записи в XML', () => {
+    const data = makeBook(
+      { A: 'Материал', B: 'Код EAN/UPC', C: 'Номер материала' },
+      [{ B: '465575293017258909', A: '400110453', C: '(МП) ZUGEL ZIH604B' }],
+    )
+    assert.deepEqual(readSheetRows(data), [
+      ['Материал', 'Код EAN/UPC', 'Номер материала'],
+      ['400110453', '465575293017258909', '(МП) ZUGEL ZIH604B'],
+    ])
+  })
+
+  it('незаполненный хвост строки добивается пустыми — колонки не едут', () => {
+    // Именно на этом ломается разбор по индексам колонок: без дополнения
+    // вторая строка окажется короче шапки, и «Код товара» прочитается из
+    // соседней ячейки.
+    const data = makeBook(
+      { A: 'Материал', B: 'Код EAN/UPC', C: 'Номер материала' },
+      [{ A: '400110453', B: '465575293017258909' }, { A: '400110474', B: '461021658023258909', C: 'ZOE602B' }],
+    )
+    assert.deepEqual(readSheetRows(data)[1], ['400110453', '465575293017258909', ''])
+  })
+
+  it('файл без листа читается как xlsx с другим именем', () => {
+    const data = zip({
+      'xl/workbook.xml': '<workbook/>',
+      'xl/worksheets/sheet2.xml': SHEET_HEAD + sheetRow({ A: 'Материал' }, 1) + '</sheetData></worksheet>',
+    })
+    assert.deepEqual(readSheetRows(data), [['Материал']])
+  })
+
+  it('пустой лист даёт пустой список, а не ошибку', () => {
+    const data = zip({
+      'xl/workbook.xml': '<workbook/>',
+      'xl/worksheets/sheet1.xml': SHEET_HEAD + '</sheetData></worksheet>',
+    })
+    assert.deepEqual(readSheetRows(data), [])
   })
 })
 

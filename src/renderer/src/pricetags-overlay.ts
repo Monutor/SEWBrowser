@@ -71,7 +71,13 @@ function renderDbStatus(status?: BarcodeDbStatus): void {
   }
   const count = status.items ? `позиций: ${new Intl.NumberFormat('ru-RU').format(status.items)}` : ''
   const when = status.updatedAt ? `обновлена ${new Date(status.updatedAt).toLocaleString('ru-RU')}` : ''
-  box.textContent = [count, when, status.stale ? 'устарела' : ''].filter(Boolean).join(' · ')
+  // Свои позиции (extra.json) в счётчик базы не входят: пересборка индекса их
+  // не трогает, и показывать их числом «позиций» значило бы врать о размере
+  // базы. Отдельным хвостом — видно, что приложено и когда.
+  const extra = status.extra
+    ? `+${status.extra} своих${status.extraUpdatedAt ? ` от ${new Date(status.extraUpdatedAt).toLocaleDateString('ru-RU')}` : ''}`
+    : ''
+  box.textContent = [count, when, extra, status.stale ? 'устарела' : ''].filter(Boolean).join(' · ')
 }
 
 /** Рисуем строки и «не найдены» по текущему набору чипов. Повторный запрос к
@@ -396,9 +402,52 @@ async function refreshDb(): Promise<void> {
   }
 }
 
+/** Приложение своих позиций из файла. Диалог открывает main, разбор файла и
+ *  запись — тоже там; здесь только состояние оверлея и разбор ответа.
+ *
+ *  Индекс базы при этом не пересобирается: приложенные позиции лежат отдельным
+ *  файлом и накладываются при поиске. Поэтому импорт быстрый, а найденные
+ *  ранее позиции сбрасываем — часть кодов из списка могла отсутствовать в
+ *  базе и появиться только с приложенным файлом. */
+async function importBaseFile(): Promise<void> {
+  const button = el('barcodes-import') as HTMLButtonElement | null
+  if (button) button.disabled = true
+  setStatus('разбираю файл…')
+  try {
+    const res = await window.shell.barcodesImport()
+    // null — пользователь закрыл диалог. Это не ошибка, сообщать не о чем.
+    if (!res) {
+      setStatus('файл не выбран')
+      return
+    }
+    renderDbStatus(res.status)
+    if (!res.ok) {
+      setStatus(res.error ?? 'файл не подошёл')
+      return
+    }
+    barcodeItems = []
+    renderResult()
+    const fmt = new Intl.NumberFormat('ru-RU')
+    const parts = [`приложено новых: ${fmt.format(res.added)}`]
+    if (res.updated > 0) parts.push(`перекрыто своих: ${fmt.format(res.updated)}`)
+    // Сколько приложенных позиций совпало с записями базы: их штрих теперь
+    // берётся из файла пользователя, и это стоит сказать явно.
+    if (res.inBase > 0) parts.push(`из них есть в базе (штрих перекрыт): ${fmt.format(res.inBase)}`)
+    if (res.skipped > 0) parts.push(`строк без кода или печатного ШК: ${fmt.format(res.skipped)}`)
+    parts.push(`всего своих: ${fmt.format(res.total)}`)
+    setStatus(parts.join(' · '))
+  } catch (err) {
+    console.warn('[pricetags] файл не приложен:', err)
+    setStatus('не удалось приложить файл')
+  } finally {
+    if (button) button.disabled = false
+  }
+}
+
 export function wirePricetags(next: PricetagsOverlayDeps): void {
   deps = next
   el('barcodes-refresh')?.addEventListener('click', () => void refreshDb())
+  el('barcodes-import')?.addEventListener('click', () => void importBaseFile())
   el('pricetags-history-clear')?.addEventListener('click', () => void clearHistory())
   const sku = el('pricetags-sku') as HTMLInputElement | null
   // Enter — добавить артикул и сразу найти позиции
