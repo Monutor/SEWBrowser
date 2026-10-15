@@ -691,6 +691,14 @@
         </div>
         <div id="pricetags-chips" class="pricetags-chips"></div>
 
+        <!-- История введённых кодов: переживает перезапуск, поэтому повторный
+             лист не набирается заново. Клик по коду возвращает его в список. -->
+        <div class="pricetags-history-row">
+          <span class="pricetags-history-title">История</span>
+          <button id="pricetags-history-clear" type="button" class="barcodes-refresh">Очистить</button>
+        </div>
+        <div id="pricetags-history" class="pricetags-history"></div>
+
         <!-- Кнопки действий и число копий в одну строку: копии относятся к
              печати и держать их на отдельной полосе незачем. -->
         <div class="settings-actions">

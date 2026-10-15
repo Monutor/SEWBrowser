@@ -107,6 +107,12 @@ interface BarcodeItemLike {
   symbology: 'ean13' | 'code128'
 }
 
+/** История введённых в генератор штрихов кодов товара (свой файл на диске) */
+interface BarcodeHistoryLike {
+  skus: string[]
+  updatedAt?: number
+}
+
 interface BarcodeLookupResultLike {
   ok: boolean
   items?: BarcodeItemLike[]
@@ -439,6 +445,14 @@ const api = {
   /** Собрать PDF листа со штрихами и показать в просмотрщике */
   barcodesBuild: (skus: string[], copies: number): Promise<BarcodeBuildResultLike> =>
     ipcRenderer.invoke('barcodes:build', { skus, copies }),
+  /** История введённых кодов товара: новые сверху, без дублей */
+  barcodesHistory: (): Promise<BarcodeHistoryLike> => ipcRenderer.invoke('barcodes:history'),
+  /** Дописать коды в историю; ответ — итоговый список */
+  barcodesHistoryAdd: (skus: string[]): Promise<BarcodeHistoryLike> =>
+    ipcRenderer.invoke('barcodes:history-add', skus),
+  /** Очистить историю введённых кодов */
+  barcodesHistoryClear: (): Promise<BarcodeHistoryLike> =>
+    ipcRenderer.invoke('barcodes:history-clear'),
   /** Сохранить последний PDF на диск */
 
   /** Напечатать последний PDF */

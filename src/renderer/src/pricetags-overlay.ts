@@ -117,16 +117,78 @@ function renderChips(): void {
   )
 }
 
+/**
+ * История введённых кодов товара. Хранится main'ом в barcode-history.json и
+ * переживает перезапуск: список листа набирают заново каждый день, а повторно
+ * вбитые коды — уже не набор, а ошибка. В историю пишется только код: штрих и
+ * наименование дозапрашиваются из локальной базы, дублировать их в файле нечего.
+ */
+let history: string[] = []
+
+/**
+ * Полоса истории: клик по коду возвращает его в текущий список. Сама история не
+ * меняется от просмотра — иначе простое открытие оверлея переставляло бы её.
+ */
+function renderHistory(): void {
+  const box = el('pricetags-history')
+  if (!box) return
+  const clear = button('pricetags-history-clear')
+  if (clear) clear.disabled = history.length === 0
+  if (history.length === 0) {
+    const empty = document.createElement('span')
+    empty.className = 'pricetags-history-empty'
+    empty.textContent = 'пусто'
+    box.replaceChildren(empty)
+    return
+  }
+  box.replaceChildren(
+    ...history.map((sku) => {
+      const item = document.createElement('button')
+      item.type = 'button'
+      item.className = 'pricetags-history-item'
+      item.textContent = sku
+      item.title = 'Добавить код в список'
+      item.addEventListener('click', () => addSkus([sku]))
+      return item
+    }),
+  )
+}
+
+/** Дописать новые коды в историю. Отказ хранилища не должен ломать лист. */
+async function rememberSkus(values: readonly string[]): Promise<void> {
+  if (values.length === 0) return
+  try {
+    const saved = await window.shell.barcodesHistoryAdd([...values])
+    if (saved && Array.isArray(saved.skus)) history = saved.skus
+    renderHistory()
+  } catch (err) {
+    console.warn('[pricetags] история не сохранена:', err)
+  }
+}
+
+/** Очистка истории по кнопке — без подтверждения: восстановить её нечем, но и
+ *  терять нечего, коды берутся из базы заново. */
+async function clearHistory(): Promise<void> {
+  try {
+    const saved = await window.shell.barcodesHistoryClear()
+    history = saved && Array.isArray(saved.skus) ? saved.skus : []
+  } catch (err) {
+    console.warn('[pricetags] история не очищена:', err)
+  }
+  renderHistory()
+}
+
 function addSkus(values: readonly string[]): void {
-  let added = 0
+  const fresh: string[] = []
   for (const value of values) {
     if (skus.includes(value)) continue
     skus.push(value)
-    added += 1
+    fresh.push(value)
   }
-  if (added === 0) return
+  if (fresh.length === 0) return
   renderChips()
   setStatus(`артикулов в списке: ${skus.length}`)
+  void rememberSkus(fresh)
 }
 
 function addFromInput(input: HTMLInputElement): void {
@@ -202,6 +264,8 @@ export async function openPricetags(): Promise<void> {
   const node = overlay()
   if (!node) return
   node.hidden = false
+  // Текущий список каждый раз с нуля, история — нет: она и нужна, чтобы не
+  // вбивать одни и те же коды второй день подряд.
   skus = []
   barcodeItems = []
   renderChips()
@@ -209,7 +273,19 @@ export async function openPricetags(): Promise<void> {
   const copies = el('barcodes-copies') as HTMLInputElement | null
   if (copies) copies.value = String(deps.config()?.pricetagCopies ?? 1)
   renderDbStatus(await window.shell.barcodesStatus())
+  await loadHistory()
   el('pricetags-sku')?.focus()
+}
+
+/** Загрузка истории из файла. Пока она едет, в блоке остаётся прошлое содержимое. */
+async function loadHistory(): Promise<void> {
+  try {
+    const saved = await window.shell.barcodesHistory()
+    history = saved && Array.isArray(saved.skus) ? saved.skus : []
+  } catch (err) {
+    console.warn('[pricetags] история не загружена:', err)
+  }
+  renderHistory()
 }
 
 /** Поиск в локальной базе штрихов. База обновляется при первом обращении —
@@ -307,6 +383,7 @@ async function refreshDb(): Promise<void> {
 export function wirePricetags(next: PricetagsOverlayDeps): void {
   deps = next
   el('barcodes-refresh')?.addEventListener('click', () => void refreshDb())
+  el('pricetags-history-clear')?.addEventListener('click', () => void clearHistory())
   const sku = el('pricetags-sku') as HTMLInputElement | null
   // Enter — добавить артикул и сразу найти позиции
   sku?.addEventListener('keydown', (event) => {

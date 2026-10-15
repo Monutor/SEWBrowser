@@ -295,6 +295,13 @@ interface ShelvesPayload {
   rows: string[]
 }
 
+/** История введённых в генератор штрихов кодов товара (файл barcode-history.json):
+ *  новые сверху, максимум 200 записей. */
+interface BarcodeHistory {
+  skus: string[]
+  updatedAt?: number
+}
+
 /** Позиция остатков, собранная из выгрузки для плагина `sew-inventory` */
 interface StockInventoryRow {
   sku: string
@@ -533,11 +540,17 @@ interface ShellApi {
   barcodesLookup(skus: string[]): Promise<BarcodeLookupResult>
   /** Собрать лист A4 со штрихами и открыть просмотрщик */
   barcodesBuild(skus: string[], copies: number): Promise<BarcodeBuildResult>
+  /** История введённых кодов товара: новые сверху, без дублей */
+  barcodesHistory(): Promise<BarcodeHistory>
+  /** Дописать коды в историю; ответ — итоговый список */
+  barcodesHistoryAdd(skus: string[]): Promise<BarcodeHistory>
+  /** Очистить историю введённых кодов */
+  barcodesHistoryClear(): Promise<BarcodeHistory>
   /** Сохранить последний собранный PDF на диск */
 
   /** Напечатать последний собранный PDF на системном принтере */
 
-  /** Полки склада из локального shelves.json (null — базы нет) */
+  /** Список полок склада из локального shelves.json (null — базы нет) */
   getShelves(): Promise<ShelvesPayload | null>
 
   /** Выбор папки для отчёта об остатках; null — отмена */
@@ -556,7 +569,7 @@ interface ShellApi {
   getSound(slot: 'rel' | 'ho'): Promise<{ file: string; mime: string; base64: string } | null>
   /** Удалить свой звук слота (откат на стандартный бип) */
   clearSound(slot: 'rel' | 'ho'): Promise<boolean>
-   onPluginDataChanged(cb: (event: { plugin: string }) => void): () => void
+  onPluginDataChanged(cb: (event: { plugin: string }) => void): () => void
   onUpdater(cb: (event: UpdaterEvent) => void): void
   downloadUpdate(): Promise<boolean>
   checkForUpdates(): Promise<boolean>

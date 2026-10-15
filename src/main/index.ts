@@ -17,6 +17,7 @@ import { appendDownloadRecord, clearDownloadHistory, loadDownloadHistory, remove
 import { isValidObjectId, parseStockReport, stockFileName, stockReportUrl } from './downloads/stockReport'
 import { createSewApi } from './sew-api'
 import { createBarcodeDb } from './barcode-db'
+import { createBarcodeHistory } from './barcode-history'
 import { createBarcodePrint } from './barcode-print'
 import { createShelves } from './shelves'
 import { readStockBalance } from './inventory/xlsx-core'
@@ -1479,12 +1480,22 @@ function createWindow(): void {
   // Индекс базы ленивый: скачивание начинается при первом обращении из
   // оверлея, а не на старте приложения.
   const barcodes = createBarcodePrint({ db: createBarcodeDb(), openPdfViewer })
+  // История введённых в генератор кодов товара: оверлей «Штрихи» подставляет их
+  // одним кликом, чтобы не искать руками список прошлой печати.
+  const barcodeHistory = createBarcodeHistory()
 
   ipcMain.handle('barcodes:status', () => barcodes.status())
   ipcMain.handle('barcodes:ensure', () => barcodes.ensure())
   ipcMain.handle('barcodes:reload', () => barcodes.reload())
   ipcMain.handle('barcodes:lookup', (_e, skus: string[]) => barcodes.lookup(skus))
   ipcMain.handle('barcodes:build', (_e, input: { skus: string[]; copies: number }) => barcodes.build(input))
+
+  // История введённых в генератор кодов товара: пользователь возвращается к
+  // списку на следующий день, а обнулять его при каждом запуске нельзя. Отдельный
+  // файл рядом с конфигом, а не поле конфига: история растёт, а конфиг — настройки.
+  ipcMain.handle('barcodes:history', () => barcodeHistory.list())
+  ipcMain.handle('barcodes:history-add', (_e, skus: string[]) => barcodeHistory.add(skus))
+  ipcMain.handle('barcodes:history-clear', () => barcodeHistory.clear())
 
   // Полки склада: локальный shelves.json — единственный источник списка для
   // плагина sew-helper (сеть для этого не годится, файл едет с приложением).

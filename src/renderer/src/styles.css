@@ -3568,6 +3568,45 @@ body {
   line-height: 1;
   padding: 0;
 }
+/* История введённых кодов: та же полоса-чипы, но записи кликабельны и не
+   умеют удаляться по одной (для этого есть «Очистить»). */
+.pricetags-history-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+.pricetags-history-title {
+  flex: 1 1 auto;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.pricetags-history {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 92px;
+  overflow-y: auto;
+  margin: 4px 0 2px;
+}
+.pricetags-history-empty {
+  font-size: 12px;
+  color: var(--text-2);
+}
+.pricetags-history-item {
+  display: inline-flex;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--chrome-2, var(--chrome));
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.pricetags-history-item:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
 .pricetags-rows {
   margin: 8px 0;
   max-height: 260px;
