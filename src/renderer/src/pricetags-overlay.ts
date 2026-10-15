@@ -288,7 +288,13 @@ export async function openPricetags(): Promise<void> {
 async function loadHistory(): Promise<void> {
   try {
     const saved = await window.shell.barcodesHistory()
-    history = saved && Array.isArray(saved.skus) ? saved.skus : []
+    if (!saved || !Array.isArray(saved.skus)) {
+      // Раньше main отдавал голый массив, и оверлей молча показывал «пусто».
+      // Форма ответа — контракт с main, расхождение видно сразу в консоли.
+      console.warn('[pricetags] история пришла не в том виде:', saved)
+      return
+    }
+    history = saved.skus
   } catch (err) {
     console.warn('[pricetags] история не загружена:', err)
   }

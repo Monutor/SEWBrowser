@@ -23,24 +23,32 @@ function file(): string {
 }
 
 export function createBarcodeHistory(): {
-  list(): string[]
-  add(skus: string[]): string[]
-  clear(): void
+  list(): BarcodeHistory
+  add(skus: string[]): BarcodeHistory
+  clear(): BarcodeHistory
 } {
-  function read(): string[] {
+  /** Отдаём ровно файл истории: renderer ждёт объект с полем skus, а не голый
+   *  массив. Раньше здесь возвращался массив, и оверлей тихо показывал «пусто»
+   *  (saved.skus у массива — undefined). */
+  function read(): BarcodeHistory {
     const path = file()
-    if (!existsSync(path)) return []
+    if (!existsSync(path)) return { skus: [], updatedAt: 0 }
     try {
-      return parseHistory(readFileSync(path, 'utf-8'))
+      const text = readFileSync(path, 'utf-8')
+      const meta = JSON.parse(text) as { updatedAt?: unknown }
+      return {
+        skus: parseHistory(text),
+        updatedAt: typeof meta.updatedAt === 'number' ? meta.updatedAt : 0,
+      }
     } catch (err) {
       // Битый файл не должен ломать оверлей: молча начинаем с пустой истории,
       // следующая запись перезапишет файл нормальным содержимым.
       console.warn('[barcodes:history] файл истории не прочитан:', err)
-      return []
+      return { skus: [], updatedAt: 0 }
     }
   }
 
-  function write(skus: string[]): void {
+  function write(skus: string[]): BarcodeHistory {
     const payload: BarcodeHistory = { skus, updatedAt: Date.now() }
     try {
       writeJsonAtomic(file(), payload)
@@ -49,15 +57,12 @@ export function createBarcodeHistory(): {
       // печати, поэтому молча пишем в консоль и работаем дальше.
       console.warn('[barcodes:history] история не сохранена:', err)
     }
+    return payload
   }
 
   return {
     list: () => read(),
-    add: (skus: string[]) => {
-      const merged = mergeHistory(read(), Array.isArray(skus) ? skus : [])
-      write(merged)
-      return merged
-    },
+    add: (skus: string[]) => write(mergeHistory(read().skus, Array.isArray(skus) ? skus : [])),
     clear: () => write([]),
   }
 }
