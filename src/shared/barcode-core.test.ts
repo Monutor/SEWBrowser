@@ -301,7 +301,10 @@ test('buildBarcode: пустой код — null, а не пустая поло�
 test('barcodeSvg: полосы слиты в один path, тихая зона учтена', () => {
   const svg = barcodeSvg('5901234123457', { moduleWidth: 2, height: 60 })
   assert.match(svg, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg"/)
-  assert.match(svg, /viewBox="0 0 117 60"/, '95 модулей + 11+11 тихих')
+  // Координаты пути в пикселях (moduleWidth=2), поэтому ширина viewBox — тоже
+  // в пикселях: 117 модулей × 2 = 234, а не 117. Иначе штрих резался бы краем
+  // viewBox и «уезжал» в сторону (регресс: старый тест ловил только width).
+  assert.match(svg, /viewBox="0 0 234 60"/, '95 модулей + 11+11 тихих, в пикселях')
   assert.match(svg, /width="234" height="60"/)
   assert.match(svg, /<path fill="#000" d="M/)
   assert.match(svg, /shape-rendering="crispEdges"/)

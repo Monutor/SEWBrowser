@@ -286,8 +286,14 @@ export function barcodeSvg(code: string, options: BarcodeSvgOptions = {}): strin
     }
   }
 
+  // Координаты в `bars` — в пикселях: модуль шириной `moduleWidth`, высота
+  // `height`, тихая зона `quiet * moduleWidth` с каждой стороны. Поэтому
+  // ширина viewBox тоже умножается на moduleWidth — иначе координаты «вылезали»
+  // за границы viewBox в `moduleWidth` раз, полосы растягивались по горизонтали,
+  // а правая половина штриха резалась краем viewBox (видимо «полосы уขวา, слева
+  // пустота»). Высота уже в пикселях (`height`) и совпадает с прописью `v{height}`.
   return (
-    `<svg xmlns="http://www.w3.org/2000/svg" class="bc-svg" viewBox="0 0 ${totalModules} ${height}" ` +
+    `<svg xmlns="http://www.w3.org/2000/svg" class="bc-svg" viewBox="0 0 ${totalModules * moduleWidth} ${height}" ` +
     `width="${totalModules * moduleWidth}" height="${height}" shape-rendering="crispEdges" ` +
     `role="img" aria-label="Штрих-код ${escapeXml(code)}">` +
     `<path fill="#000" d="${bars.join('')}"/></svg>`
