@@ -106,17 +106,41 @@ const BARCODE_BOX = {
   maxHeightMm: 26,
 } as const
 
+/** Поля этикетки, мм. Снизу поле заметно больше верхнего: подпись вынесена из
+ *  потока в футер этикетки, и место под неё надо ЗАРЕЗЕРВИРОВАТЬ. Иначе полоса
+ *  центрируется по всей рамке, а цифры кода (нижняя строка футера) наезжают на
+ *  её низ: у EAN-13 полоса высотой ~24.9 мм, и снизу остаётся ~7.8 мм — как раз
+ *  столько занимает строка подписи. */
+export const LABEL_PADDING = { top: 2, side: 2, bottom: 8 } as const
+
+/** Подпись этикетки: кегли (CSS-пиксели), межстрочные интервалы и отступы от
+ *  низа рамки, мм. Подняли кегли после того, как в строку с названием добавили
+ *  артикул: на прежних 13px/9px цифры кода и артикул читались в упор. */
+export const LABEL_TEXT = {
+  codePx: 15,
+  codeLineHeight: 1.1,
+  namePx: 10,
+  nameLineHeight: 1.25,
+  codeBottomMm: 7,
+  nameBottomMm: 2,
+} as const
+
 /** Одна этикетка.
  *
- *  Под полосой печатается сам штрих-код, а под ним наименование — так же, как в
- *  Monutor/warehouse-barcode-generator (`JsBarcode` с `displayValue: true`,
- *  где цифры кода выводятся под полосами, а `.print-label-name` несёт
- *  название). Прежде здесь стоял артикул товара: он для переборки бесполезен —
- *  в сканер вводится штрих, и если он не берётся, человек вводит руками цифры
- *  именно с этикетки.
+ *  Под полосой печатается сам штрих-код, под ним — наименование и артикул, так
+ *  же, как в Monutor/warehouse-barcode-generator (`JsBarcode` с
+ *  `displayValue: true`, где цифры кода выводятся под полосами, а
+ *  `.print-label-name` несёт название).
+ *
+ *  Артикул стоит ПЕРВЫМ в строке с названием, хотя раньше его здесь не было
+ *  вовсе: `.nm` обрезается многоточием по хвосту, и при длинном названии
+ *  артикул в конце строки просто исчез бы. Он нужен, чтобы отличить одноимённые
+ *  позиции и найти товар в SEW глазами. Рядом с названием, а не отдельным
+ *  блоком — на 45 мм этикетке третья строка не помещается, а пустую полосу под
+ *  наименованием отдавать под что-то ещё не за что.
  *
  *  Сама полоса не растягивается: SVG сохраняет пропорцию viewBox, а этикетка
- *  вписывает её в рамку `max-width/max-height` (как `.print-label svg` в том
+ *  вписывает её в рамку `width/max-height` (как `.print-label svg` в том
  *  проекте). Раньше полоса растягивалась на всю ширину этикетки через
  *  `preserveAspectRatio=none`, и короткий код получал непропорционально
  *  толстые полосы. */
@@ -127,10 +151,13 @@ function renderLabel(item: BarcodeItem): string {
   } catch {
     svg = '<div class="bad">код не печатается</div>'
   }
+  const sku = item.sku ? `<span class="sku">${escapeHtml(item.sku)}</span>` : ''
+  const sep = sku && item.name ? '<span class="sep">·</span>' : ''
+  const name = item.name ? `<span class="nm">${escapeHtml(item.name)}</span>` : ''
   return (
     `<div class="label">${svg}` +
     `<div class="code">${escapeHtml(item.barcode)}</div>` +
-    `<div class="name">${escapeHtml(item.name)}</div>` +
+    `<div class="name">${sku}${sep}${name}</div>` +
     '</div>'
   )
 }
@@ -166,17 +193,26 @@ export function renderBarcodeSheet(items: readonly BarcodeItem[], options: Sheet
     // абсолютно спозиционирована у низа: если держать её в потоке, она «тянула»
     // бы центр блока вниз и штрих уезжал вверх — именно так штрих и стоял выше
     // середины рамки. Теперь штрих по середине, а текст — футером у низа.
-    'padding:2mm;border:1px dashed #bbb;position:relative;display:flex;flex-direction:column;' +
+    // Поле снизу (LABEL_PADDING.bottom) — зарезервированное место под футер:
+// полоса центрируется по СВОБОДНОЙ высоте, и без резерва цифры кода ложатся
+// на её нижние полосы.
+    `padding:${LABEL_PADDING.top}mm ${LABEL_PADDING.side}mm ${LABEL_PADDING.bottom}mm;` +
+    'border:1px dashed #bbb;position:relative;display:flex;flex-direction:column;' +
     'align-items:center;justify-content:center;break-inside:avoid;page-break-inside:avoid;overflow:hidden}' +
     // Ширина фиксирована по этикетке, `height:auto` держит пропорцию viewBox —
     // полоса масштабируется целиком, а не растягивается по одной оси.
     `.label svg{width:${BARCODE_BOX.widthMm}mm;height:auto;max-height:${BARCODE_BOX.maxHeightMm}mm;display:block}` +
     // Подпись прижата к низу рамки и по центру: штрих остаётся по середине, а
-    // цифры и наименование не сдвигают его вверх. `.code` выше (bottom:6mm),
-    // `.name` ниже (bottom:2mm) — читаются сверху вниз.
-    '.code{position:absolute;left:0;right:0;bottom:6mm;text-align:center;font:700 13px/1.1 Consolas,"Courier New",monospace}' +
-    '.name{position:absolute;left:0;right:0;bottom:2mm;text-align:center;font-size:9px;color:#333;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
-    '.bad{font-size:9px;color:#a00}' +
+    // цифры и наименование с артикулом не сдвигают его вверх. `.code` выше,
+    // `.name` ниже — читаются сверху вниз.
+    `.code{position:absolute;left:0;right:0;bottom:${LABEL_TEXT.codeBottomMm}mm;text-align:center;font:700 ${LABEL_TEXT.codePx}px/${LABEL_TEXT.codeLineHeight} Consolas,"Courier New",monospace}` +
+    // Строка с названием и артикулом — flex: артикул `.sku` не сжимается никогда,
+    // а длинное название `.nm` уходит в многоточие, но артикул остаётся читаемым.
+    `.name{position:absolute;left:0;right:0;bottom:${LABEL_TEXT.nameBottomMm}mm;display:flex;align-items:baseline;justify-content:center;gap:1mm;font-size:${LABEL_TEXT.namePx}px;line-height:${LABEL_TEXT.nameLineHeight};color:#333;max-width:100%;overflow:hidden}` +
+    '.name .sku{flex:none;font-weight:600;color:#000}' +
+    '.name .sep{flex:none;color:#999}' +
+    '.name .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+    `.bad{font-size:${LABEL_TEXT.namePx}px;color:#a00}` +
     '</style></head><body>' +
     `${title}<div class="sheet">${labels}</div>` +
     '</body></html>'

@@ -3,6 +3,8 @@ import { test } from 'node:test'
 import { buildBarcode } from './barcode-core.ts'
 import {
   INDEX_FIELD_SEP,
+  LABEL_PADDING,
+  LABEL_TEXT,
   MAX_LABELS_PER_JOB,
   SHEET_LAYOUT,
   barcodeFileName,
@@ -115,14 +117,24 @@ test('renderBarcodeSheet: этикеток ровно столько же, ск�
   assert.equal((html.match(/<svg/g) ?? []).length, 2)
 })
 
-test('renderBarcodeSheet: под полосой печатается сам штрих-код, а не артикул', () => {
+test('renderBarcodeSheet: под полосой — цифры кода, рядом с названием — артикул', () => {
   // Как в warehouse-barcode-generator: JsBarcode с displayValue выводит цифры
-  // кода под полосами. Артикул в переборке не нужен — в сканер вводят штрих, а
-  // если он не взялся, руками набирают цифры именно с этикетки.
+  // кода под полосами, и в сканер вводят штрих, а если он не взялся — руками
+  // набирают цифры именно с этикетки. Поэтому цифры кода в блоке подписи
+  // занимают своё место, а артикул живёт отдельно, в строке с наименованием.
   const html = renderBarcodeSheet(sample)
   assert.match(html, /class="code">4660294839975</)
   assert.match(html, /class="code">693996262756465284</)
-  assert.ok(!html.includes('class="sku"'), 'артикул убран из подписи')
+  // Артикул ПЕРВЫМ в строке: название режется многоточием по хвосту, и в конце
+  // строки артикул просто исчез бы у длинных наименований.
+  assert.match(html, /class="sku">400438912<\/span><span class="sep">·<\/span><span class="nm">AC Ballu/)
+  assert.match(html, /class="sku">4269907<\/span><span class="sep">·<\/span><span class="nm">\(A\)В\/Г/)
+  // Разумной цензуры: без наименования остаётся только артикул, без артикула —
+  // только название, без обоих строка пустая (лишний разделитель не рисуем).
+  const onlySku = renderBarcodeSheet([row('1', '4660294839975', '')])
+  assert.match(onlySku, /class="name"><span class="sku">1<\/span><\/div>/)
+  const onlyName = renderBarcodeSheet([row('', '4660294839975', 'Без артикула')])
+  assert.match(onlyName, /class="name"><span class="nm">Без артикула<\/span><\/div>/)
 })
 
 test('renderBarcodeSheet: штрих вписывается в этикетку, а не растягивается', () => {
@@ -138,16 +150,32 @@ test('renderBarcodeSheet: штрих вписывается в этикетку,
   const innerMm = SHEET_LAYOUT.labelWidthMm - 2 * 2 // минус отступы слева и справа
   assert.match(html, new RegExp(`width:${innerMm}mm;height:auto;`))
   assert.doesNotMatch(html, /\.label svg\{[^}]*max-width/)
-  // Высота остаётся пропорциональной и упирается в страховку, не залезая под
-  // подпись. На текущей базе (самый длинный код — 18 знаков) полоса занимает
-  // 17.6 мм, до предела не доходит.
+  // Проверять надо РЕАЛЬНУЮ высоту полосы, а не страховку `max-height` в 26 мм:
+  // она выше свободной высоты этикетки и в сумме с подписью не влезает никогда.
+  // Реальная высота = ширина × пропорция viewBox; худшая полоса на базе — EAN-13
+  // (234×64 → 24.9 мм), а не самый длинный код (Code 128 на 18 знаков — 17.6 мм).
   const PX_MM = 25.4 / 96
-  const boxMm = Number(html.match(/max-height:(\d+(?:\.\d+)?)mm/)![1])
-  const contentMm = SHEET_LAYOUT.labelHeightMm - 2 * 2
-  const textMm = (13 * 1.1 + 9 * 1.25) * PX_MM // .code задаёт line-height 1.1
+  const capMm = Number(html.match(/max-height:(\d+(?:\.\d+)?)mm/)![1])
+  assert.ok(capMm > 0, 'у полосы должна остаться страховка по высоте')
+  const viewBoxes = [...html.matchAll(/viewBox="0 0 (\d+) (\d+)"/g)].map((m) => ({
+    w: Number(m[1]),
+    h: Number(m[2]),
+  }))
+  assert.equal(viewBoxes.length, 2, 'по viewBox на каждую этикетку')
+  const worstMm = Math.max(...viewBoxes.map((vb) => (innerMm * vb.h) / vb.w))
+  // Свободная высота блока внутри рамки: поля сверху и снизу плюс сама рамка
+  // (1px ≈ 0.26 мм с каждой стороны). Полоса центрируется именно в ней.
+  const frameMm = 25.4 / 96
+  const freeMm = SHEET_LAYOUT.labelHeightMm - LABEL_PADDING.top - LABEL_PADDING.bottom - 2 * frameMm
+  assert.ok(worstMm < freeMm, `полоса ${worstMm.toFixed(1)}мм должна влезать в ${freeMm.toFixed(1)}мм`)
+  // Низ полосы после центрирования обязан остаться ВЫШЕ цифр кода: подпись
+  // прижата к низу рамки, и раньше (поле снизу 2 мм) цифры ложились на полосу.
+  const svgBottomMm = LABEL_PADDING.bottom + (freeMm - worstMm) / 2
+  const codeTopMm =
+    LABEL_TEXT.codeBottomMm + LABEL_TEXT.codePx * LABEL_TEXT.codeLineHeight * PX_MM
   assert.ok(
-    boxMm + textMm < contentMm,
-    `рамка ${boxMm}мм + подпись ${textMm.toFixed(1)}мм должны влезать в ${contentMm}мм`,
+    svgBottomMm > codeTopMm,
+    `низ полосы ${svgBottomMm.toFixed(1)}мм должен быть выше цифр кода (верх в ${codeTopMm.toFixed(1)}мм)`,
   )
 })
 
