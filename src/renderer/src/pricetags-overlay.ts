@@ -118,10 +118,15 @@ function renderChips(): void {
 }
 
 /**
- * История введённых кодов товара. Хранится main'ом в barcode-history.json и
- * переживает перезапуск: список листа набирают заново каждый день, а повторно
- * вбитые коды — уже не набор, а ошибка. В историю пишется только код: штрих и
- * наименование дозапрашиваются из локальной базы, дублировать их в файле нечего.
+ * История кодов товара, по которым штрих реально печатали. Хранится main'ом в
+ * barcode-history.json и переживает перезапуск: список листа набирают заново
+ * каждый день, а повторно вбитые коды — уже не набор, а ошибка.
+ *
+ * В историю попадают только коды, НАЙДЕННЫЕ в локальной базе (запись идёт после
+ * поиска). Код, которого в базе нет, штриха всё равно не напечатать — держать
+ * его в истории незачем, и через месяц такой список становится свалкой из
+ * опечаток. В историю пишется только код: штрих и наименование дозапрашиваются
+ * из базы, дублировать их в файле нечего.
  */
 let history: string[] = []
 
@@ -154,7 +159,8 @@ function renderHistory(): void {
   )
 }
 
-/** Дописать новые коды в историю. Отказ хранилища не должен ломать лист. */
+/** Дописать найденные в базе коды в историю (вызывает поиск). Отказ хранилища
+ *  не должен ломать лист. */
 async function rememberSkus(values: readonly string[]): Promise<void> {
   if (values.length === 0) return
   try {
@@ -179,16 +185,17 @@ async function clearHistory(): Promise<void> {
 }
 
 function addSkus(values: readonly string[]): void {
-  const fresh: string[] = []
+  let added = false
   for (const value of values) {
     if (skus.includes(value)) continue
     skus.push(value)
-    fresh.push(value)
+    added = true
   }
-  if (fresh.length === 0) return
+  if (!added) return
   renderChips()
   setStatus(`артикулов в списке: ${skus.length}`)
-  void rememberSkus(fresh)
+  // Историю здесь НЕ трогаем: код ещё не проверен базой, в историю идёт то, что
+  // поиск нашёл (см. findBarcodeItems).
 }
 
 function addFromInput(input: HTMLInputElement): void {
@@ -316,6 +323,9 @@ async function findBarcodeItems(): Promise<void> {
     renderResult()
     const lost = res.missing && res.missing.length > 0 ? `, не найдено: ${res.missing.length}` : ''
     setStatus(`найдено позиций: ${barcodeItems.length}${lost}`)
+    // В историю — только то, что реально нашлось в базе. Уже известные коды не
+    // трогаем: повторный поиск не должен переписывать файл и переставлять её.
+    void rememberSkus(barcodeItems.map((item) => item.sku).filter((sku) => !history.includes(sku)))
   } finally {
     if (find) find.disabled = false
     refreshButtons()
