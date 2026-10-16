@@ -285,6 +285,9 @@ interface BarcodeImportResult {
   source: string
   /** Позиции из приложенного файла: оверлей показывает их списком */
   items: BarcodeItem[]
+  /** Позиции файла, что база уже знает с тем же штрихом: их не добавляют в
+   *  список печати, обычный поиск их находит и так */
+  baseSkus: string[]
   error?: string
   status: BarcodeDbStatus
 }

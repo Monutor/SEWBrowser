@@ -723,10 +723,13 @@
         <!-- Позиции из приложенного файла: их не вбивают руками, но увидеть и
              отобрать надо. Отдельный блок с собственной прокруткой — файл бывает
              на тысячи строк, и в чипах рабочего списка он просто разобрал бы
-             карточку. Клик по строке кладёт позицию в список печати. -->
+             карточку. Клик по строке кладёт позицию в список печати; позиции,
+             что база уже знает с тем же штрихом, гаснут и не добавляются —
+             их находит обычный поиск. -->
         <div id="pricetags-imported" class="pricetags-imported" hidden>
           <div class="pricetags-imported-head">
             <span id="pricetags-imported-title" class="pricetags-imported-title"></span>
+            <button id="pricetags-imported-all" type="button" class="barcodes-refresh" hidden>показать все</button>
             <button id="pricetags-imported-hide" type="button" class="barcodes-refresh">Скрыть</button>
           </div>
           <div id="pricetags-imported-rows" class="pricetags-rows"></div>

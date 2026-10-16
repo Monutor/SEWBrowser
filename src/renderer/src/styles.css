@@ -3693,6 +3693,15 @@ body {
   opacity: 0.55;
   cursor: default;
 }
+/* Позиция, что база уже знает с тем же штрихом: клик по ней ничего не кладёт
+   в лист, поэтому гасим сильнее добавленных — её тут вообще нечего делать. */
+.pricetags-imported-row.is-base {
+  opacity: 0.32;
+  cursor: not-allowed;
+}
+.pricetags-imported-row.is-base:hover {
+  background: none;
+}
 .pricetags-imported-note {
   margin-top: 4px;
   font-size: 12px;

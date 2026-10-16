@@ -5,6 +5,7 @@ import {
   mergeRows,
   normalizeRow,
   parseExtraJson,
+  partitionAgainstBase,
   rowsFromIndexText,
   rowsFromSheet,
 } from './barcode-merge-core.ts'
@@ -199,6 +200,66 @@ describe('mergeRows', () => {
 
   it('лимит на размер дополнения объявлен и не равен размеру базы', () => {
     assert.ok(EXTRA_LIMIT < 100_000, 'дополнение — десятки позиций, а не чужая база')
+  })
+})
+
+describe('partitionAgainstBase', () => {
+  const base = new Map([
+    ['400438912', '4660294839975'], // в базе и в файле штрих тот же — дубль
+    ['400438914', '4660294839982'], // ещё один дубль отчёта об остатках
+    ['400357926', '461021658203858909'], // в базе другой штрих — файл главнее
+  ])
+
+  it('позиция, что база знает с тем же штрихом, в extra.json не идёт', () => {
+    const part = partitionAgainstBase([{ sku: '400438912', barcode: '4660294839975', name: 'AC Ballu' }], base)
+    assert.deepEqual(part.same, ['400438912'])
+    assert.deepEqual(part.different, [])
+    assert.deepEqual(part.store, [])
+  })
+
+  it('позиция с ДРУГИМ штрихом хранится: файл пользователя главнее базы', () => {
+    const part = partitionAgainstBase(
+      [{ sku: '400357926', barcode: '461021658105558909', name: 'ZUGEL' }],
+      base,
+    )
+    assert.deepEqual(part.different, ['400357926'])
+    assert.deepEqual(part.same, [])
+    assert.equal(part.store.length, 1)
+    assert.equal(part.store[0]?.barcode, '461021658105558909')
+  })
+
+  it('новой позиции база не знает — она идёт в extra.json', () => {
+    const part = partitionAgainstBase(
+      [{ sku: '50176631', barcode: '2005017663116', name: 'Пакет ПВД 50х42' }],
+      base,
+    )
+    assert.equal(part.store.length, 1)
+    assert.equal(part.same.length + part.different.length, 0)
+  })
+
+  it('отчёт об остатках ложится в extra.json только новым', () => {
+    const file = [
+      { sku: '400438912', barcode: '4660294839975', name: 'AC Ballu BPAC-07' },
+      { sku: '400438914', barcode: '4660294839982', name: 'AC Ballu BPAC-09' },
+      { sku: '50176631', barcode: '2005017663116', name: 'Пакет ПВД 50х42' },
+    ]
+    const part = partitionAgainstBase(file, base)
+    assert.deepEqual(part.same, ['400438912', '400438914'])
+    assert.deepEqual(part.store.map((row) => row.sku), ['50176631'])
+  })
+
+  it('штрихи сравниваются строго: «04660294839975» и «4660294839975» — разные значения', () => {
+    const part = partitionAgainstBase(
+      [{ sku: '400438912', barcode: '04660294839975', name: 'AC Ballu' }],
+      base,
+    )
+    assert.deepEqual(part.same, [])
+    assert.deepEqual(part.different, ['400438912'])
+  })
+
+  it('непечатная позиция файла никуда не попадает', () => {
+    const part = partitionAgainstBase([{ sku: '4001', barcode: 'не код', name: 'x' }], base)
+    assert.deepEqual(part, { store: [], same: [], different: [] })
   })
 })
 

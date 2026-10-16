@@ -260,6 +260,53 @@ export function mergeRows(current: readonly DbRow[], incoming: readonly DbRow[])
   return outcome
 }
 
+/** Разбор позиций файла по базе: что имеет смысл хранить, а что уже есть. */
+export interface BasePartition {
+  /** Позиции файла, которые надо положить в extra.json: новые и те, чей штрих
+   *  в файле отличается от базового. */
+  store: DbRow[]
+  /** Артикулы позиций, что база знает с ТЕМ ЖЕ штрихом: хранить нечего, поиск
+   *  отдаст то же значение из индекса, а оверлею такие позиции не надо
+   *  показывать как требующие добавления. */
+  same: string[]
+  /** Артикулы позиций, что в базе есть, но с ДРУГИМ штрихом: их хранить
+   *  обязательно — файл пользователя главнее базы. */
+  different: string[]
+}
+
+/**
+ * Что из файла класть в extra.json, а что уже покрыто базой.
+ *
+ * Без этого отчёт об остатках магазина (7 тысяч позиций, у которых штрих
+ * совпадает с базовым) ложился в extra.json целиком: файл раздувался, а
+ * `extra` в статусе показывал чужие дубли базы как «свои позиции».
+ *
+ * `base` — штрих базы по артикулу и только для позиций файла: его собирает
+ * main одним проходом по индексу. Штрихи сравниваются строго, как строки: и
+ * база, и файл приводят код к цифрам, но `0461…` и `461…` — это разные
+ * значения, и молча приравнять их нельзя.
+ */
+export function partitionAgainstBase(
+  rows: readonly DbRow[],
+  base: ReadonlyMap<string, string>,
+): BasePartition {
+  const part: BasePartition = { store: [], same: [], different: [] }
+  for (const raw of rows) {
+    const item = normalizeRow(raw)
+    if (!item) continue
+    const known = base.get(item.sku)
+    if (known === undefined) {
+      part.store.push(item)
+    } else if (known === item.barcode) {
+      part.same.push(item.sku)
+    } else {
+      part.different.push(item.sku)
+      part.store.push(item)
+    }
+  }
+  return part
+}
+
 /**
  * Файл приложенных позиций. Любой мусор (битый JSON, объект вместо массива,
  * не-строки внутри) даёт пустой список: приложенное — дополнение, потеря

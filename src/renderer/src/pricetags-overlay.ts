@@ -23,6 +23,13 @@ let barcodeItems: BarcodeItem[] = []
 let importedItems: BarcodeItem[] = []
 /** Имя файла, из которого пришли `importedItems`. */
 let importedSource = ''
+/** Позиции файла, что база уже знает с тем же штрихом. Их в extra.json нет,
+ *  обычный поиск по коду их находит — добавлять в список печати незачем, поэтому
+ *  в блоке они гаснут, а клик по ним только объясняет, где их взять. */
+let importedBase = new Set<string>()
+/** Показывать ли в блоке позиции, уже покрытые базой. По умолчанию нет: в
+ *  отчёте об остатках их тысячи, а печатать нужно новое. */
+let importedShowBase = false
 
 /** Сколько позиций из файла рисуем в блоке. Файл ограничен 20 000 позициями
  *  (EXTRA_LIMIT в main), а 20 000 строк в DOM оверлей не нарисует. Остальное
@@ -268,7 +275,10 @@ function barcodeRow(item: BarcodeItem, className: string): HTMLElement {
 /**
  * Блок позиций из приложенного файла: что добавилось — своими глазами, без
  * вбивания артикулов. Рисуем первые IMPORT_LIST_LIMIT и говорим, сколько не
- * показали. Позиция, уже добавленная в список печати, приглушена.
+ * показали. Позиция, уже добавленная в список печати, приглушена; позиция,
+ * которую база уже знает с тем же штрихом, — гаснет совсем и по клику в список
+ * не попадает: её и так находит «Найти в базе», и второй раз в лист она не
+ * нужна.
  */
 function renderImported(): void {
   const wrap = el('pricetags-imported')
@@ -280,29 +290,56 @@ function renderImported(): void {
   wrap.hidden = false
   const fmt = new Intl.NumberFormat('ru-RU')
   const total = importedItems.length
+  // Считаем по самому списку, а не по baseSkus: main отдаёт артикулы всех строк
+  // файла, а в блоке рисуются только те, что печатать можно.
+  const baseCount = importedItems.filter((item) => importedBase.has(item.sku)).length
   const title = el('pricetags-imported-title')
   if (title) {
     title.textContent =
       `из файла «${importedSource}» — ${fmt.format(total)} позиций, клик по строке добавляет в список`
   }
+  const toggle = button('pricetags-imported-all')
+  if (toggle) {
+    // Переключатель бессмыслен, когда дубли в базе нет: прячем, чтобы не путал.
+    toggle.hidden = baseCount === 0
+    toggle.textContent = importedShowBase ? 'только новые' : 'показать все'
+  }
+  const visible = importedShowBase
+    ? importedItems
+    : importedItems.filter((item) => !importedBase.has(item.sku))
   const box = el('pricetags-imported-rows')
   if (box) {
     box.replaceChildren(
-      ...importedItems.slice(0, IMPORT_LIST_LIMIT).map((item) => {
+      ...visible.slice(0, IMPORT_LIST_LIMIT).map((item) => {
         const added = skus.includes(item.sku)
-        const row = barcodeRow(item, `pricetags-row pricetags-imported-row${added ? ' is-added' : ''}`)
+        const known = importedBase.has(item.sku)
+        const row = barcodeRow(
+          item,
+          `pricetags-row pricetags-imported-row${known ? ' is-base' : ''}${added ? ' is-added' : ''}`,
+        )
         row.dataset.sku = item.sku
-        row.title = added ? 'уже в списке печати' : 'добавить в список печати'
+        row.title = known
+          ? 'уже есть в базе с этим штрихом — в список печати добавлять не нужно'
+          : added
+            ? 'уже в списке печати'
+            : 'добавить в список печати'
         return row
       }),
     )
   }
   const note = el('pricetags-imported-note')
   if (note) {
-    const hidden = total - IMPORT_LIST_LIMIT
-    note.textContent =
-      hidden > 0 ? `показаны первые ${fmt.format(IMPORT_LIST_LIMIT)} из ${fmt.format(total)}` : ''
-    note.hidden = hidden <= 0
+    const parts: string[] = []
+    if (visible.length > IMPORT_LIST_LIMIT) {
+      parts.push(`показаны первые ${fmt.format(IMPORT_LIST_LIMIT)} из ${fmt.format(visible.length)}`)
+    }
+    if (baseCount > 0) {
+      parts.push(
+        `${fmt.format(baseCount)} из ${fmt.format(total)} уже есть в базе — в список печати их добавлять не нужно`,
+      )
+    }
+    note.textContent = parts.join(' · ')
+    note.hidden = parts.length === 0
   }
 }
 
@@ -504,11 +541,16 @@ async function importBaseFile(): Promise<void> {
     // иначе карточка разъезжается, а печать всё равно упирается в 999 этикеток.
     importedItems = Array.isArray(res.items) ? res.items : []
     importedSource = res.source
+    // Позиции, что база уже знает с тем же штрихом: их в списке печати не
+    // нужно, поэтому по умолчанию блок показывает только новое. main их в
+    // extra.json не положил — найдутся обычным поиском по коду.
+    importedBase = new Set(Array.isArray(res.baseSkus) ? res.baseSkus : [])
+    importedShowBase = false
     renderImported()
     const fmt = new Intl.NumberFormat('ru-RU')
     const parts = [`приложено новых: ${fmt.format(res.added)}`]
     if (res.updated > 0) parts.push(`перекрыто своих: ${fmt.format(res.updated)}`)
-    // Сколько приложенных позиций совпало с записями базы: их штрих теперь
+    // Сколько позиций файла в базе есть, но с другим штрихом: их штрих теперь
     // берётся из файла пользователя, и это стоит сказать явно.
     if (res.inBase > 0) parts.push(`из них есть в базе (штрих перекрыт): ${fmt.format(res.inBase)}`)
     if (res.skipped > 0) parts.push(`строк без кода или печатного ШК: ${fmt.format(res.skipped)}`)
@@ -532,14 +574,29 @@ export function wirePricetags(next: PricetagsOverlayDeps): void {
     const row = (event.target as HTMLElement | null)?.closest<HTMLElement>('.pricetags-imported-row')
     const sku = row?.dataset.sku
     if (!sku) return
+    // Позиция, которую база уже знает с этим штрихом, в лист не идёт: клик
+    // только подсказывает, где её взять. Молча ничего не делать нельзя —
+    // выглядит как зависшая кнопка.
+    if (importedBase.has(sku)) {
+      setStatus(`позиция ${sku} уже есть в базе — вбейте код в «Коды товара» и нажмите «Найти в базе»`)
+      return
+    }
     const item = importedItems.find((value) => value.sku === sku)
     if (item) addImportedItem(item)
   })
+  // Переключатель «показать все» / «только новые» — по умолчанию блок молчит
+  // о тысячах позиций, которые печатать не надо.
+  button('pricetags-imported-all')?.addEventListener('click', () => {
+    importedShowBase = !importedShowBase
+    renderImported()
+  })
   // «Скрыть» только убирает блок: позиции остаются в extra.json и находятся
-  // кнопкой «Найти в базе», повторно приложять файл не нужно.
+  // кнопкой «Найти в базе», повторно приложлять файл не нужно.
   el('pricetags-imported-hide')?.addEventListener('click', () => {
     importedItems = []
     importedSource = ''
+    importedBase = new Set<string>()
+    importedShowBase = false
     renderImported()
   })
   el('pricetags-history-clear')?.addEventListener('click', () => void clearHistory())

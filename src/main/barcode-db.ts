@@ -20,13 +20,20 @@
 import { app } from 'electron'
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
-import { barcodeItem, parseIndexLine, type BarcodeItem, type DbRow } from '../shared/barcode-print-core'
+import {
+  barcodeItem,
+  INDEX_FIELD_SEP,
+  parseIndexLine,
+  type BarcodeItem,
+  type DbRow,
+} from '../shared/barcode-print-core'
 import { buildIndexText, parseDbJsonText, unpackDbJson } from './barcode-db-core'
 import {
   EXTRA_LIMIT,
   EXTRA_VERSION,
   mergeRows,
   parseExtraJson,
+  partitionAgainstBase,
   rowsFromIndexText,
   rowsFromSheet,
   type ExtraPayload,
@@ -75,8 +82,8 @@ export interface BarcodeImportResult {
   added: number
   /** Перекрыто позиций с уже приложенным артикулом. */
   updated: number
-  /** Сколько принятых позиций уже есть в базе db.json: их штрих приложенный
-   *  файл перекрывает. */
+  /** Сколько позиций файла в базе db.json есть, но с ДРУГИМ штрихом: их
+   *  штрих приложенный файл перекрывает, поэтому они в extra.json лежат. */
   inBase: number
   /** Строки файла, в которые нечего положить. */
   skipped: number
@@ -87,6 +94,10 @@ export interface BarcodeImportResult {
   /** Позиции, которые принёс файл, — оверлей показывает их списком и печатает
    *  сразу, не заставляя вбивать артикулы руками. При отказе пустой список. */
   items: BarcodeItem[]
+  /** Артикулы позиций файла, что база уже знает с тем же штрихом: в extra.json
+   *  они не лежат (поиск найдёт их по индексу), а оверлей гасит в списке —
+   *  добавлять их в лист печати не нужно. */
+  baseSkus: string[]
   error?: string
   status: BarcodeDbStatus
 }
@@ -348,25 +359,30 @@ export function createBarcodeDb(): BarcodeDbService {
     return { items, missing }
   }
 
-  /** Сколько из приложенных артикулов база уже знает. Один проход по индексу
-   *  (~50 мс): оверлею нужно сказать, что именно файл перекрыл. */
-  function countInBase(rows: readonly DbRow[]): number {
-    if (!existsSync(indexFile) || rows.length === 0) return 0
+  /** Штрих базы по позициям файла: `артикул → штрих из индекса`, и только по
+   *  тем артикулам, что есть в файле. Один проход по индексу (~50 мс): важен
+   *  не сам факт «есть ли позиция в базе», а какой в ней штрих — одинаковый
+   *  хранить второй раз незачем, а другой надо хранить, иначе файл
+   *  пользователя перестанет быть источником правды о своих штрихах. */
+  function baseBarcodes(rows: readonly DbRow[]): Map<string, string> {
+    const found = new Map<string, string>()
+    if (!existsSync(indexFile) || rows.length === 0) return found
     const need = new Set(rows.map((row) => row.sku))
-    const hits = new Set<string>()
     try {
       for (const line of readFileSync(indexFile, 'utf8').split('\n')) {
         if (!line) continue
-        const end = line.indexOf('\t')
+        const end = line.indexOf(INDEX_FIELD_SEP)
         if (end <= 0) continue
         const sku = line.slice(0, end)
-        if (need.has(sku)) hits.add(sku)
+        if (!need.has(sku) || found.has(sku)) continue
+        const barcode = line.slice(end + 1).split(INDEX_FIELD_SEP)[0].trim()
+        if (barcode) found.set(sku, barcode)
       }
     } catch (err) {
       console.warn('[barcode-db] индекс не прочитан при приложении файла:', err)
-      return 0
+      return found
     }
-    return hits.size
+    return found
   }
 
   /** Файл пользователя → позиции. Формат определяем по сигнатуре: xlsx —
@@ -404,6 +420,7 @@ export function createBarcodeDb(): BarcodeDbService {
         total: payload.rows.length,
         source,
         items: [],
+        baseSkus: [],
         error,
         status: status.state === 'building' ? status : readStatusFromDisk(),
       }
@@ -445,12 +462,15 @@ export function createBarcodeDb(): BarcodeDbService {
     }
 
     const current = readExtra()
-    const merged = mergeRows(current.rows, incoming.rows)
-    // Считаем по строкам ФАЙЛА, а не по всему накопленному: оверлей показывает
-    // «из них есть в базе», и «они» — это позиции, которые принёс файл. Иначе
-    // повторное приложение того же файла показывало бы всё приложенное за всю
-    // историю, и цифра пугала бы без причины.
-    const inBase = countInBase(incoming.rows)
+    // Что база уже знает о позициях файла — по строкам ФАЙЛА, а не по всему
+    // накопленному: оверлей показывает «уже есть в базе», и «они» — это позиции,
+    // которые принёс файл. Иначе повторное приложение того же файла показывало бы
+    // всё приложенное за всю историю, и цифра пугала бы без причины.
+    const base = partitionAgainstBase(incoming.rows, baseBarcodes(incoming.rows))
+    // Позиции, что база уже знает с тем же штрихом, в extra.json не кладём:
+    // поиск отдаст из индекса ровно то же значение. С ДРУГИМ штрихом — кладём,
+    // там файл пользователя главнее базы.
+    const merged = mergeRows(current.rows, base.store)
     // Пишем атомарно (temp+rename): прерванная запись иначе оставила бы
     // обрезанный extra.json и молча уронила бы все приложенные позиции.
     writeJsonAtomic(extraFile, {
@@ -462,7 +482,8 @@ export function createBarcodeDb(): BarcodeDbService {
     status = readStatusFromDisk()
     console.log(
       `[barcode-db] приложено из «${source}»: +${merged.added}, перекрыто ${merged.updated}, ` +
-        `всего своих ${merged.rows.length}, позиций файла есть в базе ${inBase}, ` +
+        `совпало с базой ${base.same.length}, штрих перекрыл базу ${base.different.length}, ` +
+        `всего своих ${merged.rows.length}, позиций файла ${incoming.rows.length}, ` +
         `пропущено строк ${incoming.skipped + merged.skipped}`,
     )
     // Позиции из файла отдаём списком: оверлей покажет их в блоке и напечатает
@@ -477,7 +498,8 @@ export function createBarcodeDb(): BarcodeDbService {
       ok: true,
       added: merged.added,
       updated: merged.updated,
-      inBase,
+      inBase: base.different.length,
+      baseSkus: base.same,
       skipped: incoming.skipped + merged.skipped,
       total: merged.rows.length,
       source,
