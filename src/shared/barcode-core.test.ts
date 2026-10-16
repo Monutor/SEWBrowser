@@ -101,6 +101,43 @@ function decodeCode128(modules: string): { data: string; check: number } {
   return { data, check }
 }
 
+/** Строгий декодер по ISO/IEC 15417: в наборе C значения 0…99 — это ПАРЫ
+ *  цифр «00»…«99», а 100/101 — возврат в B/A. Переключателя в C не бывает.
+ *
+ *  Зачем второй декодер, если есть `decodeCode128`: тот трактует 99 как
+ *  переключатель в C ЛЮБОГО набора, а значит «понимает» в том числе то, что
+ *  сканер не примет — и пропускает дефект кодировщика. Строгий смотрит на
+ *  текущий набор и потому проверяет ровно то, что увидит сканер. */
+function decodeCode128Strict(modules: string): string {
+  const body = modules.slice(0, -2)
+  assert.ok(modules.endsWith('1100011101011'), 'стоп-паттерн Code 128')
+  const symbols: number[] = []
+  for (let i = 0; i < body.length; i += 11) {
+    const symbol = C128_PATTERNS.indexOf(body.slice(i, i + 11))
+    assert.ok(symbol >= 0, `символ ${i / 11} не из таблицы: ${body.slice(i, i + 11)}`)
+    symbols.push(symbol)
+  }
+  const start = symbols.shift()
+  assert.ok(start === 103 || start === 104 || start === 105, `стартовый символ ${start}`)
+  let set = start === 103 ? 'A' : start === 104 ? 'B' : 'C'
+  let data = ''
+  for (const symbol of symbols.slice(0, -2)) {
+    if (set === 'C') {
+      if (symbol <= 99) {
+        data += String(symbol).padStart(2, '0')
+        continue
+      }
+      if (symbol === 100) { set = 'B'; continue }
+      if (symbol === 101) { set = 'A'; continue }
+      assert.fail(`символ ${symbol} вне набора C`)
+    }
+    if (symbol === 99) { set = 'C'; continue }
+    if (symbol === 100) { set = 'B'; continue }
+    data += String.fromCharCode(symbol + 32)
+  }
+  return data
+}
+
 /* ── Контрольная цифра EAN-13 ───────────────────────────────────────────── */
 
 test('ean13CheckDigit: эталон из учебника 5901234123457', () => {
@@ -216,10 +253,11 @@ test('code128Values: контрольный символ совпадает с �
 })
 
 test('code128Values: сплошные цифры идут в наборе C по две', () => {
-  // Ровная длина: старт C, переключение в C и пары цифр без остатка.
+  // Ровная длина: старт C и пары цифр без остатка, БЕЗ переключателя в C —
+  // в наборе C значение 99 кодирует пару «99», а не переключает набор.
   const even = code128Values('12345678')
   assert.ok(even)
-  assert.deepEqual(even.values, [105, 99, 12, 34, 56, 78])
+  assert.deepEqual(even.values, [105, 12, 34, 56, 78])
   // Нечётная длина: одна цифра в B (105 → нет, 104 = Start B, '1' = 17),
   // дальше пары в C. Без этого на хвосте осталась бы цифра и лишний
   // переход обратно в B.
@@ -232,11 +270,12 @@ test('code128Values: сплошные цифры идут в наборе C по
   assert.deepEqual(single.values, [104, 23])
 })
 
-test('code128Modules: чётное число цифр — 8 символов по 11 модулей плюс хвост стопа', () => {
-  // 1 старт + 1 переключение в C + 4 пары + 1 checksum + 1 стоп = 8 символов.
+test('code128Modules: чётное число цифр — 7 символов по 11 модулей плюс хвост стопа', () => {
+  // 1 старт + 4 пары + 1 checksum + 1 стоп = 7 символов. Переключателя в C
+  // здесь нет по построению: при чётной длине набор уже C с первой позиции.
   const modules = code128Modules('12345678')
   assert.ok(modules)
-  assert.equal(modules.length, 8 * 11 + 2)
+  assert.equal(modules.length, 7 * 11 + 2)
   const decoded = decodeCode128(modules)
   assert.equal(decoded.data, '12345678')
   assert.equal(decoded.check, code128Values('12345678')!.check)
@@ -266,6 +305,45 @@ test('code128Modules: латиница кодируется набором B и 
 })
 
 /* ── Реальные коды из db.json: сквозной round-trip ──────────────────────── */
+
+// Регрессия: после Start C кодировщик клал символ 99 «переключатель», который
+// в наборе C кодирует пару «99» (ISO/IEC 15417). Сканер отдавал «99» + код,
+// хотя подпись под штрихом на этикетке печаталась верной — расхождение было
+// видно только при сканировании. Затронуты все ЧЁТНЫЕ длины: на живой базе
+// это 138 265 18-значных и 2 664 кода на 12/14/16 знаков.
+test('чётная длина: строгий декодер читает ровно код, без лишнего «99»', () => {
+  const even = [
+    '461021658023258909', // ZUGEL из db.json
+    '465575293001158909', // ZUGEL из db.json
+    '693996262756465284',
+    '047875880825',
+    '13045386376190',
+    '12345678',
+  ]
+  for (const code of even) {
+    const modules = code128Modules(code)
+    assert.ok(modules, code)
+    assert.equal(decodeCode128Strict(modules), code, code)
+  }
+  // Нечётная длина не должна пострадать: переключатель из B в C там законен.
+  const odd = ['4610216580751589091', '461021658217522241', '1304538637619', '7', '35']
+  for (const code of odd) {
+    const modules = code128Modules(code)
+    assert.ok(modules, code)
+    assert.equal(decodeCode128Strict(modules), code, code)
+  }
+})
+
+test('code128Values: после Start C нет символа 99 (в C это пара «99»)', () => {
+  const even = code128Values('461021658023258909')
+  assert.ok(even)
+  assert.equal(even.values[0], 105, 'чётная длина стартует в C')
+  assert.ok(!even.values.includes(99), 'переключатель в C не кладём')
+  const odd = code128Values('4610216580751589091')
+  assert.ok(odd)
+  assert.equal(odd.values[0], 104, 'нечётная длина: первая цифра в B')
+  assert.equal(odd.values[2], 99, 'возврат в C — законный переключатель')
+})
 
 test('коды из живого db.json декодируются обратно в сами себя', () => {
   const samples = ['693996262756465284', '60356365395163352', '4004588000755486', '476000000364050', '13045386376190', '047875880825', '1001028334', '6010089', '35']

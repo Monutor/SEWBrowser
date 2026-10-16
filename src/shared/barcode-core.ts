@@ -44,7 +44,9 @@ const C128_START_A = 103
 const C128_START_B = 104
 const C128_START_C = 105
 const C128_STOP = 106
-/** 99 — переключение в набор C из A/B (обратно — значение 100). */
+/** 99 — переключение в набор C из A/B (обратно — значение 100). В самом
+ *  наборе C значение 99 — уже пара цифр «99», поэтому после Start C этот
+ *  символ кодировать нельзя. */
 const C128_CODE_C = 99
 
 export type BarcodeSymbology = 'ean13' | 'code128'
@@ -164,12 +166,15 @@ export function code128Values(code: string): { values: number[]; check: number }
       // Одна цифра в B, чтобы дальше пары в C не разъехались по чётности.
       pushData(Number(value[0]) + 16)
       i = 1
+      // Переключение в C нужно только при возврате из B. После Start C
+      // символ 99 кладеть нельзя: в наборе C значения 0…99 — это ПАРЫ цифр
+      // «00»…«99», а не переключатели (ISO/IEC 15417, набор C), и сканер
+      // отдаст данные с лишним «99» в начале. Отсюда: чётная длина (пары
+      // сразу, Start C) — без переключателя вовсе, нечётная — с ним.
+      if (i < value.length) pushData(C128_CODE_C)
     }
-    if (i < value.length) {
-      pushData(C128_CODE_C)
-      for (; i < value.length; i += 2) {
-        pushData(Number(value.slice(i, i + 2)))
-      }
+    for (; i < value.length; i += 2) {
+      pushData(Number(value.slice(i, i + 2)))
     }
   } else {
     pushStart(C128_START_B)
