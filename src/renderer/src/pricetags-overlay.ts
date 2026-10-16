@@ -17,11 +17,16 @@ let deps!: PricetagsOverlayDeps
 let skus: string[] = []
 /** Позиции, найденные в локальной базе штрихов (у них нет цены). */
 let barcodeItems: BarcodeItem[] = []
+/** Позиции из последнего приложенного файла. Показываем их отдельным блоком и
+ *  в рабочий список не кладём: файл бывает на тысячи строк, а чипы рабочего
+ *  списка — это ручной ввод, и тысяча чипов разбирает карточку. */
+let importedItems: BarcodeItem[] = []
+/** Имя файла, из которого пришли `importedItems`. */
+let importedSource = ''
 
-/** Сколько позиций из приложенного файла попадает в список оверлея. Файл
- *  ограничен 20 000 позициями (EXTRA_LIMIT в main), а 20 000 строк в DOM
- *  оверлей не нарисует: список нужен, чтобы увидеть и напечатать своё, а не
- *  чтобы перелистать чужую базу целиком. */
+/** Сколько позиций из файла рисуем в блоке. Файл ограничен 20 000 позициями
+ *  (EXTRA_LIMIT в main), а 20 000 строк в DOM оверлей не нарисует. Остальное
+ *  показываем числом: печатать всё равно больше 999 этикеток нельзя. */
 const IMPORT_LIST_LIMIT = 500
 
 function el(id: string): HTMLElement | null {
@@ -100,6 +105,9 @@ function renderResult(): void {
     skus.filter((sku) => !barcodeItems.some((item) => item.sku === sku)),
   )
   refreshButtons()
+  // Блок позиций из файла помечает уже добавленные — состав списка изменился,
+  // значит, пометки пора обновить (иначе убранный артикул остался бы помеченным).
+  renderImported()
 }
 
 /** Кнопки живут по состоянию, а не по флажкам. */
@@ -229,29 +237,84 @@ function addFromInput(input: HTMLInputElement): void {
 function renderBarcodeRows(rows: readonly BarcodeItem[], missing: readonly string[]): void {
   const box = el('pricetags-rows')
   if (box) {
-    box.replaceChildren(
-      ...rows.map((item) => {
-        const row = document.createElement('div')
-        row.className = 'pricetags-row'
-        const sku = document.createElement('span')
-        sku.className = 'sku'
-        sku.textContent = item.sku
-        const name = document.createElement('span')
-        name.className = 'name'
-        name.textContent = item.name
-        name.title = item.name
-        const code = document.createElement('span')
-        code.className = 'price'
-        code.textContent = `${item.barcode} · ${symbologyName(item.symbology)}`
-        row.append(sku, name, code)
-        return row
-      }),
-    )
+    box.replaceChildren(...rows.map((item) => barcodeRow(item, 'pricetags-row')))
   }
   const miss = el('pricetags-missing')
   if (!miss) return
   miss.textContent = missing.length > 0 ? `не найдены в базе: ${missing.join(', ')}` : ''
   miss.hidden = missing.length === 0
+}
+
+/** Одна строка позиции: артикул, наименование, штрих с символикой. Общая часть
+ *  для найденных позиций и для позиций из приложенного файла — оформление у
+ *  них одно, отличается только кликом. */
+function barcodeRow(item: BarcodeItem, className: string): HTMLElement {
+  const row = document.createElement('div')
+  row.className = className
+  const sku = document.createElement('span')
+  sku.className = 'sku'
+  sku.textContent = item.sku
+  const name = document.createElement('span')
+  name.className = 'name'
+  name.textContent = item.name
+  name.title = item.name
+  const code = document.createElement('span')
+  code.className = 'price'
+  code.textContent = `${item.barcode} · ${symbologyName(item.symbology)}`
+  row.append(sku, name, code)
+  return row
+}
+
+/**
+ * Блок позиций из приложенного файла: что добавилось — своими глазами, без
+ * вбивания артикулов. Рисуем первые IMPORT_LIST_LIMIT и говорим, сколько не
+ * показали. Позиция, уже добавленная в список печати, приглушена.
+ */
+function renderImported(): void {
+  const wrap = el('pricetags-imported')
+  if (!wrap) return
+  if (importedItems.length === 0) {
+    wrap.hidden = true
+    return
+  }
+  wrap.hidden = false
+  const fmt = new Intl.NumberFormat('ru-RU')
+  const total = importedItems.length
+  const title = el('pricetags-imported-title')
+  if (title) {
+    title.textContent =
+      `из файла «${importedSource}» — ${fmt.format(total)} позиций, клик по строке добавляет в список`
+  }
+  const box = el('pricetags-imported-rows')
+  if (box) {
+    box.replaceChildren(
+      ...importedItems.slice(0, IMPORT_LIST_LIMIT).map((item) => {
+        const added = skus.includes(item.sku)
+        const row = barcodeRow(item, `pricetags-row pricetags-imported-row${added ? ' is-added' : ''}`)
+        row.dataset.sku = item.sku
+        row.title = added ? 'уже в списке печати' : 'добавить в список печати'
+        return row
+      }),
+    )
+  }
+  const note = el('pricetags-imported-note')
+  if (note) {
+    const hidden = total - IMPORT_LIST_LIMIT
+    note.textContent =
+      hidden > 0 ? `показаны первые ${fmt.format(IMPORT_LIST_LIMIT)} из ${fmt.format(total)}` : ''
+    note.hidden = hidden <= 0
+  }
+}
+
+/** Позиция из файла в рабочем списке печати. Штрих из файла главнее ранее
+ *  найденного по коду: свой файл пользователя и есть источник правды. */
+function addImportedItem(item: BarcodeItem): void {
+  barcodeItems = barcodeItems.filter((value) => value.sku !== item.sku)
+  barcodeItems = [...barcodeItems, item]
+  if (!skus.includes(item.sku)) skus = [...skus, item.sku]
+  renderChips()
+  renderResult()
+  setStatus(`в списке печати: ${skus.length}`)
 }
 
 /** Ключ конфига → поле оверлея. Нужно для точечного отката: показываем в
@@ -436,21 +499,12 @@ async function importBaseFile(): Promise<void> {
       setStatus(res.error ?? 'файл не подошёл')
       return
     }
-    // Позиции из файла сразу в рабочем списке: их видно и можно печатать, не
-    // вбивая артикулы руками. Прежний список не теряем — это добавление, а не
-    // замена. Штрих из файла главнее найденного ранее: свой файл пользователя
-    // и есть источник правды о своих позициях.
-    const incoming = Array.isArray(res.items) ? res.items : []
-    const shown = incoming.slice(0, IMPORT_LIST_LIMIT)
-    const known = new Map<string, BarcodeItem>()
-    for (const item of barcodeItems) known.set(item.sku, item)
-    for (const item of shown) known.set(item.sku, item)
-    barcodeItems = [...known.values()]
-    const next = [...skus]
-    for (const item of shown) if (!next.includes(item.sku)) next.push(item.sku)
-    skus = next
-    renderChips()
-    renderResult()
+    // Позиции из файла показываем отдельным блоком (см. renderImported): файл
+    // бывает на тысячи строк, в рабочий список они попадают только по клику —
+    // иначе карточка разъезжается, а печать всё равно упирается в 999 этикеток.
+    importedItems = Array.isArray(res.items) ? res.items : []
+    importedSource = res.source
+    renderImported()
     const fmt = new Intl.NumberFormat('ru-RU')
     const parts = [`приложено новых: ${fmt.format(res.added)}`]
     if (res.updated > 0) parts.push(`перекрыто своих: ${fmt.format(res.updated)}`)
@@ -459,12 +513,6 @@ async function importBaseFile(): Promise<void> {
     if (res.inBase > 0) parts.push(`из них есть в базе (штрих перекрыт): ${fmt.format(res.inBase)}`)
     if (res.skipped > 0) parts.push(`строк без кода или печатного ШК: ${fmt.format(res.skipped)}`)
     parts.push(`всего своих: ${fmt.format(res.total)}`)
-    if (shown.length > 0) {
-      parts.push(
-        `в списке: ${fmt.format(shown.length)}` +
-          (incoming.length > shown.length ? ` из ${fmt.format(incoming.length)}` : ''),
-      )
-    }
     setStatus(parts.join(' · '))
   } catch (err) {
     console.warn('[pricetags] файл не приложен:', err)
@@ -478,6 +526,22 @@ export function wirePricetags(next: PricetagsOverlayDeps): void {
   deps = next
   el('barcodes-refresh')?.addEventListener('click', () => void refreshDb())
   el('barcodes-import')?.addEventListener('click', () => void importBaseFile())
+  // Клик по позиции из файла кладёт её в список печати. Один обработчик на
+  // контейнер: строк в блоке до 500, слушатель на каждой — лишняя работа.
+  el('pricetags-imported-rows')?.addEventListener('click', (event) => {
+    const row = (event.target as HTMLElement | null)?.closest<HTMLElement>('.pricetags-imported-row')
+    const sku = row?.dataset.sku
+    if (!sku) return
+    const item = importedItems.find((value) => value.sku === sku)
+    if (item) addImportedItem(item)
+  })
+  // «Скрыть» только убирает блок: позиции остаются в extra.json и находятся
+  // кнопкой «Найти в базе», повторно приложять файл не нужно.
+  el('pricetags-imported-hide')?.addEventListener('click', () => {
+    importedItems = []
+    importedSource = ''
+    renderImported()
+  })
   el('pricetags-history-clear')?.addEventListener('click', () => void clearHistory())
   const sku = el('pricetags-sku') as HTMLInputElement | null
   // Enter — добавить артикул и сразу найти позиции

@@ -720,6 +720,19 @@
         <div id="pricetags-rows" class="pricetags-rows"></div>
         <div id="pricetags-missing" class="pricetags-missing" hidden></div>
 
+        <!-- Позиции из приложенного файла: их не вбивают руками, но увидеть и
+             отобрать надо. Отдельный блок с собственной прокруткой — файл бывает
+             на тысячи строк, и в чипах рабочего списка он просто разобрал бы
+             карточку. Клик по строке кладёт позицию в список печати. -->
+        <div id="pricetags-imported" class="pricetags-imported" hidden>
+          <div class="pricetags-imported-head">
+            <span id="pricetags-imported-title" class="pricetags-imported-title"></span>
+            <button id="pricetags-imported-hide" type="button" class="barcodes-refresh">Скрыть</button>
+          </div>
+          <div id="pricetags-imported-rows" class="pricetags-rows"></div>
+          <div id="pricetags-imported-note" class="pricetags-imported-note" hidden></div>
+        </div>
+
         <div class="settings-actions">
           <button id="pricetags-close">Закрыть (Esc)</button>
         </div>
