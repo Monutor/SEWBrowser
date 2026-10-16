@@ -69,15 +69,20 @@ function renderDbStatus(status?: BarcodeDbStatus): void {
     box.textContent = 'не собрана — нажмите «Обновить базу»'
     return
   }
-  const count = status.items ? `позиций: ${new Intl.NumberFormat('ru-RU').format(status.items)}` : ''
+  const fmt = new Intl.NumberFormat('ru-RU')
+  const count = status.items ? `позиций: ${fmt.format(status.items)}` : ''
   const when = status.updatedAt ? `обновлена ${new Date(status.updatedAt).toLocaleString('ru-RU')}` : ''
   // Свои позиции (extra.json) в счётчик базы не входят: пересборка индекса их
   // не трогает, и показывать их числом «позиций» значило бы врать о размере
   // базы. Отдельным хвостом — видно, что приложено и когда.
   const extra = status.extra
-    ? `+${status.extra} своих${status.extraUpdatedAt ? ` от ${new Date(status.extraUpdatedAt).toLocaleDateString('ru-RU')}` : ''}`
+    ? `+${fmt.format(status.extra)} своих${status.extraUpdatedAt ? ` от ${new Date(status.extraUpdatedAt).toLocaleDateString('ru-RU')}` : ''}`
     : ''
-  box.textContent = [count, when, extra, status.stale ? 'устарела' : ''].filter(Boolean).join(' · ')
+  // Итог в конце строки: сколько позиций доступно для печати на самом деле —
+  // база плюс приложенные. Без своих он совпал бы с «позиций», поэтому лишней
+  // цифрой в этом случае не показываем.
+  const total = status.extra && status.items ? `всего: ${fmt.format(status.items + status.extra)}` : ''
+  box.textContent = [count, when, extra, total, status.stale ? 'устарела' : ''].filter(Boolean).join(' · ')
 }
 
 /** Рисуем строки и «не найдены» по текущему набору чипов. Повторный запрос к
