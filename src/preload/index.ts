@@ -112,6 +112,8 @@ interface BarcodeImportResultLike {
   skipped: number
   total: number
   source: string
+  /** Позиции из приложенного файла: оверлей показывает их списком */
+  items: BarcodeItemLike[]
   error?: string
   status: BarcodeDbStatusLike
 }

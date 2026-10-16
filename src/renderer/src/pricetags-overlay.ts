@@ -18,6 +18,12 @@ let skus: string[] = []
 /** Позиции, найденные в локальной базе штрихов (у них нет цены). */
 let barcodeItems: BarcodeItem[] = []
 
+/** Сколько позиций из приложенного файла попадает в список оверлея. Файл
+ *  ограничен 20 000 позициями (EXTRA_LIMIT в main), а 20 000 строк в DOM
+ *  оверлей не нарисует: список нужен, чтобы увидеть и напечатать своё, а не
+ *  чтобы перелистать чужую базу целиком. */
+const IMPORT_LIST_LIMIT = 500
+
 function el(id: string): HTMLElement | null {
   return document.getElementById(id)
 }
@@ -430,7 +436,20 @@ async function importBaseFile(): Promise<void> {
       setStatus(res.error ?? 'файл не подошёл')
       return
     }
-    barcodeItems = []
+    // Позиции из файла сразу в рабочем списке: их видно и можно печатать, не
+    // вбивая артикулы руками. Прежний список не теряем — это добавление, а не
+    // замена. Штрих из файла главнее найденного ранее: свой файл пользователя
+    // и есть источник правды о своих позициях.
+    const incoming = Array.isArray(res.items) ? res.items : []
+    const shown = incoming.slice(0, IMPORT_LIST_LIMIT)
+    const known = new Map<string, BarcodeItem>()
+    for (const item of barcodeItems) known.set(item.sku, item)
+    for (const item of shown) known.set(item.sku, item)
+    barcodeItems = [...known.values()]
+    const next = [...skus]
+    for (const item of shown) if (!next.includes(item.sku)) next.push(item.sku)
+    skus = next
+    renderChips()
     renderResult()
     const fmt = new Intl.NumberFormat('ru-RU')
     const parts = [`приложено новых: ${fmt.format(res.added)}`]
@@ -440,6 +459,12 @@ async function importBaseFile(): Promise<void> {
     if (res.inBase > 0) parts.push(`из них есть в базе (штрих перекрыт): ${fmt.format(res.inBase)}`)
     if (res.skipped > 0) parts.push(`строк без кода или печатного ШК: ${fmt.format(res.skipped)}`)
     parts.push(`всего своих: ${fmt.format(res.total)}`)
+    if (shown.length > 0) {
+      parts.push(
+        `в списке: ${fmt.format(shown.length)}` +
+          (incoming.length > shown.length ? ` из ${fmt.format(incoming.length)}` : ''),
+      )
+    }
     setStatus(parts.join(' · '))
   } catch (err) {
     console.warn('[pricetags] файл не приложен:', err)

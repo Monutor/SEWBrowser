@@ -84,6 +84,9 @@ export interface BarcodeImportResult {
   total: number
   /** Имя файла-источника. */
   source: string
+  /** Позиции, которые принёс файл, — оверлей показывает их списком и печатает
+   *  сразу, не заставляя вбивать артикулы руками. При отказе пустой список. */
+  items: BarcodeItem[]
   error?: string
   status: BarcodeDbStatus
 }
@@ -400,6 +403,7 @@ export function createBarcodeDb(): BarcodeDbService {
         skipped: 0,
         total: payload.rows.length,
         source,
+        items: [],
         error,
         status: status.state === 'building' ? status : readStatusFromDisk(),
       }
@@ -461,6 +465,14 @@ export function createBarcodeDb(): BarcodeDbService {
         `всего своих ${merged.rows.length}, позиций файла есть в базе ${inBase}, ` +
         `пропущено строк ${incoming.skipped + merged.skipped}`,
     )
+    // Позиции из файла отдаём списком: оверлей покажет их в блоке и напечатает
+    // без вбивания артикулов. Ровно те, что принёс файл, а не всё накопленное,
+    // — иначе повторное приложение того же файла снова рисовало бы всю историю.
+    const items: BarcodeItem[] = []
+    for (const row of incoming.rows) {
+      const item = barcodeItem(row)
+      if (item) items.push(item)
+    }
     return {
       ok: true,
       added: merged.added,
@@ -469,6 +481,7 @@ export function createBarcodeDb(): BarcodeDbService {
       skipped: incoming.skipped + merged.skipped,
       total: merged.rows.length,
       source,
+      items,
       status,
     }
   }
